@@ -3,9 +3,18 @@
  * @brief Native app registry — install apps + icon table (co-located so they stay in sync).
  *
  * ADDING AN APP:
- *   1. Add installApp() call in registerAllApps() below.
- *   2. Add the matching icon pointer in APP_BUILTIN_ICONS[] immediately below.
- *   Both tables are in the same file — impossible to add one without seeing the other.
+ *   1. Create src/app/app_NN/ (see app_09/infrared.{h,cpp} as template).
+ *      Set a unique name (<=31 chars) in the constructor; it is the menu id.
+ *   2. #include the header above and add installApp() in registerAllApps(),
+ *      after the last existing one (order = menu slot index).
+ *   3. Add the icon at the SAME index in APP_BUILTIN_ICONS[].
+ *   4. LV_IMG_DECLARE the icon in src/ui/ui.h and add its image .c file.
+ *   5. Raise APPS_MENU_MAX_APPS (src/ui/screens/ui_apps_menu.h) and in
+ *      ui_apps_menu.c add ui_app_N / ui_name_N (definitions, both app_ptrs[]
+ *      and name_ptrs[] arrays, and a row in _app_info[]).
+ *   Notes: onCreate runs on first open only; onClose is the only teardown, so
+ *   onOpen must re-initialise state. onRunning must return quickly (long-press
+ *   B is only checked between updates).
  */
 #pragma once
 
