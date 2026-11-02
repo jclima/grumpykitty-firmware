@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include <esp_heap_caps.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 namespace {
@@ -18,6 +19,10 @@ volatile bool s_stop = false;
 volatile bool s_ready = false;
 volatile bool s_suspended = false;
 volatile bool s_playing = false;
+/* Binary semaphore (no owner, so suspend/resume may run on different tasks):
+ * held by play_mp3() while playing and by suspend..resume while suspended. */
+SemaphoreHandle_t s_play_sem = nullptr;
+bool s_sem_held = false;   /* true while suspend() owns s_play_sem */
 volatile bool s_key_enabled = true;
 volatile int s_volume = 50;
 
@@ -43,7 +48,7 @@ void amp(bool on) {
     }
 }
 
-bool play_mp3(const uint8_t* data, size_t len, uint32_t limit_ms) {
+bool play_mp3_locked(const uint8_t* data, size_t len, uint32_t limit_ms) {
     if (!s_ready || s_suspended || !data || len < 4 || s_volume == 0) return false;
     if (!MP3Decoder_AllocateBuffers()) return false;
     MP3Decoder_ClearBuffer();
@@ -89,6 +94,15 @@ bool play_mp3(const uint8_t* data, size_t len, uint32_t limit_ms) {
     return played;
 }
 
+bool play_mp3(const uint8_t* data, size_t len, uint32_t limit_ms) {
+    if (!s_play_sem) return false;
+    /* Non-blocking: if suspend() holds it, drop this sound. */
+    if (xSemaphoreTake(s_play_sem, 0) != pdTRUE) return false;
+    bool r = play_mp3_locked(data, len, limit_ms);   /* re-checks s_suspended under the lock */
+    xSemaphoreGive(s_play_sem);
+    return r;
+}
+
 void task(void*) {
     SoundCommand c{};
     for (;;) {
@@ -120,10 +134,14 @@ bool system_sound_init(DEVICES* dev) {
     s_dev->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
     s_queue = xQueueCreate(1, sizeof(SoundCommand));
     if (!s_queue) { s_dev->speaker.end(); return false; }
+    s_play_sem = xSemaphoreCreateBinary();
+    if (!s_play_sem) { vQueueDelete(s_queue); s_queue = nullptr; s_dev->speaker.end(); return false; }
+    xSemaphoreGive(s_play_sem);
     s_ready = true;
     if (xTaskCreatePinnedToCore(task, "system_sound", 6144, nullptr, 3,
                                 &s_task, 1) != pdPASS) {
         s_ready = false; vQueueDelete(s_queue); s_queue = nullptr;
+        vSemaphoreDelete(s_play_sem); s_play_sem = nullptr;
         s_dev->speaker.end(); return false;
     }
     return true;
@@ -144,27 +162,34 @@ void system_sound_suspend(void) {
     s_stop = true;
     if (s_queue) xQueueReset(s_queue);
 
-    /* Wait until the decoder has stopped touching I2S before releasing it. */
-    uint32_t deadline = millis() + 1000;
-    while (s_playing && (int32_t)(millis() - deadline) < 0)
-        vTaskDelay(pdMS_TO_TICKS(2));
+    /* Take the play lock: waits for an in-flight play_mp3() (which sees s_stop)
+     * to finish, and blocks any new one until resume(). Nothing playing -> immediate. */
+    s_sem_held = (xSemaphoreTake(s_play_sem, pdMS_TO_TICKS(1000)) == pdTRUE);
 
     s_dev->speaker.setMute(true);
     s_dev->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
-    if (!s_playing) s_dev->speaker.end();
+    if (s_sem_held) s_dev->speaker.end();
 }
 
 bool system_sound_resume(void) {
     if (!s_ready) return false;
     if (!s_suspended) return true;
-    if (s_playing) return false;
+
+    if (!s_sem_held) {
+        /* suspend() timed out while a sound was still playing; retry the lock. */
+        if (xSemaphoreTake(s_play_sem, 0) != pdTRUE) return false;
+        s_sem_held = true;
+        s_dev->speaker.end();
+    }
 
     s_dev->speaker.config().sample_rate = 44100;
-    if (!s_dev->speaker.begin(&In_I2C)) return false;
+    if (!s_dev->speaker.begin(&In_I2C)) return false;   /* lock stays held; may retry */
     s_dev->speaker.setVolume(s_volume * SPK_VOLUME_MAX / 100);
     s_dev->speaker.setMute(true);
     s_dev->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
     s_stop = false;
     s_suspended = false;
+    s_sem_held = false;
+    xSemaphoreGive(s_play_sem);
     return true;
 }

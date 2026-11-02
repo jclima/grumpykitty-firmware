@@ -28,6 +28,7 @@
 #include <SD_MMC.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <atomic>
 
 extern "C" {
 #include "driver/sdmmc_host.h"
@@ -40,7 +41,8 @@ extern "C" {
 /* File-scope global: constructor calls tinyusb_enable_interface() at static-init
  * time, before USB.begin() — so MSC is included in the composite descriptor. */
 static USBMSC                 s_msc;
-static sdmmc_card_t *         s_card    = nullptr;
+static std::atomic<sdmmc_card_t *> s_card{nullptr};
+static std::atomic<int>       s_inflight{0};   /* callbacks currently using s_card */
 static volatile int           s_running = 0;
 static volatile unsigned long s_bytes   = 0;
 
@@ -49,19 +51,29 @@ static volatile unsigned long s_bytes   = 0;
 static int32_t _msc_read_cb(uint32_t lba, uint32_t /*offset*/,
                               void * buf, uint32_t bufsize)
 {
-    if (!s_card) return -1;
-    if (sdmmc_read_sectors(s_card, buf, lba, bufsize / 512) != ESP_OK) return -1;
-    s_bytes += bufsize;
-    return (int32_t)bufsize;
+    s_inflight.fetch_add(1);
+    sdmmc_card_t * card = s_card.load();
+    int32_t ret = -1;
+    if (card && sdmmc_read_sectors(card, buf, lba, bufsize / 512) == ESP_OK) {
+        s_bytes += bufsize;
+        ret = (int32_t)bufsize;
+    }
+    s_inflight.fetch_sub(1);
+    return ret;
 }
 
 static int32_t _msc_write_cb(uint32_t lba, uint32_t /*offset*/,
                                uint8_t * buf, uint32_t bufsize)
 {
-    if (!s_card) return -1;
-    if (sdmmc_write_sectors(s_card, buf, lba, bufsize / 512) != ESP_OK) return -1;
-    s_bytes += bufsize;
-    return (int32_t)bufsize;
+    s_inflight.fetch_add(1);
+    sdmmc_card_t * card = s_card.load();
+    int32_t ret = -1;
+    if (card && sdmmc_write_sectors(card, buf, lba, bufsize / 512) == ESP_OK) {
+        s_bytes += bufsize;
+        ret = (int32_t)bufsize;
+    }
+    s_inflight.fetch_sub(1);
+    return ret;
 }
 
 static bool _msc_startstop_cb(uint8_t /*pwr*/, bool /*start*/, bool load_eject)
@@ -76,6 +88,7 @@ int usb_msc_enable(void)
 {
     if (s_running) return 1;
 
+    sdmmc_card_t * card = nullptr;
     s_bytes = 0;
 
     /* 1. Dismount FAT-FS — release exclusive SDMMC bus ownership */
@@ -103,18 +116,19 @@ int usb_msc_enable(void)
         sdmmc_host_deinit();
         goto fail_remount;
     }
-    s_card = (sdmmc_card_t *)heap_caps_malloc(sizeof(sdmmc_card_t),
-                                               MALLOC_CAP_DEFAULT);
-    if (!s_card) {
+    card = (sdmmc_card_t *)heap_caps_malloc(sizeof(sdmmc_card_t),
+                                             MALLOC_CAP_DEFAULT);
+    if (!card) {
         sdmmc_host_deinit();
         goto fail_remount;
     }
-    if (sdmmc_card_init(&host, s_card) != ESP_OK) {
+    if (sdmmc_card_init(&host, card) != ESP_OK) {
         Serial.println("[MSC] sdmmc_card_init failed");
-        free(s_card); s_card = nullptr;
+        free(card);
         sdmmc_host_deinit();
         goto fail_remount;
     }
+    s_card.store(card);
 
     /* 3. Wire callbacks, set LUN geometry, expose media to host.
      *    USB is already a CDC+MSC composite — host polls test_unit_ready
@@ -126,18 +140,19 @@ int usb_msc_enable(void)
     s_msc.onWrite(_msc_write_cb);
     s_msc.onStartStop(_msc_startstop_cb);
     s_msc.mediaPresent(true);
-    if (!s_msc.begin((uint32_t)s_card->csd.capacity,
-                     (uint16_t)s_card->csd.sector_size)) {
+    if (!s_msc.begin((uint32_t)card->csd.capacity,
+                     (uint16_t)card->csd.sector_size)) {
         Serial.println("[MSC] USBMSC.begin() failed");
-        free(s_card); s_card = nullptr;
+        s_card.store(nullptr);
+        free(card);
         sdmmc_host_deinit();
         goto fail_remount;
     }
 
     s_running = 1;
     Serial.printf("[MSC] enabled — %lu sectors × %u B\n",
-                  (unsigned long)s_card->csd.capacity,
-                  (unsigned)s_card->csd.sector_size);
+                  (unsigned long)card->csd.capacity,
+                  (unsigned)card->csd.sector_size);
     return 1;
 
 fail_remount:
@@ -154,11 +169,21 @@ void usb_msc_disable(void)
     s_msc.mediaPresent(false);
     s_msc.end();            /* clear callbacks + block info */
 
+    /* Stop new callbacks from touching the card, then wait (bounded) for any
+     * in-flight TinyUSB read/write to finish before tearing it down. */
+    sdmmc_card_t * card = s_card.exchange(nullptr);
+    {
+        uint32_t t0 = millis();
+        while (s_inflight.load() > 0 && (millis() - t0) < 500)
+            delay(1);
+        if (s_inflight.load() > 0)
+            Serial.println("[MSC] warn: callbacks still in flight at teardown");
+    }
+
     /* Release raw SDMMC resources */
-    if (s_card) {
+    if (card) {
         sdmmc_host_deinit();
-        free(s_card);
-        s_card = nullptr;
+        free(card);
     }
     s_running = 0;
 
