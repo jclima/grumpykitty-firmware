@@ -1938,6 +1938,64 @@ namespace MOONCAKE::APPS
         out[pos] = '\0';
     }
 
+    /* Bit-reverse the low `n` bits of v (mirrors IRremoteESP8266 reverseBits). */
+    static uint32_t irRevBits(uint32_t v, int n) {
+        uint32_t r = 0;
+        for (int i = 0; i < n; i++) { r = (r << 1) | (v & 1); v >>= 1; }
+        return r;
+    }
+
+    /* Build the on-air frame for a Flipper "parsed" entry that carries only
+     * address/command (little-endian bytes already folded into addr/cmd).
+     * Mirrors IRsend::encodeNEC/encodeSAMSUNG/encodeSony/encodeRC5(X) so the
+     * result can be passed straight to IRsend::send().  Returns false when the
+     * protocol cannot be mapped confidently (caller keeps legacy behaviour). */
+    static bool flipperEncodeFrame(const char* proto, uint32_t addr, uint32_t cmd,
+                                   uint64_t& value, uint16_t& bits)
+    {
+        if (!strcasecmp(proto, "NEC")) {
+            uint32_t a = irRevBits(addr & 0xFF, 8), c = irRevBits(cmd & 0xFF, 8);
+            value = (a << 24) | ((a ^ 0xFF) << 16) | (c << 8) | (c ^ 0xFF);
+            bits = 32;
+            return true;
+        }
+        if (!strcasecmp(proto, "NECext")) {
+            value = (irRevBits(addr & 0xFFFF, 16) << 16) | irRevBits(cmd & 0xFFFF, 16);
+            bits = 32;
+            return true;
+        }
+        if (!strcasecmp(proto, "Samsung32") || !strcasecmp(proto, "SAMSUNG")) {
+            uint32_t a = irRevBits(addr & 0xFF, 8), c = irRevBits(cmd & 0xFF, 8);
+            value = ((c ^ 0xFF) & 0xFF) | (c << 8) | (a << 16) | (a << 24);
+            bits = 32;
+            return true;
+        }
+        if (!strcasecmp(proto, "SIRC") || !strcasecmp(proto, "SIRC15") ||
+            !strcasecmp(proto, "SIRC20")) {
+            uint16_t nb = !strcasecmp(proto, "SIRC") ? 12 :
+                          !strcasecmp(proto, "SIRC15") ? 15 : 20;
+            uint32_t r;
+            if (nb == 12)      r = addr & 0x1F;
+            else if (nb == 15) r = addr & 0xFF;
+            else               r = (addr & 0x1F) | (((addr >> 5) & 0xFF) << 5);
+            r = (r << 7) | (cmd & 0x7F);
+            value = irRevBits(r, nb);
+            bits = nb;
+            return true;
+        }
+        if (!strcasecmp(proto, "RC5")) {
+            value = (addr & 0x1F) << 6 | (cmd & 0x3F);
+            bits = 12;
+            return true;
+        }
+        if (!strcasecmp(proto, "RC5X")) {
+            value = (((cmd >> 6) & 1) << 12) | ((addr & 0x1F) << 6) | (cmd & 0x3F);
+            bits = 13;
+            return true;
+        }
+        return false;
+    }
+
     static void writeSignalEntry(File& f, const IrSignal& sig)
     {
         f.printf("name: %s\n", sig.name);
@@ -2007,13 +2065,26 @@ namespace MOONCAKE::APPS
         bool hasSerializedBits = false;
         bool validSignal = true;
         String line;
+        String protoName;
+        static constexpr size_t kMaxLineLen = 8192;   /* 1024 raw entries fit */
+        static constexpr size_t kMaxRawEntries = 1024;
 
         while (f.available()) {
             /* Stop early if signal cap reached (only when no name filter is
              * active — filtered loads are inherently bounded by brand count). */
             if (!filterName && maxSignals > 0 && (int)remote.signals.size() >= maxSignals) break;
 
-            line = f.readStringUntil('\n');
+            /* Bounded line read: excess characters are discarded and the
+             * current signal is marked invalid. */
+            line = "";
+            bool lineOverflow = false;
+            while (f.available()) {
+                int ch = f.read();
+                if (ch < 0 || ch == '\n') break;
+                if (line.length() < kMaxLineLen) line += (char)ch;
+                else lineOverflow = true;
+            }
+            if (lineOverflow) { validSignal = false; continue; }
             line.trim();
 
             if (line.startsWith("name: ")) {
@@ -2027,6 +2098,7 @@ namespace MOONCAKE::APPS
                 hasSerializedValue = false;
                 hasSerializedBits = false;
                 validSignal = true;
+                protoName = "";
                 strncpy(sig.name, line.c_str() + 6, sizeof(sig.name) - 1);
                 sig.name[sizeof(sig.name) - 1] = '\0';
                 inSignal = true;
@@ -2039,6 +2111,7 @@ namespace MOONCAKE::APPS
             else if (line.startsWith("protocol: ")) {
                 String proto = line.substring(10);
                 proto.trim();
+                protoName = proto;
                 sig.protocol = flipperProtoToType(proto.c_str());
             }
             else if (line.startsWith("value: ")) {
@@ -2056,11 +2129,22 @@ namespace MOONCAKE::APPS
                 validSignal &= infrared_file::hexBytes(line.c_str() + 9, sig.command);
                 if (!sig.isRaw) {
                     if (!hasSerializedBits) sig.bits = 32;
-                    if (!hasSerializedValue) sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
+                    if (!hasSerializedValue) {
+                        uint64_t v; uint16_t b;
+                        if (flipperEncodeFrame(protoName.c_str(), sig.address, sig.command, v, b)) {
+                            sig.value = v;
+                            if (!hasSerializedBits) sig.bits = b;
+                        } else {
+                            sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
+                        }
+                    }
                 }
             }
             else if (line.startsWith("frequency: ")) {
-                sig.frequency = line.substring(11).toInt();
+                long fq = line.substring(11).toInt();
+                if (fq < 10000) fq = 10000;
+                if (fq > 100000) fq = 100000;
+                sig.frequency = (uint32_t)fq;
             }
             else if (line.startsWith("data: ")) {
                 const char* p = line.c_str() + 6;
@@ -2070,6 +2154,10 @@ namespace MOONCAKE::APPS
                     char* end;
                     long val = strtol(p, &end, 10);
                     if (end == p) break;
+                    if (val <= 0 || val > 65535 || sig.rawData.size() >= kMaxRawEntries) {
+                        validSignal = false;
+                        break;
+                    }
                     sig.rawData.push_back((uint16_t)val);
                     p = end;
                 }
