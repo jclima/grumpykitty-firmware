@@ -69,6 +69,9 @@
 /* Held for shutdown LED callback — plain C function can't capture 'this'. */
 static DEVICES* s_shutdown_dev = nullptr;
 
+/* Mirror of Launcher::_app_running for plain C callbacks (LVGL is paused in APP state). */
+static volatile bool s_in_app = false;
+
 static void _update_system_key_sound(DEVICES* dev)
 {
     enum : uint8_t { A = 1u << 0, B = 1u << 1, U = 1u << 2,
@@ -214,6 +217,9 @@ static void _low_bat_warn_cb(int pct)
     Serial.printf("[Launcher] Low battery: %d%% — please charge soon\n", pct);
     mk_event_push(MK_EVT_POWER_LOW);  /* notify any app that is listening */
 
+    /* LVGL is paused while an app runs: don't create objects, event only. */
+    if (s_in_app) return;
+
     lv_obj_t * scr = lv_scr_act();
     if (!scr) return;
 
@@ -237,6 +243,7 @@ static void _low_bat_warn_cb(int pct)
     lv_obj_center(lbl);
 
     lv_timer_t * t = lv_timer_create(_bat_toast_dismiss, 4000, toast);
+    if (!t) { lv_obj_del(toast); return; }
     lv_timer_set_repeat_count(t, 1);
 }
 
@@ -417,10 +424,19 @@ void Launcher::onLoop()
 
             _running_app_id = -1;
             _app_running    = false;
+            s_in_app        = false;
 
             /* 3. Return to persistent UI (no rebuild needed) */
             returnToUI();
             return;
+        }
+
+        /* Power/battery handling must keep running inside apps (~1 Hz). */
+        static uint32_t lastAppSt = 0;
+        if (millis() - lastAppSt > 1000) {
+            lastAppSt = millis();
+            power_tick();
+            _updateLed(_device, power_battery_pct(), power_is_charging());
         }
 
         _mooncake.update();
@@ -619,6 +635,7 @@ void Launcher::handleAppSelection()
             _running_app_id = i;
             _mooncake.openApp(i);
             _app_running = true;
+            s_in_app     = true;
 
             ui_apps_menu_clear_selected();
             Serial.printf("[Launcher] Opened app id=%d (LVGL paused)\n", i);
