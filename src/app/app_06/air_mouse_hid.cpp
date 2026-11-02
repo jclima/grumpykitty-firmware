@@ -1,13 +1,10 @@
 #include "air_mouse_hid.h"
-#ifdef AIR_MOUSE_HID_HOST_TEST
-#include "../../../test/air_mouse_hid_stubs.h"
-#else
+#include "../../system/bluetooth_manager.h"
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <esp_gap_ble_api.h>
 #include <esp_gatts_api.h>
 #include <esp_bt_device.h>
-#endif
 #include <atomic>
 #include <cstring>
 
@@ -20,6 +17,7 @@ std::atomic<unsigned> epoch{0};
 esp_gatt_if_t iface = ESP_GATT_IF_NONE;
 uint16_t conn = 0, handles[2][16] = {};
 uint8_t peer[6] = {};
+bluetooth_manager::Lease lease = 0;
 unsigned services = 0, advReady = 0;
 uint32_t lastSend = 0, startedAt = 0;
 unsigned seenEpoch = 0;
@@ -172,14 +170,17 @@ void enqueue(uint8_t b) {
     if (next==head) { head=tail=0; queue[tail++]=0; desiredButtons=0; return; }
     queue[tail]=b; tail=next;
 }
+void stopped() {
+    // Called by bluetooth_manager while the stack is still valid.
+    send(0); // Best effort; disconnect also clears HID button state on the host.
+}
 }
 namespace air_mouse_hid {
 bool begin() {
-    if (active) return !error;
-    // Applications run exclusively. Reinitialize Arduino's stack bookkeeping,
-    // then install app-owned callbacks and static attributes.
-    BLEDevice::deinit(false);
-    BLEDevice::init("MeowKit AirMouse");
+    if (bluetooth_manager::owns(lease)) return !error;
+    // The Bluetooth manager owns stack init/deinit and callback registration.
+    lease=bluetooth_manager::acquire(bluetooth_manager::Owner::AirMouse,"MeowKit AirMouse",gap,gatts,stopped);
+    if (!lease) { active=false; error=true; return false; }
     active=true; linked=false; secure=false; subscribed=false; error=false;
     services=advReady=0; iface=ESP_GATT_IF_NONE; head=tail=0;
     desiredButtons=sentButtons=0; startedAt=millis(); lastSend=startedAt;
@@ -198,23 +199,22 @@ bool begin() {
     // A stable, app-specific static random identity prevents host HID caches
     // from confusing the mouse with another firmware Bluetooth profile.
     const uint8_t* baseAddress=esp_bt_dev_get_address();
-    if(!baseAddress) { error=true; return false; }
+    if(!baseAddress) { error=true; end(); error=true; return false; }
     uint8_t address[6]; memcpy(address,baseAddress,6);
     address[0]|=0xC0; address[5]^=0x06;
-    if (esp_ble_gap_register_callback(gap)!=ESP_OK || esp_ble_gatts_register_callback(gatts)!=ESP_OK ||
-        esp_ble_gap_set_rand_addr(address)!=ESP_OK ||
+    if (esp_ble_gap_set_rand_addr(address)!=ESP_OK ||
         esp_ble_gap_config_adv_data_raw(ad,sizeof(ad))!=ESP_OK ||
         esp_ble_gap_config_scan_rsp_data_raw(name,sizeof(name))!=ESP_OK ||
         esp_ble_gatts_app_register(APP_ID)!=ESP_OK) error=true;
-    return !error;
+    if (error) { end(); error=true; return false; }
+    return true;
 }
 void end() {
-    if (!active) return;
-    send(0); // Best effort; disconnect also clears HID button state on the host.
+    if (!active && !lease) return;
+    // Manager runs stopped() (neutral report), stops advertising, disconnects
+    // and deinitialises the stack without freeing controller memory.
+    bluetooth_manager::release(lease); lease=0;
     active=false;
-    esp_ble_gap_stop_advertising();
-    if (linked) esp_ble_gap_disconnect(peer);
-    BLEDevice::deinit(false); // Retain controller memory so another app can start BLE.
     linked=false; secure=false; subscribed=false; iface=ESP_GATT_IF_NONE;
     head=tail=0; desiredButtons=sentButtons=0;
 }
