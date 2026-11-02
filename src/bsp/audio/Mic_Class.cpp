@@ -298,13 +298,22 @@ bool Mic_Class::begin()
 
     size_t stack = 2048 + (_cfg.dma_buf_len * sizeof(uint16_t));
 
+    BaseType_t created;
     if (_cfg.task_pinned_core < portNUM_PROCESSORS) {
-        xTaskCreatePinnedToCore(mic_task, "mic_task", stack, this,
-                                _cfg.task_priority, &_task_handle,
-                                _cfg.task_pinned_core);
+        created = xTaskCreatePinnedToCore(mic_task, "mic_task", stack, this,
+                                          _cfg.task_priority, &_task_handle,
+                                          _cfg.task_pinned_core);
     } else {
-        xTaskCreate(mic_task, "mic_task", stack, this,
-                    _cfg.task_priority, &_task_handle);
+        created = xTaskCreate(mic_task, "mic_task", stack, this,
+                              _cfg.task_priority, &_task_handle);
+    }
+    if (created != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create mic_task");
+        _task_running = false;
+        _task_handle  = nullptr;
+        _uninstall_i2s();
+        if (_codec && _codec->isStarted()) _codec->stop();
+        return false;
     }
 
     ESP_LOGI(TAG, "Recording task started (rate=%lu, os=%d)",
@@ -314,7 +323,9 @@ bool Mic_Class::begin()
 
 void Mic_Class::end()
 {
-    if (!_task_running) return;
+    // The task may already have exited on its own (e.g. buffer allocation
+    // failure) while I2S is still installed, so do not bail out early.
+    if (!_task_running && !_task_handle && !_i2s_installed) return;
     _task_running = false;
 
     if (_task_handle) {

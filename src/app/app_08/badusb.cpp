@@ -1399,14 +1399,35 @@ bool AppBadUSB::_loadScript(const char* path)
     File f = SD_MMC.open(path);
     if (!f) { _errMsg = "Cannot open file"; return false; }
 
+    constexpr size_t kMaxScriptBytes = 64 * 1024;
+    constexpr size_t kMaxLineLen     = 512;
+    if ((size_t)f.size() > kMaxScriptBytes) {
+        _errMsg = "Script too large (>64 KB)";
+        f.close();
+        return false;
+    }
+
     while (f.available()) {
-        String ln = f.readStringUntil('\n');
+        String ln;
+        bool tooLong = false;
+        while (f.available()) {
+            int ch = f.read();
+            if (ch < 0 || ch == '\n') break;
+            if (ln.length() < kMaxLineLen + 2) ln += (char)ch;  /* +2 slack for CR/BOM trim */
+            else { tooLong = true; break; }
+        }
         if (_lines.empty() && ln.startsWith("\xEF\xBB\xBF")) ln.remove(0, 3);
         while (ln.length() > 0) {
             char c = ln.charAt(ln.length() - 1);
             if (c == '\r' || c == ' ' || c == '\t')
                 ln.remove(ln.length() - 1);
             else break;
+        }
+        if (tooLong || ln.length() > kMaxLineLen) {
+            _errMsg = "Line too long (>512)";
+            _errLine = (int)_lines.size() + 1;
+            f.close(); _lines.clear();
+            return false;
         }
         _lines.push_back(std::string(ln.c_str()));
         if (_lines.size() > 4000) {
@@ -1435,6 +1456,12 @@ bool AppBadUSB::_loadScript(const char* path)
                     while ((pos = ln.find(m.first, pos)) != std::string::npos) {
                         ln.replace(pos, m.first.size(), m.second);
                         pos += m.second.size();
+                        if (ln.size() > kMaxLineLen) {
+                            _errMsg = "DEFINE expands line too long";
+                            _errLine = (int)(&ln - &_lines[0]) + 1;
+                            _lines.clear();
+                            return false;
+                        }
                     }
                 }
                 continue;

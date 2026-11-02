@@ -197,11 +197,15 @@ static lv_fs_res_t fs_dir_read(lv_fs_drv_t * drv, void * dir_p, char * fn)
         return LV_FS_RES_OK;  // End of directory
     }
     
+    /* LVGL 8.3 passes no buffer size; callers provide at least
+     * LV_FS_MAX_FN_LENGTH bytes. Truncate to that. */
     if (entry.isDirectory()) {
         fn[0] = '/';
-        strcpy(&fn[1], entry.name());
+        strncpy(&fn[1], entry.name(), LV_FS_MAX_FN_LENGTH - 2);
+        fn[LV_FS_MAX_FN_LENGTH - 1] = '\0';
     } else {
-        strcpy(fn, entry.name());
+        strncpy(fn, entry.name(), LV_FS_MAX_FN_LENGTH - 1);
+        fn[LV_FS_MAX_FN_LENGTH - 1] = '\0';
     }
     
     entry.close();

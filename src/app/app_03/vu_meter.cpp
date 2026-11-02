@@ -226,6 +226,10 @@ void App03::_doHeavyInit()
     _initState = InitState::Ready;
 }
 
+/* Capture buffer is tracked here so the closer can reclaim it if the task
+ * ever has to be force-deleted. */
+static int16_t* s_capBuf = nullptr;
+
 /* ══════════════════════════════════════════════════════════════════
  *  onClose
  * ══════════════════════════════════════════════════════════════════ */
@@ -233,11 +237,16 @@ void App03::_releaseResources()
 {
     _taskRun = false;
     if (_captureTask) {
-        for (int i = 0; i < 25 && _captureTask; ++i)
+        /* Cooperative exit: the task polls _taskRun (i2s_read times out in
+         * 60 ms), frees its buffer and clears _captureTask itself. */
+        for (int i = 0; i < 100 && _captureTask; ++i)
             vTaskDelay(pdMS_TO_TICKS(10));
         if (_captureTask) {
+            /* Last resort only: the task is wedged. Reclaim its buffer here. */
+            Serial.println("[VU] capture task did not exit; forcing delete");
             vTaskDelete(_captureTask);
             _captureTask = nullptr;
+            if (s_capBuf) { heap_caps_free(s_capBuf); s_capBuf = nullptr; }
         }
     }
 
@@ -339,6 +348,7 @@ void App03::_captureLoop()
 
     int16_t* buf = (int16_t*)heap_caps_malloc(kBufBytes, MALLOC_CAP_INTERNAL);
     if (!buf) { _taskRun = false; return; }
+    s_capBuf = buf;
 
     float   smooth = ANGLE_MIN;
     int32_t dcAcc  = 0;
@@ -366,7 +376,8 @@ void App03::_captureLoop()
         _latestAngle.store(smooth);
     }
 
-    free(buf);
+    s_capBuf = nullptr;
+    heap_caps_free(buf);
 }
 
 } // namespace MOONCAKE::APPS
