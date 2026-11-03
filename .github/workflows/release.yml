@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+      - run: pip install platformio
+      - run: pio run -e esp32s3box
+      - run: sh tools/host_tests/run.sh
+      - name: Merge images and generate manifest
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 tools/release/merge_bin.py --build-dir .pio/build/esp32s3box --version "$VERSION" --out-dir dist
+          cd dist && sha256sum ./*.bin manifest.json > SHA256SUMS && cat SHA256SUMS
+      - name: Assemble Pages site
+        run: |
+          mkdir -p _site/flash
+          cp docs/flash/index.html _site/flash/
+          cp dist/manifest.json dist/grumpykitty-*-merged.bin _site/flash/
+          touch _site/.nojekyll
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "GrumpyKitty $GITHUB_REF_NAME" --generate-notes \
+            dist/grumpykitty-*-merged.bin dist/grumpykitty-*-firmware.bin dist/SHA256SUMS dist/manifest.json
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
