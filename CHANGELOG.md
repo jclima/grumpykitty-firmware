@@ -5,6 +5,7 @@
 ### Added
 - Table-driven, scrollable apps menu (up to 24 apps); adding an app is one line in `APP_REGISTRY[]`.
 - Media Remote, Slide Clicker (BLE HID), Radio Scanner (Wi-Fi/BLE) and Voice Recorder (WAV on SD) apps.
+- Boat Dash app: read-only Signal K dashboard (2x2 tile pages, alarm takeover with sound, status page, config in `/grumpykitty/signalk.json`, server discovery via mDNS), plus a mock Signal K server and host tests.
 - Shared BLE remote HID helper, SD guard helper and `tools/gen_app_icon.py` icon generator.
 
 ### Changed

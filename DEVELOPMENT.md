@@ -97,10 +97,36 @@ Lifecycle notes:
 
 ## Boat Dash (app_14)
 
-Read-only Signal K dashboard (work in progress: only the data core exists so far; the app UI and network code come next).
+Read-only Signal K dashboard: GET only, it never writes to the server.
 
 - `src/app/app_14/sk_model.{h,cpp}`: pure C++17 (no Arduino/ESP headers) port of the VesselStack display semantics: unit conversions and rounding, threshold severity with hysteresis, notification states, clock-free staleness, config parsing, the ArduinoJson filter for `vessels/self`. `sk_defaults.h` holds the built-in default config (each value cites its VesselStack source).
-- `lib/ArduinoJson` is vendored unmodified (version in `lib/ArduinoJson/VERSION`). It parses short number literals into float32, so `sk_model` reads every JSON number through `sk::jsonNumber`; do not call `as<double>()` on config or readings directly.
+- `src/app/app_14/sk_client.{h,cpp}`: one worker task (12 KB stack, priority 1, core 0) that discovers the server and polls it. Shared state is heap-allocated and reference counted; `stop()` is cooperative and bounded (3.5 s). The worker is never `vTaskDelete`d mid-request. A worker stuck in a blocking connect finishes by itself and frees its state.
+- `src/app/app_14/boat_dash.{h,cpp}`: the app (pages of 2x2 tiles, status page, alarm takeover).
+- `lib/ArduinoJson` is vendored unmodified (version in `lib/ArduinoJson/VERSION`). `ARDUINOJSON_USE_DOUBLE` is already 1 on ESP32 and on the host, but the number parser still stores any literal whose mantissa fits 24 bits and whose exponent is small as float32 regardless of that macro (11.8 arrives as 11.8000001907). No configuration macro changes this, so `sk_model` reads every JSON number through `sk::jsonNumber`; do not call `as<double>()` on config or readings directly.
+
+### Config file
+
+`/grumpykitty/signalk.json` on the SD card. If the SD card or the file is missing the built-in defaults (`sk_defaults.h`) are used. If the file does not parse, the app shows the error with line and column for about 3 s and then uses the defaults. Format (the same schema as `sk_defaults.h`, which is the full example); a minimal file that only points at a server:
+
+    {
+      "schema": 1,
+      "server": {"host": "192.168.1.50", "port": 3000, "token": "", "poll_ms": 2000, "fetch": "tree"}
+    }
+
+If you omit all of `instruments`, `notifications` and `pages`, the built-in ones are used with your `server`. If you give any of them, they replace the defaults (copy `sk_defaults.h` and edit it). `fetch` is `"tree"` (one GET of `vessels/self`) or `"per_path"` (one GET per configured path, 404 means absent). `poll_ms` is clamped to >= 1000. A page lists up to 4 tiles; longer item lists continue on extra pages. A `"special": "status"` page shows its first 3 items as rows plus server, link state, data age and the last error.
+
+### Discovery and token
+
+1. `server.host` if set. An explicit host is authoritative: if it does not answer `GET /signalk` the app shows "Server unreachable" and keeps retrying it; it does not wander to another server.
+2. The last good `ip:port` cached in NVS (`sk_last_ip`).
+3. mDNS service `_signalk-http._tcp` (2 s), then the host `vesselstack.local` (2 s). The device advertises itself as `grumpykitty` only while discovering.
+4. Otherwise "Set host in /grumpykitty/signalk.json", retried every 8 s.
+
+Each candidate must answer `GET /signalk` with `endpoints.v1`; the winner from step 3 is cached. After 3 failed polls on a discovered server it is discovered again. If the server answers 401/403 the app shows "Auth required: add token". The token goes in `server.token` and is sent only as `Authorization: Bearer ...`; it is never logged or displayed (it does sit in plain text on the SD card).
+
+### Using the app
+
+Left/Right change page, short B returns to page 1, A refreshes now (or acknowledges the active alarm), long-press B exits. The header shows a cat-mood badge: `purr` all fresh values ok, `hmph` any warning, `HISS!` any alarm, `zzz` no fresh data. A new alarm jumps to its page, blinks the tile until A acknowledges it and beeps about 3 times a second (volume setting respected; the key-click toggle is ignored, so an alarm is audible even with key clicks off). The screen stays awake while an app is open (the launcher resets the idle timer in app mode). The status page, or any page with "STALE 42s" tiles, tells you when data has stopped arriving.
 
 Host tests (macOS/Linux, no board, nothing written to the repo):
 
@@ -114,7 +140,19 @@ Mock Signal K server (Python 3 standard library only, read-only):
     curl -H 'Authorization: Bearer SECRET' http://127.0.0.1:3000/signalk/v1/api/vessels/self
     kill -USR1 <pid>                         # cycle ok -> warn -> alarm; or add ?scenario=alarm to any URL
 
-It serves `/signalk` (discovery), `/signalk/v1/api/vessels/self` (full tree with `$source`/`values`/`meta` noise and a `Date` header) and per-path `/signalk/v1/api/vessels/self/<a>/<b>/...` (404 if unknown). Timestamps advance except for the frozen path `electrical.solar.main.current`, which goes stale on the dashboard. With `--require-token` the API answers 401 without the Bearer token (discovery stays open). The default `--bind` is loopback.
+It serves `/signalk` (discovery), `/signalk/v1/api/vessels/self` (full tree with `$source`/`values`/`meta` noise and a `Date` header) and per-path `/signalk/v1/api/vessels/self/<a>/<b>/...` (404 if unknown). Timestamps advance except for the frozen path `electrical.solar.main.current`, which goes stale on the dashboard. With `--require-token` the API answers 401 without the Bearer token (discovery stays open). The default `--bind` is loopback; use `--bind 0.0.0.0` so the device can reach it, and allow incoming connections for Python if the macOS firewall asks.
+
+Acceptance checklist (on a device, with the mock server on your Mac):
+
+- [ ] Open Boat Dash with no SD card: defaults load, "Connect WiFi in Settings" / "WiFi offline - A to reconnect" shown as appropriate.
+- [ ] With `host` set to the Mac's IP: tiles fill within a poll or two, footer shows `ip:3000 | 2s`, badge `purr`.
+- [ ] Solar tile goes `STALE nn s` and dims after ~30 s; badge stays `purr` for the rest.
+- [ ] `kill -USR1` the mock twice: `hmph` (yellow borders) then `HISS!`: page jumps, tile blinks, beeps until A.
+- [ ] A silences the beeps, the tile stays solid red; back to ok clears it; stop the mock: values age, status page shows "Server unreachable".
+- [ ] `--require-token SECRET`: "Auth required: add token"; add the token to the config and it recovers.
+- [ ] Malformed config: error with line/column for ~3 s, then defaults.
+- [ ] No `host` and mock not discoverable: "Set host in /grumpykitty/signalk.json".
+- [ ] Exit with long-press B while connected and while the server is unreachable; reopen repeatedly: no hang, no crash, heap stable.
 
 ## Art pipeline
 
