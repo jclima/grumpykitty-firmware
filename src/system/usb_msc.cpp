@@ -133,7 +133,7 @@ int usb_msc_enable(void)
     /* 3. Wire callbacks, set LUN geometry, expose media to host.
      *    USB is already a CDC+MSC composite — host polls test_unit_ready
      *    every few seconds; mediaPresent(true) makes the drive appear. */
-    s_msc.vendorID("MeowKit");
+    s_msc.vendorID("FancyKit");
     s_msc.productID("SDCard");
     s_msc.productRevision("1.0");
     s_msc.onRead(_msc_read_cb);

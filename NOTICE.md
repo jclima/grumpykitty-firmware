@@ -60,6 +60,10 @@ Distributing a firmware binary that links GPL-3.0 libraries generally triggers G
 
 Whether a given build is distributable under your intended terms depends on these facts; get legal advice before releasing binaries. `IRremoteESP8266` (LGPL-2.1) code is also linked and brings its own obligations (for example, allowing relinking). Upstream's own unlicensed code compounds the uncertainty.
 
+## Name
+
+FancyKitty is the name of this fork. "MeowKit" and "MeowKit-S3" are the upstream project and product names and remain theirs; every upstream reference in this repository (URLs, attribution, class and file names, historical changelog entries) keeps the original name.
+
 ## (f) Trademark
 
 "MeowKit" is the upstream vendor's product name. If you distribute a renamed or modified version, avoid wording or branding that implies endorsement by, or affiliation with, the vendor.

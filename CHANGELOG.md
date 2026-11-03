@@ -7,6 +7,9 @@
 - Media Remote, Slide Clicker (BLE HID), Radio Scanner (Wi-Fi/BLE) and Voice Recorder (WAV on SD) apps.
 - Shared BLE remote HID helper, SD guard helper and `tools/gen_app_icon.py` icon generator.
 
+### Changed
+- Rebranded the firmware identity to FancyKitty (fork of MeowKit-S3): BLE advertised names and HID manufacturer, default BLE device name, USB MSC SCSI vendor id (`FancyKit`), About dialog name and serial log banners. Saved BLE names in NVS are not modified.
+
 ### Fixed
 - SD: a card that is inserted but cannot be mounted (exFAT, unformatted, non-FAT) is now reported as "unsupported format - use FAT32" instead of "No SD card"; failed remounts are throttled to once per 3 s.
 - Battery monitoring keeps running while an app is open.

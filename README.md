@@ -1,3 +1,5 @@
+FancyKitty is a fork of MeowKit-S3 firmware by Mingo / Whitecliff, see [NOTICE.md](NOTICE.md).
+
 ## Documentation
 
 For setup, firmware updates, development guides, and product documentation, visit:

@@ -104,7 +104,7 @@ void AppSlideClicker::_ui() {
             color = hp::COL_ERR;
         } else if (st == S_CONNECTED) { snprintf(line, sizeof(line), "Ready"); color = COL_OK; }
         else if (st == S_PAIRING) { snprintf(line, sizeof(line), "Pairing..."); color = hp::COL_WARN; }
-        else { snprintf(line, sizeof(line), "Pair 'MeowKit Remote'"); color = hp::COL_INFO; }
+        else { snprintf(line, sizeof(line), "Pair 'FancyKitty Remote'"); color = hp::COL_INFO; }
     }
     lcd.fillRect(1, 104, 318, 30, hp::COL_BG);
     lcd.setFont(&fonts::efontCN_16); lcd.setTextColor(color, hp::COL_BG);

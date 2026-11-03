@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT; Copyright (c) 2026 JC Lima -->
-# Development
+# FancyKitty Development
 
 ## Prerequisites
 
@@ -78,7 +78,7 @@ Lifecycle notes:
 ## Shared BLE HID remote transport
 
 - `src/app/app_common/ble_remote_hid.{h,cpp}` is the single BLE HID transport for Media Remote (app_10) and Slide Clicker (app_11). Namespace `ble_remote_hid`: `begin/end/tick/ready/connected/failed/tapKey/tapMedia`.
-- Identity: GATT app id 0xB00, name "MeowKit Remote", static random address (Air Mouse scheme, distinct tweak) and one report map (keyboard report ID 1, consumer control report ID 2), so a host pairs once for both apps. It is intentionally not the BadUSB public-address identity.
+- Identity: GATT app id 0xB00, name "FancyKitty Remote", static random address (Air Mouse scheme, distinct tweak) and one report map (keyboard report ID 1, consumer control report ID 2), so a host pairs once for both apps. It is intentionally not the BadUSB public-address identity.
 - It takes a `bluetooth_manager` lease (`Owner::HidRemote`); with Bluetooth disabled in Settings `begin()` fails and `failed()` is true.
 - Sending never blocks: `tapKey`/`tapMedia` queue a press+release pair (16-entry queue, a tap that does not fit is dropped and returns false) and `tick()` drains it with >= 10 ms between reports. Call `tick()` from every `onRunning`.
 - `end()` sends a neutral keyboard and media report while the stack is valid, then releases the lease. Boot protocol mode carries keyboard reports only.

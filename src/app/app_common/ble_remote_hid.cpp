@@ -50,7 +50,7 @@ uint8_t info[] = {0x11, 0x01, 0, 2}, control = 0, protocol = 1;
 std::atomic<uint8_t> protocolMode{1};
 uint8_t report[8] = {}, ccc[2] = {}, ref[] = {1, 1};
 uint8_t bootReport[8] = {}, bootCcc[2] = {};
-uint8_t manufacturer[] = "MeowKit", pnp[] = {2, 0xE5, 0x11, 0xB0, 0x10, 0x00, 0x01};
+uint8_t manufacturer[] = "FancyKitty", pnp[] = {2, 0xE5, 0x11, 0xB0, 0x10, 0x00, 0x01};
 uint8_t reportMap[] = {
   USAGE_PAGE(1),      0x01,          // USAGE_PAGE (Generic Desktop Ctrls)
   USAGE(1),           0x06,          // USAGE (Keyboard)
@@ -270,7 +270,7 @@ namespace ble_remote_hid {
 bool begin() {
     if (bluetooth_manager::owns(lease)) return !error;
     // Both Media Remote and Slide Clicker share this name/address so the host pairs once.
-    lease = bluetooth_manager::acquire(bluetooth_manager::Owner::HidRemote, "MeowKit Remote", gap, gatts, stopped);
+    lease = bluetooth_manager::acquire(bluetooth_manager::Owner::HidRemote, "FancyKitty Remote", gap, gatts, stopped);
     if (!lease) { active = false; error = true; return false; }
     active = true; linked = false; secure = false; subscribed = false; bootSubscribed = false;
     mediaSubscribed = false; suspended = false; congested = false; error = false;
@@ -287,7 +287,7 @@ bool begin() {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY, &keys, 1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY, &keys, 1);
     static uint8_t ad[] = {2, 1, 6, 3, 3, 0x12, 0x18, 3, 0x19, 0xC1, 3};  // appearance: keyboard
-    static uint8_t name[] = {15, 9, 'M','e','o','w','K','i','t',' ','R','e','m','o','t','e'};
+    static uint8_t name[] = {18, 9, 'F','a','n','c','y','K','i','t','t','y',' ','R','e','m','o','t','e'};
     // Static random identity, derived like Air Mouse but with a distinct tweak,
     // so host caches never mix this GATT layout with another profile.
     const uint8_t* baseAddress = esp_bt_dev_get_address();

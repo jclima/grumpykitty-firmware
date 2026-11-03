@@ -33,7 +33,7 @@ static int      s_led          = 30;
 static uint32_t s_led_color    = 0xFFFFFF;  /* white */
 static int      s_led_effect   = 1;         /* SOLID */
 static bool     s_wifi_en      = true;
-static char     s_ble_name[21] = "MeowKit";
+static char     s_ble_name[21] = "FancyKitty";
 static bool     s_ble_en       = false;
 
 /* ── Dirty-flag write coalescing ─────────────────────────────── */
@@ -94,7 +94,7 @@ void settings_load_all(void)
 
     /* Load WiFi / BLE flags (hardware action deferred to respective bridges) */
     s_wifi_en = persist_get_int(PKEY_WIFI_EN, 1) != 0;
-    persist_get_str(PKEY_BLE_NAME, s_ble_name, sizeof(s_ble_name), "MeowKit");
+    persist_get_str(PKEY_BLE_NAME, s_ble_name, sizeof(s_ble_name), "FancyKitty");
     s_ble_en  = persist_get_int(PKEY_BLE_EN,  0) != 0;
     bluetooth_manager::setEnabled(s_ble_en);
 

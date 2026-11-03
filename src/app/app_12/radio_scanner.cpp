@@ -159,7 +159,7 @@ void AppRadioScanner::_enterTab(int tab) {
     }
     tableClear();
     if (!bluetooth_manager::enabled()) { _state = ST_BT_OFF; return; }
-    _lease = bluetooth_manager::acquire(bluetooth_manager::Owner::Scanner, "MeowKit Scanner", gapCb, nullptr, nullptr);
+    _lease = bluetooth_manager::acquire(bluetooth_manager::Owner::Scanner, "FancyKitty Scanner", gapCb, nullptr, nullptr);
     if (!_lease) { _state = ST_BT_ERR; return; }
     memset(&g_scan_params, 0, sizeof(g_scan_params));
     g_scan_params.scan_type = BLE_SCAN_TYPE_PASSIVE;

@@ -353,7 +353,7 @@ static void bbt_drawOverview(LCD& lcd, int8_t* results, bool showStart = true)
     lcd.setFont(&fonts::efontCN_16);
     lcd.setTextColor(_BBT_CYAN, _BBT_BG);
     lcd.setCursor(4, 2);
-    lcd.printf("MEOWKIT HARDWARE BOARD TEST");
+    lcd.printf("FANCYKITTY HARDWARE BOARD TEST");
     lcd.setTextColor(_BBT_DIM, _BBT_BG);
     lcd.setCursor(256, 2);
     lcd.printf("12 ITEMS");
