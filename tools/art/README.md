@@ -77,3 +77,24 @@ App icons are full-bleed (no ring or disc): a head crop or a big prop on a dark 
 vignette and an amber rim light, ordered-dithered so RGB565 does not band. Drawn text is limited to
 <= 5 chars (`MEH`, `NOPE`, `NO`, `MSC`). `check_sizes_v3.py <dir>` compares a palette directory against
 `src/ui/images/<name>.c` (read-only; `make_v3.sh` runs it). Nothing here writes to `src/`.
+
+## Boot animation (GrumpyKitty alley cat)
+
+    tools/art/make_boot_gif.sh
+
+Builds `draw.swift` + `draw_v3*.swift` + `boot_gif.swift`, renders 23 opaque 320x240 frames and writes
+`tools/art/out/v3/alley/boot_animation.gif` (ImageIO; 3160 ms in total, delays 7-95 cs, so 12-15 fps while it moves)
+plus `boot_contact_sheet.png` (12 evenly spaced frames read back from the GIF). Choreography: black alley, amber eyes
+open in the dark, light comes up on the half-asleep cat, slow blink, yawn, hiss, `MEH` bubble pops, `GrumpyKitty`
+wordmark (Impact, bone + amber) slams in, 0.95 s hold on a frame that matches the home screen (same wall, cat and bubble).
+The wall is flat/posterised (no grit or dither) so the 256-colour palette does not band and LZW stays tiny.
+ImageIO writes a global palette and frame-delta images (transparent index 255, disposal 1, no loop extension, like the
+original); `src/splash/splash_screen.cpp` draws each line straight to the LCD and skips transparent pixels, so this is
+correct there. Beats and timings are the `beats` table in `boot_gif.swift`. The boot sound is trimmed to the GIF duration
+by `tools/embed_gif.py`, so keep the total near 3 s. Deploying is a manual copy:
+
+    cp tools/art/out/v3/alley/boot_animation.gif src/system/assets/boot_animation.gif
+
+PlatformIO does not track the `.incbin` GIF as a dependency of `splash_gif_data.S`: after replacing the GIF delete
+`.pio/build/<env>/src/splash/splash_gif_data.S.o` (or `make clean`) before `make build`, otherwise the firmware
+carries the old bytes with the new length.

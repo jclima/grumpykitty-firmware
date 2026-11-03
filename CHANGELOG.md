@@ -11,6 +11,7 @@
 ### Changed
 - New GrumpyKitty visual theme: mean alley-cat mascots, cat-gag app icons, brick-alley backgrounds, amber accents; colours centralised in src/ui/ui_theme.h
 - Rebranded the firmware identity to GrumpyKitty (fork of MeowKit-S3): BLE advertised names and HID manufacturer, default BLE device name, USB MSC SCSI vendor id (`GrumpyKt`), About dialog name and serial log banners. Saved BLE names in NVS are not modified.
+- New boot animation: GrumpyKitty alley cat wakes in the dark, yawns, hisses and shows a MEH bubble and the GrumpyKitty wordmark (23 frames, 3.16 s, 113 KB instead of 2.1 MB; frame-delta GIF with transparency). The boot sound is trimmed to the new duration. Regenerate with `tools/art/make_boot_gif.sh`.
 
 ### Security
 - Boat Dash: the Signal K bearer token is sent only to the configured `server.host`, never to servers found via mDNS or the cached address. With a token but no host the app shows "Auth needs fixed host: set server.host" on 401/403.
