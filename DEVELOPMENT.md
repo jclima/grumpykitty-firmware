@@ -95,6 +95,27 @@ Lifecycle notes:
 - A core-0 task fills a 256 KB PSRAM ring (overflow is counted and shown as "DROPPED"); `onRunning` is the only SD writer (<= 16 KB per call) and patches the WAV header every 5 s and on stop, so a long-press-B exit or power loss leaves a playable file.
 - Right opens the list (newest first); A plays/stops, B (tap) asks to delete, Left goes back.
 
+## Boat Dash (app_14)
+
+Read-only Signal K dashboard (work in progress: only the data core exists so far; the app UI and network code come next).
+
+- `src/app/app_14/sk_model.{h,cpp}`: pure C++17 (no Arduino/ESP headers) port of the VesselStack display semantics: unit conversions and rounding, threshold severity with hysteresis, notification states, clock-free staleness, config parsing, the ArduinoJson filter for `vessels/self`. `sk_defaults.h` holds the built-in default config (each value cites its VesselStack source).
+- `lib/ArduinoJson` is vendored unmodified (version in `lib/ArduinoJson/VERSION`). It parses short number literals into float32, so `sk_model` reads every JSON number through `sk::jsonNumber`; do not call `as<double>()` on config or readings directly.
+
+Host tests (macOS/Linux, no board, nothing written to the repo):
+
+    tools/host_tests/run.sh                  # builds into a temp dir and runs; expects "N checks, 0 failed"
+    SCRATCH=/some/dir tools/host_tests/run.sh   # keep the binary there instead
+
+Mock Signal K server (Python 3 standard library only, read-only):
+
+    python3 -I tools/mock_signalk.py --port 3000 --bind 0.0.0.0   # reachable from the device on your LAN
+    python3 -I tools/mock_signalk.py --port 3000 --require-token SECRET --scenario warn
+    curl -H 'Authorization: Bearer SECRET' http://127.0.0.1:3000/signalk/v1/api/vessels/self
+    kill -USR1 <pid>                         # cycle ok -> warn -> alarm; or add ?scenario=alarm to any URL
+
+It serves `/signalk` (discovery), `/signalk/v1/api/vessels/self` (full tree with `$source`/`values`/`meta` noise and a `Date` header) and per-path `/signalk/v1/api/vessels/self/<a>/<b>/...` (404 if unknown). Timestamps advance except for the frozen path `electrical.solar.main.current`, which goes stale on the dashboard. With `--require-token` the API answers 401 without the Bearer token (discovery stays open). The default `--bind` is loopback.
+
 ## Art pipeline
 
 The redone images under `src/ui/images/` (mascots, app icons, UI icons, backgrounds, panels) are
