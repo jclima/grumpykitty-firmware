@@ -246,6 +246,64 @@ class Tracker {
   bool everConnected_ = false;
 };
 
+/// Literal IPv4: exactly four dotted decimal octets 0..255, 1-3 digits each, no leading zeros
+/// (octal ambiguity), no sign, no other characters.
+inline bool isValidIPv4(const std::string& s) {
+  int octets = 0;
+  size_t i = 0;
+  while (i <= s.size()) {
+    size_t start = i;
+    int v = 0;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') {
+      v = v * 10 + (s[i] - '0');
+      if (++i - start > 3) return false;
+    }
+    const size_t len = i - start;
+    if (len == 0 || v > 255 || (len > 1 && s[start] == '0')) return false;
+    octets++;
+    if (i == s.size()) break;
+    if (s[i] != '.') return false;
+    i++;
+  }
+  return octets == 4;
+}
+
+/// DNS hostname of LDH labels only ([A-Za-z0-9-], 1..63 chars, no leading/trailing '-'), at most
+/// 253 chars (excluding one optional trailing dot). The last label must not be all digits, so
+/// numeric lookalikes such as "256.1.1.1", "1.2.3" or "2130706433" (which URL parsers may read as
+/// an IP in unexpected ways) are rejected rather than treated as names.
+inline bool isValidHostname(const std::string& host) {
+  std::string h = host;
+  if (!h.empty() && h.back() == '.') h.pop_back();
+  if (h.empty() || h.size() > 253) return false;
+  size_t start = 0;
+  bool lastAllDigits = false;
+  while (true) {
+    size_t end = h.find('.', start);
+    if (end == std::string::npos) end = h.size();
+    const size_t len = end - start;
+    if (len == 0 || len > 63 || h[start] == '-' || h[end - 1] == '-') return false;
+    bool allDigits = true;
+    for (size_t i = start; i < end; i++) {
+      const char c = h[i];
+      const bool digit = c >= '0' && c <= '9';
+      if (!(digit || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-')) return false;
+      if (!digit) allDigits = false;
+    }
+    lastAllDigits = allDigits;
+    if (end == h.size()) break;
+    start = end + 1;
+  }
+  return !lastAllDigits;
+}
+
+/// server.host: empty (discover), a literal IPv4 address, or a plain hostname. Anything that
+/// HTTPClient could parse differently (port, userinfo, path, query, fragment, IPv6 brackets,
+/// whitespace, control characters) is rejected, so the string we vet is the host that is dialled.
+inline bool isValidServerHost(const std::string& host) {
+  return host.empty() || isValidIPv4(host) || isValidHostname(host);
+}
+
 /// True for an mDNS name: ends in ".local" (case-insensitive, optional trailing dot) with a
 /// non-empty label before it. "local", "notlocal" and "pi.lan" are not mDNS names.
 inline bool isMdnsHost(const std::string& host) {
@@ -264,10 +322,12 @@ inline bool isMdnsHost(const std::string& host) {
 
 /// Security: the bearer token is sent only to the explicitly configured server.host (never to a
 /// discovered or cached endpoint, since mDNS can be spoofed on the LAN), only if a token is set,
-/// and never to a ".local" (mDNS) name, whose resolution is spoofable. Plain HTTP stays cleartext.
+/// and never to a ".local" (mDNS) name, whose resolution is spoofable. Hosts that are not
+/// strictly valid (isValidServerHost) are refused too, as defence in depth behind parseConfig. Plain HTTP stays cleartext.
 inline bool shouldSendToken(const Endpoint& ep, const Config& cfg) {
-  return ep.configured && !cfg.server.token.empty() && !isMdnsHost(ep.host) &&
-         !isMdnsHost(cfg.server.host);
+  return ep.configured && !cfg.server.token.empty() && !ep.host.empty() &&
+         isValidServerHost(ep.host) && isValidServerHost(cfg.server.host) &&
+         !isMdnsHost(ep.host) && !isMdnsHost(cfg.server.host);
 }
 
 }  // namespace sk

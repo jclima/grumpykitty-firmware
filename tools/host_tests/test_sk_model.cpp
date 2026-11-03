@@ -1030,6 +1030,7 @@ static void testShouldSendToken() {
   ep.fromDiscovery = false;
   CHECK(!shouldSendToken(ep, cfg));  // cached
   ep.configured = true;
+  ep.host = cfg.server.host = "192.168.1.10";
   CHECK(shouldSendToken(ep, cfg));   // explicit server.host
   cfg.server.token.clear();
   CHECK(!shouldSendToken(ep, cfg));  // configured but no token
@@ -1061,6 +1062,75 @@ static void testMdnsHost() {
   }
 }
 
+static void testServerHostValidation() {
+  const char* bad[] = {"vesselstack.local:3000", "x@vesselstack.local", "vesselstack.local/x",
+                       "vesselstack.local?", "vesselstack.local#", "vesselstack.local ",
+                       " vesselstack.local", "vessel\tstack.local", "vesselstack.local\n",
+                       "vesselstack.local\r", "pi.lan\x01", "http://pi.lan", "[::1]", "::1",
+                       "[fe80::1]:3000", "pi_lan", "pi%2elan", "pi..lan", ".pi.lan", ".", "-pi.lan",
+                       "pi-.lan", "pi.-lan", "192.168.1.10:3000", "192.168.1.10/", "256.1.1.1",
+                       "1.2.3", "1.2.3.4.5", "01.2.3.4", "+1.2.3.4", "-1.2.3.4", "1.2.3.4.",
+                       "1.2.3.", "2130706433", "pi.123", "1.2.3.04", "1..2.3"};
+  for (const char* h : bad) {
+    CHECK(!isValidServerHost(h));
+    Endpoint ep;
+    ep.configured = true;
+    ep.host = h;
+    Config cfg;
+    cfg.server.token = "SECRET";
+    cfg.server.host = h;
+    CHECK(!shouldSendToken(ep, cfg));
+    std::string j = std::string("{\"schema\":1,\"server\":{\"host\":\"") + h + "\"}}";
+    // escape-free strings only reach parseConfig; control chars are exercised via the helpers above
+    if (!strpbrk(h, "\\\"") && !strpbrk(h, "\x01\t\n\r")) {
+      Config c;
+      std::string err;
+      CHECK(!parseConfig(j.c_str(), j.size(), c, err));
+      CHECK(err.find("server.host must be a hostname or IPv4 address") != std::string::npos);
+      CHECK(c.server.host.empty());
+    }
+  }
+  CHECK(!isValidServerHost(std::string(64, 'a') + ".lan"));  // label > 63
+  CHECK(isValidServerHost(std::string(63, 'a') + ".lan"));
+  CHECK(!isValidServerHost(std::string(254, 'a')));
+  std::string longName;  // 4 x 62 + 3 dots = 251 chars, valid
+  for (int i = 0; i < 4; i++) longName += (i ? "." : "") + std::string(62, 'b');
+  CHECK(isValidServerHost(longName));
+  CHECK(!isValidServerHost(longName + ".abcd"));  // 256 chars
+  const char* good[] = {"", "192.168.1.10", "0.0.0.0", "255.255.255.255", "pi.lan", "vesselstack.local",
+                        "a-b.example.com", "pi.", "PI.LAN", "boat", "a1.b2"};
+  for (const char* h : good) CHECK(isValidServerHost(h));
+  CHECK(isValidIPv4("10.0.0.1"));
+  CHECK(!isValidIPv4("pi.lan"));
+  CHECK(isValidHostname("pi.lan"));
+  CHECK(!isValidHostname(""));
+  // shouldSendToken: valid non-mDNS hosts get the token, .local never
+  Config cfg;
+  cfg.server.token = "SECRET";
+  Endpoint ep;
+  ep.configured = true;
+  const char* ok[] = {"192.168.1.10", "pi.lan", "a-b.example.com", "pi.", "PI.LAN"};
+  for (const char* h : ok) {
+    ep.host = cfg.server.host = h;
+    CHECK(shouldSendToken(ep, cfg));
+  }
+  ep.host = cfg.server.host = "vesselstack.local";
+  CHECK(isValidServerHost(ep.host) && !shouldSendToken(ep, cfg));
+  ep.host = cfg.server.host = "";
+  CHECK(!shouldSendToken(ep, cfg));
+  // config accepts good hosts, and a rejected config means defaults: empty host, no token
+  Config c;
+  std::string err;
+  const char* goodj = R"({"schema":1,"server":{"host":"pi.lan","token":"t"}})";
+  CHECK(parseConfig(goodj, strlen(goodj), c, err));
+  CHECK_STR(c.server.host, "pi.lan");
+  Config d;
+  std::string e2;
+  const char* badj = R"({"schema":1,"server":{"host":"vesselstack.local:3000","token":"SECRET"}})";
+  CHECK(!parseConfig(badj, strlen(badj), d, e2));
+  CHECK(d.server.host.empty() && d.server.token.empty());
+}
+
 int main() {
   testConversionsKnown();
   testNegate();
@@ -1086,6 +1156,7 @@ int main() {
   testTrackerPathsMode();
   testShouldSendToken();
   testMdnsHost();
+  testServerHostValidation();
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed ? 1 : 0;
 }

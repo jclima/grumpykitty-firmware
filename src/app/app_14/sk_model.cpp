@@ -566,6 +566,10 @@ bool parseConfig(const char* json, size_t len, Config& out, std::string& err) {
       if (!so["host"].isNull()) {
         if (!so["host"].is<const char*>() || strlen(so["host"].as<const char*>()) > 253)
           e.add("$.server.host", "must be a string of at most 253 characters (empty: discover)");
+        else if (!isValidServerHost(so["host"].as<const char*>()))
+          e.add("$.server.host",
+                "server.host must be a hostname or IPv4 address, without scheme, port or path; "
+                "use server.port for the port");
         else
           cfg.server.host = so["host"].as<const char*>();
       }
