@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0-grumpy] - 2026-11-02
+
 ### Added
 - Table-driven, scrollable apps menu (up to 24 apps); adding an app is one line in `APP_REGISTRY[]`.
 - Media Remote, Slide Clicker (BLE HID), Radio Scanner (Wi-Fi/BLE) and Voice Recorder (WAV on SD) apps.

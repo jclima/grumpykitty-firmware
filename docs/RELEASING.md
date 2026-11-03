@@ -9,20 +9,20 @@
 
 ## Version
 
-The single source of truth is the `VERSION` file at the repo root (plain `X.Y.Z`). The release workflow takes the version from the tag (`vX.Y.Z` -> `X.Y.Z`), so keep the two equal.
+The single source of truth is the `VERSION` file at the repo root (plain `X.Y.Z` or `X.Y.Z-suffix`, for example `0.1.0-grumpy`; no leading `v`). The release workflow takes the version from the tag (`vX.Y.Z` -> `X.Y.Z`) and fails early if it differs from `VERSION`, so keep the two equal.
 
 Follow-up (not done yet): the version string compiled into the firmware (`platformio.ini` header, About dialog, serial banner) is still hand-written. Feed it from `VERSION` at build time, for example in `tools/embed_gif.py` or a new pre-script emitting `-DGK_VERSION`.
 
 ## Steps
 
 1. Edit `VERSION`.
-2. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - date` and start a fresh `[Unreleased]`.
+2. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - date` (the tag without `v`) and start a fresh `[Unreleased]`.
 3. Commit, then tag and push:
    ```
    git tag vX.Y.Z
    git push origin main vX.Y.Z
    ```
-4. The `Release` workflow builds, runs host tests, creates `grumpykitty-X.Y.Z-merged.bin`, `-firmware.bin`, `SHA256SUMS` and `manifest.json`, publishes a GitHub Release, and deploys `docs/flash` plus the merged image and manifest to Pages.
+4. The `Release` workflow builds, runs host tests, creates `grumpykitty-X.Y.Z-merged.bin`, `-firmware.bin`, `SHA256SUMS` and `manifest.json`, publishes a GitHub Release, and deploys the whole `docs/flash` folder plus the merged image and manifest to Pages (`/flash/`, with a root page redirecting there).
 
 ## Local dry run
 
