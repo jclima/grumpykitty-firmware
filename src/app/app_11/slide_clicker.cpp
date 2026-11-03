@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Slide Clicker: joystick/buttons/touch -> BLE HID keyboard presentation keys. */
 #include "slide_clicker.h"
 #include "../app_common/ble_remote_hid.h"

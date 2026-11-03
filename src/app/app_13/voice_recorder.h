@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /**
  * @file voice_recorder.h
  * @brief Voice Recorder (app_13): 16 kHz mono WAV recording to SD, plus playback.

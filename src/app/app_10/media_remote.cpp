@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Media Remote: joystick/buttons -> BLE consumer-control keys. */
 #include "media_remote.h"
 #include "../app_common/ble_remote_hid.h"

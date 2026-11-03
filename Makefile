@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 JC Lima
 # MeowKit-S3 firmware developer tooling. See DEVELOPMENT.md.
 ENV ?= esp32s3box
 

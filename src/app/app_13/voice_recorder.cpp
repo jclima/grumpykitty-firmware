@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Voice Recorder: ES7210 mic -> PSRAM ring -> WAV on SD (onRunning is the only SD writer). */
 #include "voice_recorder.h"
 #include "wav_format.h"

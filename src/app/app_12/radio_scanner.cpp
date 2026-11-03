@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Radio Scanner: passive WiFi + BLE observation. Never transmits, never connects. */
 #include "radio_scanner.h"
 #include "../app_09/infrared_file_utils.h"

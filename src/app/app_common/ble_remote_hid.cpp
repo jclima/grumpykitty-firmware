@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 // Shared BLE HID remote transport (keyboard report ID 1 + consumer control
 // report ID 2). GATT layout and report map are derived from
 // app_08/badusb_ble.cpp; queueing follows app_06/air_mouse_hid.cpp. Everything

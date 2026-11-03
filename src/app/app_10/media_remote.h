@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Media Remote: BLE HID consumer-control remote (shared ble_remote_hid transport). */
 #pragma once
 #include <mooncake.h>

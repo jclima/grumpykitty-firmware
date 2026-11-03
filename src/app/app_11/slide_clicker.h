@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 JC Lima
+
 /** Slide Clicker: BLE HID presentation remote (shared ble_remote_hid transport). */
 #pragma once
 #include <mooncake.h>

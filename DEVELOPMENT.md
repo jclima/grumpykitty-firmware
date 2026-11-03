@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: MIT; Copyright (c) 2026 JC Lima -->
 # Development
 
 ## Prerequisites
@@ -93,3 +94,7 @@ Lifecycle notes:
 - Audio bus: the mic (ES7210/I2S1) and speaker (ES8311/I2S0) share MCLK/BCLK/WS. `onOpen` calls `system_sound_suspend()` (shows "Audio busy" if the speaker is still enabled); the mic is open only while recording, the speaker only while playing; `onClose` is the only place that calls `system_sound_resume()` and always ends the speaker first.
 - A core-0 task fills a 256 KB PSRAM ring (overflow is counted and shown as "DROPPED"); `onRunning` is the only SD writer (<= 16 KB per call) and patches the WAV header every 5 s and on stop, so a long-press-B exit or power loss leaves a playable file.
 - Right opens the list (newest first); A plays/stops, B (tap) asks to delete, Left goes back.
+
+## License
+
+This repository is a mixed-license tree. JC Lima's original files are MIT-licensed (see [LICENSE-MIT](LICENSE-MIT)); upstream and third-party code keeps its own terms. [NOTICE.md](NOTICE.md) lists what is covered by what, including GPL considerations for distributed firmware binaries.
