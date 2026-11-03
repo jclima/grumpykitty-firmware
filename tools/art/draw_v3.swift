@@ -240,9 +240,12 @@ struct Mood {
     var kL: CGFloat = 1.15, kR: CGFloat = 0.9
     var pupil = CGPoint.zero
     var slit = false
-    var mouth = 0     // 0 snarl+fang, 1 smirk+fang, 2 hiss, 3 flat
+    var mouth = 0     // 0 snarl+fang, 1 smirk+fang, 2 hiss, 3 flat, 4 one-sided smirk
+    var tiltL: CGFloat? = nil   // per-eye slant overrides (default: `tilt`)
+    var tiltR: CGFloat? = nil
     static let glare = Mood()
-    static let smug = Mood(lidL: 0.55, lidR: 0.58, tilt: 1, browL: -4, browR: 1, kL: 1.1, kR: 1.0, pupil: pt(0, 1), mouth: 1)
+    /// one brow cocked high, the other low, flat half-shut lids, eyes slid sideways, one-sided smirk (mouth 4)
+    static let smug = Mood(lidL: 0.36, lidR: 0.64, tilt: 7, browL: -11, browR: 2, kL: 1.14, kR: 1.0, pupil: pt(8, 0), mouth: 4, tiltL: -5)
     static let hiss = Mood(lidL: 0.18, lidR: 0.18, tilt: 12, browL: 1, browR: 1, kL: 1.12, kR: 1.0, slit: true, mouth: 2)
     static let side = Mood(lidL: 0.42, lidR: 0.42, tilt: 3, kL: 1.1, kR: 1.0, pupil: pt(8, 0), mouth: 3)
 }
@@ -333,8 +336,8 @@ func kHead(_ c: CGContext, _ p: Pal, _ cx: CGFloat, _ cy: CGFloat, _ s: CGFloat,
     c.restoreGState()
     // eyes + brows
     let ey: CGFloat = -3
-    let (oL, iL) = kEye(c, p, ex: -21, ey: ey, k: m.kL, lid: m.lidL, tilt: m.tilt, pup: m.pupil, slit: m.slit, lw: lw, seed: seed + 20)
-    let (oR, iR) = kEye(c, p, ex: 21, ey: ey, k: m.kR, lid: m.lidR, tilt: m.tilt, pup: m.pupil, slit: m.slit, lw: lw, seed: seed + 30)
+    let (oL, iL) = kEye(c, p, ex: -21, ey: ey, k: m.kL, lid: m.lidL, tilt: m.tiltL ?? m.tilt, pup: m.pupil, slit: m.slit, lw: lw, seed: seed + 20)
+    let (oR, iR) = kEye(c, p, ex: 21, ey: ey, k: m.kR, lid: m.lidR, tilt: m.tiltR ?? m.tilt, pup: m.pupil, slit: m.slit, lw: lw, seed: seed + 30)
     kBrow(c, p, oL, iL, ex: -21, off: m.browL, lw: lw, seed: seed + 40)
     kBrow(c, p, oR, iR, ex: 21, off: m.browR, lw: lw, seed: seed + 50)
     // scar across the left eye
@@ -365,6 +368,12 @@ func kHead(_ c: CGContext, _ p: Pal, _ cx: CGFloat, _ cy: CGFloat, _ s: CGFloat,
     case 3:
         inkCurve(c, mk { $0.move(to: pt(0, 9)); $0.addLine(to: pt(0, 13)) }, ml, p.line, seed + 80)
         inkCurve(c, mk { $0.move(to: pt(-13, 20)); $0.addQuadCurve(to: pt(13, 19), control: pt(0, 12)) }, ml, p.line, seed + 81)
+    case 4:
+        inkCurve(c, mk { $0.move(to: pt(0, 8)); $0.addLine(to: pt(0, 12)) }, ml, p.line, seed + 80)
+        inkCurve(c, mk { $0.move(to: pt(0, 12)); $0.addQuadCurve(to: pt(-15, 16), control: pt(-8, 17)) }, ml, p.line, seed + 81)
+        inkCurve(c, mk { $0.move(to: pt(0, 12)); $0.addQuadCurve(to: pt(23, 4), control: pt(13, 20)) }, ml, p.line, seed + 82)
+        inkLine(c, [pt(25, 1), pt(27.5, 6)], ml * 0.7, p.line, seed + 83, amp: 0.1)   // smirk crease
+        solid(c, p, poly([pt(7, 14.5), pt(13, 13), pt(11.5, 20)]), p.bone, lw: lw * 0.45, seed: seed + 84, amp: 0.1)
     default:
         inkCurve(c, mk { $0.move(to: pt(0, 8)); $0.addLine(to: pt(0, 12)) }, ml, p.line, seed + 80)
         let rEnd = m.mouth == 1 ? pt(21, 11) : pt(18, 23)
@@ -498,23 +507,41 @@ func v3Hero(_ p: Pal) -> CGContext {
     let c = makeCtx(269, 203)
     let lw: CGFloat = 3.0
     // table
-    solid(c, p, rrect(-8, 190, 240, 206, 5), p.table, shade: mixc(p.table, p.line, 0.45), rim: mixc(p.table, p.bone, 0.12), lw: lw, seed: 11, amp: 0.3, d: 4)
-    // arm reaching around the laptop (behind lid)
-    kArm(c, p, mk { $0.move(to: pt(140, 118)); $0.addQuadCurve(to: pt(196, 158), control: pt(190, 108)) }, w: 17, lw: lw)
-    kShoulders(c, p, 104, 124, 64, 34, lw: lw, seed: 12)
-    kHead(c, p, 104, 82, 0.96, .glare, lw: 3.2, seed: 2)
-    kLaptopBack(c, p, lw: lw)
-    kPaw(c, p, 62, 118, 0.62, .pi / 2 - 0.15, lw: 3.0, seed: 14)
+    solid(c, p, rrect(-8, 190, 278, 206, 5), p.table, shade: mixc(p.table, p.line, 0.45), rim: mixc(p.table, p.bone, 0.12), lw: lw, seed: 11, amp: 0.3, d: 4)
+    // tail curling up behind the cat
+    kArm(c, p, mk { $0.move(to: pt(34, 178)); $0.addCurve(to: pt(22, 118), control1: pt(4, 178), control2: pt(6, 140)) }, w: 12, lw: lw, seed: 10)
+    // seated body with haunch and hind foot
+    var body: [CGPoint] = []
+    for i in 0..<24 {
+        let a = CGFloat(i) / 24 * 2 * .pi
+        let r: CGFloat = (i % 3 == 0) ? 1.04 : 0.97
+        body.append(pt(80 + cos(a) * 58 * r, 150 + sin(a) * 42 * r))
+    }
+    solid(c, p, poly(chaikin(body)), p.fur, shade: p.furShade, rim: p.furRim, lw: lw, seed: 12, amp: 0.7, d: 8)
+    inkCurve(c, mk { $0.addArc(center: pt(52, 160), radius: 26, startAngle: -1.2, endAngle: 1.7, clockwise: false) }, 2.3, alpha(p.line, 0.8), 13)
+    solid(c, p, rrect(24, 177, 74, 191, 6), p.fur, shade: p.furShade, lw: lw, seed: 14, amp: 0.3, d: 3)
+    for x in [34.0, 46.0, 58.0] as [CGFloat] { inkLine(c, [pt(x, 184), pt(x, 190)], 1.8, alpha(p.line, 0.8), 15, amp: 0.1) }
+    kHead(c, p, 82, 78, 0.98, .glare, lw: 3.2, seed: 2)
+    // laptop to the right of the cat (back of the lid, sticker facing us)
+    c.saveGState(); c.translateBy(x: 106, y: 64.5); c.scaleBy(x: 0.66, y: 0.66)
+    kLaptopBack(c, p, lw: lw / 0.66)
+    c.restoreGState()
+    // near arm: shoulder, bent elbow resting on the lid, forearm, paw shoving the mug
+    let S = pt(110, 126), E = pt(152, 118), W = pt(206, 148)
+    kArm(c, p, mk { $0.move(to: S); $0.addQuadCurve(to: E, control: pt(130, 112)) }, w: 19, lw: lw, seed: 16)
+    kArm(c, p, mk { $0.move(to: E); $0.addQuadCurve(to: W, control: pt(184, 120)) }, w: 15, lw: lw, seed: 17)
+    solid(c, p, ell(E.x, E.y, 11.5, 11), p.fur, shade: p.furShade, rim: p.furRim, lw: lw, seed: 18, amp: 0.3, d: 3)   // elbow
+    inkCurve(c, mk { $0.addArc(center: pt(E.x, E.y), radius: 5.5, startAngle: 2.6, endAngle: 4.9, clockwise: false) }, 1.8, alpha(p.line, 0.7), 19)
+    kPaw(c, p, W.x + 2, W.y + 2, 0.92, 0.5, lw: 2.8, seed: 20)
     // knocked mug
-    kPaw(c, p, 205, 160, 0.9, 0.12, lw: 2.8, seed: 15)
-    kMug(c, p, 248, 168, 0.9, 0.62, seed: 16)
-    kDrops(c, p, [(236, 144, 2.6), (258, 150, 2), (262, 182, 2.4), (243, 190, 1.8)])
-    for (x0, y0, x1, y1) in [(232.0, 130.0, 242.0, 142.0), (222.0, 136.0, 230.0, 146.0), (252.0, 128.0, 256.0, 140.0)] as [(CGFloat, CGFloat, CGFloat, CGFloat)] {
+    kMug(c, p, 250, 170, 0.9, 0.62, seed: 21)
+    kDrops(c, p, [(238, 146, 2.6), (258, 150, 2), (263, 184, 2.4), (244, 190, 1.8)])
+    for (x0, y0, x1, y1) in [(232.0, 132.0, 242.0, 144.0), (224.0, 138.0, 231.0, 148.0), (254.0, 130.0, 258.0, 142.0)] as [(CGFloat, CGFloat, CGFloat, CGFloat)] {
         inkLine(c, [pt(x0, y0), pt(x1, y1)], 2, alpha(p.bone, 0.8), 77, amp: 0.2)
     }
     // MEH bubble
-    kBurst(c, p, CGRect(x: 168, y: 10, width: 86, height: 40), tail: pt(150, 66), baseX: 176, f: p.bone, lw: 2.8, seed: 18)
-    shout(c, "MEH", 211, 30, 30, -0.06, p.line, p.bone, 0.3, skew: 0.12)
+    kBurst(c, p, CGRect(x: 168, y: 16, width: 86, height: 40), tail: pt(146, 66), baseX: 176, f: p.bone, lw: 2.8, seed: 22)
+    shout(c, "MEH", 211, 36, 30, -0.06, p.line, p.bone, 0.3, skew: 0.12)
     return c
 }
 
@@ -579,140 +606,28 @@ func v3MessageBox(_ p: Pal) -> CGContext {
     return c
 }
 
-func v3Background(_ p: Pal) -> CGContext {
-    let c = makeCtx(320, 241)
-    hardGradient(c, p.bg0, p.bg1, 320, 241)
-    c.setStrokeColor(alpha(p.bone, 0.035)); c.setLineWidth(1)
-    var x: CGFloat = 0
-    while x <= 320 { c.move(to: pt(x + 0.5, 0)); c.addLine(to: pt(x + 0.5, 241)); x += 20 }
-    var y: CGFloat = 0
-    while y <= 241 { c.move(to: pt(0, y + 0.5)); c.addLine(to: pt(320, y + 0.5)); y += 20 }
-    c.strokePath()
-    // concrete speckle
-    for i in 0..<420 {
-        let sx = (hn(i, 3) * 0.5 + 0.5) * 320, sy = (hn(i, 4) * 0.5 + 0.5) * 241
-        let v = hn(i, 5) > 0 ? alpha(p.bone, 0.05) : alpha(p.line, 0.25)
-        fill(c, rectP(sx, sy, 1.5, 1.5), v)
-    }
-    // claw scratch groups
-    let groups: [(CGFloat, CGFloat, CGFloat)] = [(34, 40, 0.5), (236, 120, -0.2), (118, 196, 0.2)]
-    for (gi, g) in groups.enumerated() {
-        for k in 0..<4 {
-            let o = CGFloat(k) * 6
-            let a = pt(g.0 + o, g.1 + o * g.2), b = pt(g.0 + o + 26 + hn(k, gi) * 6, g.1 + 52 + hn(k, gi + 9) * 8)
-            inkCurve(c, mk { $0.move(to: a); $0.addQuadCurve(to: b, control: pt((a.x + b.x) / 2 + 4, (a.y + b.y) / 2)) }, 1.9 - CGFloat(k) * 0.2, alpha(p.bone, 0.075), 60 + gi * 5 + k, amp: 0.4)
-        }
-    }
-    return c
-}
-
 func v3Header(_ p: Pal) -> CGContext {
+    // ui_wifi.c / ui_set_time.c / ui_sd_card_files.c draw BLACK 24px text on this bar, so it is bright amber.
     let c = makeCtx(300, 39)
-    var pts: [CGPoint] = [pt(0, 0), pt(300, 0), pt(300, 33)]
+    var pts: [CGPoint] = [pt(0, 0), pt(300, 0), pt(300, 35)]
     var x: CGFloat = 300
     var j = 0
-    while x > 0 { pts.append(pt(x, 33 + (j % 2 == 0 ? 0 : 3.5) + hn(j, 2) * 0.8)); x -= 12; j += 1 }
-    pts.append(pt(0, 33))
+    while x > 0 { pts.append(pt(x, 35 + (j % 2 == 0 ? 0 : 3) + hn(j, 2) * 0.6)); x -= 12; j += 1 }
+    pts.append(pt(0, 35))
     let hp = wob(poly(pts), 0.3, 71)
     c.saveGState(); c.addPath(hp); c.clip()
-    hardGradient(c, mixc(p.panel, p.bg1, 0.4), mixc(p.panel, p.line, 0.5), 300, 39)
+    fill(c, rectP(0, 0, 300, 39), p.eye)
+    fill(c, rectP(0, 31, 300, 9), mixc(p.eye, p.accent, 0.55))
+    fill(c, rectP(0, 0, 300, 3), alpha(p.bone, 0.4))
     for i in 0..<3 {
         let o = CGFloat(i) * 6
-        inkLine(c, [pt(262 + o, -2), pt(250 + o, 30)], 1.8, alpha(p.bone, 0.08), 72 + i, amp: 0.3)
+        inkLine(c, [pt(262 + o, -2), pt(250 + o, 30)], 1.8, alpha(p.line, 0.16), 72 + i, amp: 0.3)
     }
     c.restoreGState()
-    // jagged accent edge only along the bottom
     let edge = mk { e in e.addLines(between: Array(pts.dropFirst(2))) }
-    outline(c, wob(edge, 0.3, 71), 2.6, p.accent, 73)
+    outline(c, wob(edge, 0.3, 71), 2.6, p.line, 73)
     return c
 }
-
-// MARK: icons (70x70, dark disc)
-func discBase(_ c: CGContext, _ p: Pal) {
-    fill(c, ell(35, 35, 34, 34), p.disc)
-    outline(c, wob(ell(35, 35, 32.8, 32.8), 0.3, 80), 2.4, p.accent, 80)
-}
-func clipDisc(_ c: CGContext) { c.saveGState(); c.addPath(ell(35, 35, 31.4, 31.4)); c.clip() }
-func iconHead(_ c: CGContext, _ p: Pal, _ x: CGFloat, _ y: CGFloat, _ s: CGFloat, _ m: Mood = .glare) {
-    kHead(c, p, x, y, s, m, lw: 6.0, full: false, seed: 4)
-}
-
-func v3IconDino(_ p: Pal) -> CGContext {
-    let c = makeCtx(70, 70); discBase(c, p)
-    let d = p.accent, ds = mixc(p.accent, p.line, 0.35)
-    clipDisc(c)
-    // dino being stomped flat: tail wedge, flat body, big head with X eye, stubby legs
-    solid(c, p, poly([pt(10, 60), pt(24, 53), pt(26, 62)]), d, lw: 2.2, seed: 81, amp: 0.1)
-    solid(c, p, rrect(20, 52, 46, 63, 5), d, shade: ds, lw: 2.2, seed: 82, amp: 0.15, d: 3)
-    solid(c, p, rrect(40, 46, 60, 59, 4), d, shade: ds, lw: 2.2, seed: 83, amp: 0.15, d: 3)
-    inkLine(c, [pt(48, 49), pt(52, 53)], 1.7, p.line, 84, amp: 0); inkLine(c, [pt(52, 49), pt(48, 53)], 1.7, p.line, 85, amp: 0)
-    solid(c, p, rectP(26, 63, 5, 3), d, lw: 1.4, seed: 86, amp: 0.1); solid(c, p, rectP(38, 63, 5, 3), d, lw: 1.4, seed: 86, amp: 0.1)
-    // impact lines
-    for (x0, y0, x1, y1) in [(12.0, 46.0, 17.0, 49.0), (60.0, 63.0, 65.0, 66.0), (9.0, 54.0, 14.0, 54.0)] as [(CGFloat, CGFloat, CGFloat, CGFloat)] {
-        inkLine(c, [pt(x0, y0), pt(x1, y1)], 2, p.bone, 87, amp: 0)
-    }
-    c.restoreGState()
-    iconHead(c, p, 35, 28, 0.4)
-    clipDisc(c)
-    kPaw(c, p, 35, 45, 0.52, .pi / 2, lw: 2.6, seed: 87)
-    c.restoreGState()
-    return c
-}
-func v3IconBadUSB(_ p: Pal) -> CGContext {
-    let c = makeCtx(70, 70); discBase(c, p)
-    iconHead(c, p, 31, 30, 0.44)
-    // USB-A plug in the mouth, cable running off, frayed
-    clipDisc(c)
-    let cable = mk { $0.move(to: pt(48, 39)); $0.addQuadCurve(to: pt(53, 58), control: pt(63, 46)) }
-    c.saveGState(); c.setLineCap(.round)
-    c.addPath(cable); c.setStrokeColor(p.line); c.setLineWidth(6.4); c.strokePath()
-    c.addPath(cable); c.setStrokeColor(p.bone); c.setLineWidth(3.2); c.strokePath()
-    c.restoreGState()
-    solid(c, p, rectP(24, 35, 24, 9), p.accent, shade: mixc(p.accent, p.line, 0.4), lw: 1.9, seed: 91, amp: 0.1, d: 2)
-    fill(c, rectP(29, 37.5, 4, 4), p.line); fill(c, rectP(36, 37.5, 4, 4), p.line)
-    for (i, col) in [p.danger, p.info, p.bone].enumerated() {
-        inkLine(c, [pt(53, 58), pt(46 + CGFloat(i) * 7, 63 + CGFloat(i % 2))], 1.8, col, 92 + i, amp: 0.1)
-    }
-    c.restoreGState()
-    return c
-}
-func v3IconIR(_ p: Pal) -> CGContext {
-    let c = makeCtx(70, 70); discBase(c, p)
-    iconHead(c, p, 28, 37, 0.42)
-    // remote + paw + IR rays
-    clipDisc(c)
-    c.saveGState(); c.translateBy(x: 51, y: 42); c.rotate(by: -0.5)
-    solid(c, p, rrect(-6, -17, 6, 17, 3), p.accent, shade: mixc(p.accent, p.line, 0.4), lw: 2.0, seed: 95, amp: 0.1, d: 2)
-    fill(c, ell(0, -9, 2.2, 2.2), p.line); fill(c, rectP(-2.4, -1, 4.8, 3), p.line); fill(c, rectP(-2.4, 5, 4.8, 3), p.line)
-    c.restoreGState()
-    for (i, r) in [8.0, 13.0, 18.0].enumerated() {
-        let a = mk { $0.addArc(center: pt(54, 24), radius: CGFloat(r), startAngle: -1.9, endAngle: -0.1, clockwise: false) }
-        outline(c, a, 2.2, i == 2 ? alpha(p.danger, 0.9) : p.danger, 96 + i)
-    }
-    kPaw(c, p, 46, 54, 0.46, -0.9, lw: 2.4, seed: 98)
-    c.restoreGState()
-    return c
-}
-func v3IconVoice(_ p: Pal) -> CGContext {
-    let c = makeCtx(70, 70); discBase(c, p)
-    clipDisc(c)
-    let band: CGPath = mk { $0.addArc(center: pt(35, 38), radius: 23, startAngle: .pi * 1.02, endAngle: .pi * 1.98, clockwise: false) }
-    c.saveGState(); c.setLineCap(.round)
-    c.addPath(band); c.setStrokeColor(p.line); c.setLineWidth(8.6); c.strokePath()
-    c.addPath(band); c.setStrokeColor(p.accent); c.setLineWidth(4.2); c.strokePath()
-    c.restoreGState()
-    c.restoreGState()
-    iconHead(c, p, 35, 40, 0.4)
-    clipDisc(c)
-    solid(c, p, rrect(7, 31, 18, 52, 4), p.accent, shade: mixc(p.accent, p.line, 0.4), lw: 2.1, seed: 99, amp: 0.1, d: 2)
-    solid(c, p, rrect(52, 31, 63, 52, 4), p.accent, shade: mixc(p.accent, p.line, 0.4), lw: 2.1, seed: 100, amp: 0.1, d: 2)
-    inkCurve(c, mk { $0.move(to: pt(12, 52)); $0.addQuadCurve(to: pt(27, 61), control: pt(12, 63)) }, 2.2, p.bone, 101)
-    solid(c, p, ell(29, 61, 3.4, 3.4), p.bone, lw: 1.6, seed: 102, amp: 0.1)
-    solid(c, p, ell(55, 15, 4.4, 4.4), p.danger, lw: 1.8, seed: 103, amp: 0.1)
-    c.restoreGState()
-    return c
-}
-
 
 // MARK: props / gag sheet (not firmware assets)
 func propsSheet(_ p: Pal) -> CGContext {
@@ -781,54 +696,51 @@ let assets3: [Asset3] = [
     Asset3(name: "ui_img_mascot_update_png", w: 292, h: 196, fn: v3Update),
     Asset3(name: "ui_img_message_box_bg_png", w: 260, h: 152, fn: v3MessageBox),
     Asset3(name: "ui_img_background_png", w: 320, h: 241, fn: v3Background),
+    Asset3(name: "ui_img_background_h_png", w: 320, h: 241, fn: v3BackgroundH),
+    Asset3(name: "ui_img_background_v_png", w: 320, h: 241, fn: v3BackgroundV),
+    Asset3(name: "ui_img_clock_bg_png", w: 321, h: 241, fn: v3ClockBg),
+    Asset3(name: "ui_img_mascot_02_png", w: 147, h: 103, fn: v3Mascot02),
+    Asset3(name: "ui_img_mascot_recovery_png", w: 254, h: 129, fn: v3MascotRecovery),
+    Asset3(name: "ui_img_mascot_usb_msc_png", w: 299, h: 206, fn: v3MascotUsbMsc),
+    Asset3(name: "ui_img_message_box_mascot_png", w: 106, h: 93, fn: v3MessageBoxMascot),
+    Asset3(name: "ui_img_bluetooth_png", w: 42, h: 43, fn: v3Bluetooth),
+    Asset3(name: "ui_img_bluetooth_on_png", w: 42, h: 43, fn: v3BluetoothOn),
+    Asset3(name: "ui_img_info_png", w: 42, h: 43, fn: v3Info),
+    Asset3(name: "ui_img_detailed_settings_png", w: 42, h: 43, fn: v3Detailed),
+    Asset3(name: "ui_img_usb_msc_png", w: 42, h: 43, fn: v3UsbMsc),
+    Asset3(name: "ui_img_storage_status_null_png", w: 20, h: 21, fn: v3SdNull),
+    Asset3(name: "ui_img_storage_status_on_png", w: 20, h: 21, fn: v3SdOn),
+    Asset3(name: "ui_img_power_gauge_png", w: 43, h: 21, fn: v3PowerGauge),
+    Asset3(name: "ui_img_volume_icon_png", w: 28, h: 28, fn: v3Volume),
+    Asset3(name: "ui_img_brightness_icon_png", w: 27, h: 28, fn: v3Brightness),
+    Asset3(name: "ui_img_navigation_center_png", w: 26, h: 27, fn: v3NavCenter),
+    Asset3(name: "ui_img_navigation_edge_png", w: 26, h: 27, fn: v3NavEdge),
+    Asset3(name: "ui_img_switch_png", w: 38, h: 29, fn: v3Switch),
+    Asset3(name: "ui_img_slider_png", w: 39, h: 163, fn: v3Slider),
+    Asset3(name: "ui_img_bar_bg_png", w: 77, h: 202, fn: v3BarBg),
+    Asset3(name: "ui_img_button_bg_png", w: 154, h: 193, fn: v3ButtonBg),
+    Asset3(name: "ui_img_wifi_status_png", w: 155, h: 80, fn: v3WifiStatus),
+    Asset3(name: "ui_img_border_png", w: 300, h: 152, fn: v3Border),
+    Asset3(name: "ui_img_progress_bg_png", w: 280, h: 106, fn: v3ProgressBg),
+    Asset3(name: "ui_img_progress_bar_png", w: 196, h: 22, fn: v3ProgressBar),
     Asset3(name: "ui_img_header_png", w: 300, h: 39, fn: v3Header),
     Asset3(name: "ui_img_dino_png", w: 70, h: 70, fn: v3IconDino),
+    Asset3(name: "ui_img_matrix_rain_png", w: 70, h: 70, fn: v3IconMatrix),
+    Asset3(name: "ui_img_vu_meter_png", w: 70, h: 70, fn: v3IconVU),
+    Asset3(name: "ui_img_retro_tv_png", w: 70, h: 70, fn: v3IconTV),
+    Asset3(name: "ui_img_pc_montior_png", w: 70, h: 70, fn: v3IconPC),
+    Asset3(name: "ui_img_air_mouse_png", w: 70, h: 70, fn: v3IconAirMouse),
+    Asset3(name: "ui_img_ble_spam_png", w: 70, h: 70, fn: v3IconBLE),
     Asset3(name: "ui_img_badusb_png", w: 70, h: 70, fn: v3IconBadUSB),
     Asset3(name: "ui_img_infrared_png", w: 70, h: 70, fn: v3IconIR),
+    Asset3(name: "ui_img_mediaremote_png", w: 70, h: 70, fn: v3IconMedia),
+    Asset3(name: "ui_img_slideclicker_png", w: 70, h: 70, fn: v3IconSlide),
+    Asset3(name: "ui_img_radarscan_png", w: 70, h: 70, fn: v3IconRadar),
     Asset3(name: "ui_img_voicerec_png", w: 70, h: 70, fn: v3IconVoice),
 ]
 
 func put(_ c: CGContext, _ src: CGContext, _ x: CGFloat, _ y: CGFloat, scale: CGFloat = 1) {
     drawImage(c, src.makeImage()!, CGRect(x: x, y: y, width: CGFloat(src.width) * scale, height: CGFloat(src.height) * scale))
-}
-
-func contactSheet(_ p: Pal, _ r: [String: CGContext]) -> CGContext {
-    let W = 960, H = 760
-    let c = makeCtx(W, H)
-    fill(c, rectP(0, 0, CGFloat(W), CGFloat(H)), col(0x0a0a0c))
-    label(c, "GrumpyKitty v3 / \(p.name)", 16, 22, 14, col(0xdddddd), bold: true)
-    // hero + update on the palette background
-    let bg = r["ui_img_background_png"]!
-    for (x, nm) in [(16, "ui_img_mascot_png"), (300, "ui_img_mascot_update_png")] {
-        let a = r[nm]!
-        let tile = makeCtx(a.width, a.height)
-        for ty in stride(from: 0, to: a.height, by: 241) { for tx in stride(from: 0, to: a.width, by: 320) { put(tile, bg, CGFloat(tx), CGFloat(ty)) } }
-        put(tile, a, 0, 0)
-        put(c, tile, CGFloat(x), 40)
-    }
-    label(c, "mascot 269x203", 16, 258, 10, col(0x888888)); label(c, "mascot_update 292x196", 300, 258, 10, col(0x888888))
-    put(c, r["ui_img_message_box_bg_png"]!, 610, 40)
-    label(c, "message_box_bg 260x152 (white text mock)", 610, 208, 10, col(0x888888))
-    let mb = makeCtx(1, 1); _ = mb
-    label(c, "Flash firmware?", 650, 100, 15, col(0xffffff), font: "Helvetica-Bold")
-    label(c, "Nobody asked, but fine.", 650, 124, 12, col(0xffffff), font: "Helvetica")
-    // background + header
-    put(c, bg, 16, 290)
-    let hd = r["ui_img_header_png"]!
-    put(c, hd, 16, 290); label(c, "SETTINGS", 30, 315, 13, col(0xffffff), font: "Helvetica-Bold")
-    label(c, "background 320x241 + header 300x39", 16, 540, 10, col(0x888888))
-    // icons on varied tile colours, 1x and 2x
-    let tiles: [UInt32] = [0xd9d9d9, 0x3a8dde, 0x2e2e2e, p.accent.components![0] > 0.5 ? 0xe8c070 : 0x80d0a0]
-    let names = ["ui_img_dino_png", "ui_img_badusb_png", "ui_img_infrared_png", "ui_img_voicerec_png"]
-    for (i, nm) in names.enumerated() {
-        let x = CGFloat(360 + i * 140)
-        fill(c, rrect(x, 290, x + 130, 420, 14), col(tiles[i]))
-        put(c, r[nm]!, x + 30, 320, scale: 1.0)
-        fill(c, rrect(x, 440, x + 130, 570, 14), col(tiles[(i + 1) % 4]))
-        put(c, r[nm]!, x + 5, 445, scale: 1.8)
-    }
-    label(c, "icons 70x70 on four tile colours (1x) / 1.8x below", 360, 590, 10, col(0x888888))
-    return c
 }
 
 func expressionStrip(_ p: Pal) -> CGContext {
@@ -845,42 +757,8 @@ func expressionStrip(_ p: Pal) -> CGContext {
     return c
 }
 
-func overview(_ rs: [[String: CGContext]]) -> CGContext {
-    let colW = 340, W = colW * 3 + 20, H = 700
-    let c = makeCtx(W, H)
-    fill(c, rectP(0, 0, CGFloat(W), CGFloat(H)), col(0x050506))
-    for (i, p) in Pal.all.enumerated() {
-        let r = rs[i]
-        let x0 = CGFloat(10 + i * colW)
-        let letter = ["A", "B", "C"][i]
-        label(c, "\(letter)  \(p.name)", x0 + 6, 28, 18, col(0xffffff), bold: true)
-        // hero on bg
-        let bg = r["ui_img_background_png"]!
-        let heroTile = makeCtx(320, 241); put(heroTile, bg, 0, 0)
-        put(heroTile, r["ui_img_mascot_png"]!, 25, 18)
-        put(c, heroTile, x0, 40)
-        // icon row
-        fill(c, rrect(x0, 292, x0 + 320, 372, 8), mixc(p.bg1, col(0x808080), 0.35))
-        for (k, nm) in ["ui_img_dino_png", "ui_img_badusb_png", "ui_img_infrared_png", "ui_img_voicerec_png"].enumerated() {
-            put(c, r[nm]!, x0 + 6 + CGFloat(k) * 78, 297)
-        }
-        // background + message box mock
-        let mock = makeCtx(320, 241); put(mock, bg, 0, 0)
-        put(mock, r["ui_img_header_png"]!, 10, 0)
-        label(mock, "SETTINGS", 24, 25, 13, col(0xffffff), font: "Helvetica-Bold")
-        put(mock, r["ui_img_message_box_bg_png"]!, 30, 60)
-        label(mock, "Flash firmware?", 62, 120, 16, col(0xffffff), font: "Helvetica-Bold")
-        label(mock, "Nobody asked, but fine.", 62, 146, 12, col(0xffffff), font: "Helvetica")
-        label(mock, "[ YES ]    [ NO. ]", 62, 176, 12, col(0xffffff), font: "Helvetica")
-        put(c, mock, x0, 390)
-        label(c, "same drawing, different colours", x0 + 6, 650, 10, col(0x777777))
-    }
-    return c
-}
-
 func runV3(_ out: String) {
-    var results: [[String: CGContext]] = []
-    for p in Pal.all {
+    for p in [Pal.alley] {
         let dir = "\(out)/\(p.name)"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         var r: [String: CGContext] = [:]
@@ -889,10 +767,11 @@ func runV3(_ out: String) {
             precondition(ctx.width == a.w && ctx.height == a.h, "\(a.name): drew \(ctx.width)x\(ctx.height), expected \(a.w)x\(a.h)")
             save(ctx, "\(dir)/\(a.name).png"); r[a.name] = ctx
         }
-        save(contactSheet(p, r), "\(dir)/contact_sheet.png")
+        save(mascotsSheet(p, r), "\(dir)/mascots_sheet.png")
+        renderScreens(p, r, dir)
+        save(iconsSheet(p, r), "\(dir)/icons_sheet.png")
+        save(iconsRGB565Sheet(p, r), "\(dir)/icons_rgb565_3x.png")
         save(expressionStrip(p), "\(dir)/expression_strip.png")
         save(propsSheet(p), "\(dir)/props_sheet.png")
-        results.append(r)
     }
-    save(overview(results), "\(out)/overview.png")
 }

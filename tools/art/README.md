@@ -53,26 +53,27 @@ Opaque backgrounds are Bayer-dithered before RGB565 quantisation to avoid bandin
 Not redone (still the old look): keyboard/key backgrounds, t9_bg, alphanumeric, functional keys,
 key_a/key_b, text_input, pickers, backspace, capital, send, unit, week_bg, date, time.
 
-## Art v3 sampler (mean grumpy alley cat, 3 palettes)
+## Art v3.1 (mean grumpy alley cat, full 45-asset set, palette A "alley")
 
     tools/art/make_v3.sh
 
-Owner feedback on v2 was "too girly, needs a mean grumpy attitude, better colours", so v3 redraws
-the character as a scarred, notch-eared alley cat (angry V brows, half-lidded glare with one bigger
-eye, snarl with one fang, ragged whiskers, wobbly hand-inked outlines, flat fills with one hard
-shadow tone and a thin rim light). Same drawings in three palettes, rendered by `draw_v3.swift`
-(built with `draw.swift` and `main_v3.swift`; v2 code is untouched) to
-`tools/art/out/v3/<alley|toxic|bloodmoon>/`:
+Redraws the character as a scarred, notch-eared alley cat (angry V brows, half-lidded glare, snarl with
+one fang, ragged whiskers, wobbly hand-inked outlines, flat fills with one hard shadow tone). Built from
+`draw.swift` + `draw_v3.swift` (cat kit, hero/update mascots, registry) + `draw_v3_icons.swift`
+(13 app icons) + `draw_v3_ui.swift` (wall backgrounds, small UI, panels, other mascots) +
+`draw_v3_sheets.swift` + `draw_v3_screens.swift` + `main_v3.swift`. Only palette A (`alley`) is rendered by
+default; the `toxic` / `bloodmoon` `Pal`s still exist in `draw_v3.swift` (edit `runV3` to render them).
+Output: `tools/art/out/v3/alley/<ui_img_variable_name>.png` for all 45 assets at the exact LVGL size, plus:
 
-- `ui_img_mascot_png`, `ui_img_mascot_update_png`, `ui_img_message_box_bg_png`,
-  `ui_img_background_png`, `ui_img_header_png`, and 70x70 `ui_img_dino_png`, `ui_img_badusb_png`,
-  `ui_img_infrared_png`, `ui_img_voicerec_png` (exact LVGL sizes, transparent where the shape is not
-  rectangular; icons sit on a dark disc so they read on any tile colour);
-- `contact_sheet.png`, `expression_strip.png` (glare / smug / hiss / side-eye busts),
-  `props_sheet.png` (DO NOT sign, cord from mouth, dead pixels, couch, trophy, dumpster);
-- `tools/art/out/v3/overview.png`: the three palettes side by side.
+- `icons_rgb565_3x.png` (icons on the lavender tile, RGB565, 3x), `icons_sheet.png` (13 icons at 1x on lavender / lime / charcoal tiles, then 2x), `mascots_sheet.png`,
+  `expression_strip.png` (glare / smug / hiss / side-eye), `props_sheet.png`;
+- `screens/` : home, apps menu (unscrolled, one step scrolled, 25px peek), WLAN list, message box, update, settings,
+  composed with the real layout read from `src/ui/screens/*.c`, each as `_1x`, `_2x` and `_rgb565_1x/_2x`
+  (RGB565 = each channel truncated to 5/6/5 bits, as `png_to_lvgl_c.py` does); `review_sheet.png` shows the
+  six core screens (home, apps menu, message box, update, settings, WLAN list) at 2x RGB565.
 
-`check_sizes_v3.py <dir>` compares a palette directory against `src/ui/images/<name>.c` (read-only);
-`make_v3.sh` runs it for all three. Drawn text is limited to <= 5 chars (`MEH`, `NOPE`, `#1`).
-Palettes: A alley (amber/orange on blue-grey), B toxic (acid green + hot magenta + cyan on black),
-C bloodmoon (crimson + bone + gold eyes on burgundy-black). Nothing here writes to `src/`.
+App icons are full-bleed (no ring or disc): a head crop or a big prop on a dark rounded-square backing
+(radius 14, 90% opaque) so they read on any tile colour. Backgrounds are a low-contrast brick wall with a
+vignette and an amber rim light, ordered-dithered so RGB565 does not band. Drawn text is limited to
+<= 5 chars (`MEH`, `NOPE`, `NO`, `MSC`). `check_sizes_v3.py <dir>` compares a palette directory against
+`src/ui/images/<name>.c` (read-only; `make_v3.sh` runs it). Nothing here writes to `src/`.

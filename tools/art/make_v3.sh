@@ -8,8 +8,8 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"
 mkdir -p "$out/.build" "$out/v3"
-swiftc -O -swift-version 5 "$here/draw.swift" "$here/draw_v3.swift" "$here/main_v3.swift" -o "$out/.build/draw_v3"
+swiftc -O -swift-version 5 "$here/draw.swift" "$here/draw_v3.swift" "$here"/draw_v3_*.swift "$here/main_v3.swift" -o "$out/.build/draw_v3"
 "$out/.build/draw_v3" "$out/v3"
-for d in alley toxic bloodmoon; do
+for d in alley; do
   python3 "$here/check_sizes_v3.py" "$out/v3/$d"
 done

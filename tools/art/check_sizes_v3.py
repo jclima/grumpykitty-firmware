@@ -6,7 +6,7 @@
 Usage: check_sizes_v3.py <dir>   (e.g. tools/art/out/v3/alley)
 
 Reads the PNG IHDR directly (no dependencies). Flags a PNG with no matching .c file and
-any asset registered in draw_v3.swift that was not rendered. Exit code 1 on mismatch.
+any asset registered in draw_v3*.swift that was not rendered. Exit code 1 on mismatch.
 Read-only: nothing is written to src/.
 """
 import os
@@ -34,7 +34,7 @@ def c_size(path):
 
 
 def expected_names():
-    src = open(os.path.join(HERE, "draw_v3.swift"), encoding="utf-8").read()
+    src = "".join(open(os.path.join(HERE, f), encoding="utf-8").read() for f in sorted(os.listdir(HERE)) if f.startswith("draw_v3") and f.endswith(".swift"))
     return sorted(set(re.findall(r'Asset3\(name: "(ui_img_\w+)"', src)))
 
 
