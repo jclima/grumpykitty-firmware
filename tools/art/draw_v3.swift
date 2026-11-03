@@ -737,6 +737,7 @@ let assets3: [Asset3] = [
     Asset3(name: "ui_img_slideclicker_png", w: 70, h: 70, fn: v3IconSlide),
     Asset3(name: "ui_img_radarscan_png", w: 70, h: 70, fn: v3IconRadar),
     Asset3(name: "ui_img_voicerec_png", w: 70, h: 70, fn: v3IconVoice),
+    Asset3(name: "ui_img_boatdash_png", w: 70, h: 70, fn: v3IconBoat),
 ]
 
 func put(_ c: CGContext, _ src: CGContext, _ x: CGFloat, _ y: CGFloat, scale: CGFloat = 1) {

@@ -25,7 +25,7 @@
 /* ── LVGL icon declarations ── */
 #include "../ui/ui.h"
 
-/* ── Active native app headers (app_01 ~ app_13) ── */
+/* ── Active native app headers (app_01 ~ app_14) ── */
 #include "app_01/dino.h"        /* Dino         */
 #include "app_02/matrix_rain.h" /* Matrix Rain  */
 #include "app_03/vu_meter.h"    /* VU Meter     */
@@ -39,6 +39,7 @@
 #include "app_11/slide_clicker.h" /* Slide Clicker */
 #include "app_12/radio_scanner.h"  /* Radio Scanner */
 #include "app_13/voice_recorder.h" /* Voice Recorder */
+#include "app_14/boat_dash.h"      /* Boat Dash    */
 
 #include <mooncake.h>
 #include <memory>
@@ -73,6 +74,7 @@ static const AppReg APP_REGISTRY[] = {
     { &make<MOONCAKE::APPS::AppSlideClicker>, &ui_img_slideclicker_png }, /* app_11  Slide Clicker */
     { &make<MOONCAKE::APPS::AppRadioScanner>, &ui_img_radarscan_png    }, /* app_12  Radio Scanner */
     { &make<MOONCAKE::APPS::AppVoiceRecorder>, &ui_img_voicerec_png    }, /* app_13  Voice Recorder */
+    { &make<MOONCAKE::APPS::AppBoatDash>,      &ui_img_boatdash_png    }, /* app_14  Boat Dash    */
 };
 static const int APP_REGISTRY_COUNT =
     (int)(sizeof(APP_REGISTRY) / sizeof(APP_REGISTRY[0]));

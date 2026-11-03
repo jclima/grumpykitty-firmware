@@ -10,7 +10,7 @@
 #include <freertos/task.h>
 
 namespace {
-enum class SoundId : uint8_t { Stop, Boot, Button };
+enum class SoundId : uint8_t { Stop, Boot, Button, Alert };
 struct SoundCommand { SoundId id; uint32_t limit_ms; };
 DEVICES* s_dev = nullptr;
 QueueHandle_t s_queue = nullptr;
@@ -154,6 +154,7 @@ void system_sound_set_volume(int p) {
 void system_sound_set_key_enabled(bool on) { s_key_enabled = on; }
 void system_sound_play_boot(uint32_t ms) { enqueue(SoundId::Boot, ms); }
 void system_sound_play_button(void) { enqueue(SoundId::Button, 0); }
+void system_sound_play_alert(void) { enqueue(SoundId::Alert, 0); }
 void system_sound_stop(void) { enqueue(SoundId::Stop, 0); }
 
 void system_sound_suspend(void) {

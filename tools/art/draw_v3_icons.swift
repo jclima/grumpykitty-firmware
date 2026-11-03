@@ -376,3 +376,34 @@ func v3IconVoice(_ p: Pal) -> CGContext {
     c.restoreGState(); icRim(c, p)
     return c
 }
+
+// MARK: 14 boat dash: ship's wheel behind the glaring cat, little gauge with a red needle
+func v3IconBoat(_ p: Pal) -> CGContext {
+    let c = makeCtx(70, 70); icBack(c, p); icClip(c)
+    let wc = pt(46, 27)
+    // wheel: handles (spokes), rim, hub
+    for k in 0..<8 {
+        let a = CGFloat(k) * .pi / 4 + 0.2
+        let inner = pt(wc.x + 4 * cos(a), wc.y + 4 * sin(a)), outer = pt(wc.x + 25 * cos(a), wc.y + 25 * sin(a))
+        inkLine(c, [inner, outer], 5.4, p.line, 250 + k, amp: 0)
+        inkLine(c, [inner, outer], 3.0, mixc(p.accent, p.line, 0.15), 260 + k, amp: 0)
+        fill(c, ell(outer.x, outer.y, 3.4, 3.4), p.line); fill(c, ell(outer.x, outer.y, 2.2, 2.2), p.accent)
+    }
+    outline(c, ell(wc.x, wc.y, 16, 16), 7.0, p.line, 270)
+    outline(c, ell(wc.x, wc.y, 16, 16), 4.0, p.accent, 271)
+    solid(c, p, ell(wc.x, wc.y, 5.2, 5.2), p.accent, shade: mixc(p.accent, p.line, 0.4), lw: 2.2, seed: 272, amp: 0.05, d: 1)
+    // cat peeking from the bottom-left
+    icHead(c, p, 24, 47, 0.66, .icon, seed: 18)
+    // gauge, bottom-right
+    let g = pt(57, 56)
+    fill(c, ell(g.x, g.y, 11.5, 11.5), p.line)
+    fill(c, ell(g.x, g.y, 9.4, 9.4), p.bone)
+    for k in 0..<5 {
+        let a = CGFloat.pi * (1.0 + 0.25 * CGFloat(k))
+        inkLine(c, [pt(g.x + 6.4 * cos(a), g.y + 6.4 * sin(a)), pt(g.x + 8.6 * cos(a), g.y + 8.6 * sin(a))], 1.2, p.line, 280 + k, amp: 0)
+    }
+    inkLine(c, [g, pt(g.x + 6.4, g.y - 5.6)], 2.0, p.danger, 285, amp: 0)
+    fill(c, ell(g.x, g.y, 2.0, 2.0), p.line)
+    c.restoreGState(); icRim(c, p)
+    return c
+}

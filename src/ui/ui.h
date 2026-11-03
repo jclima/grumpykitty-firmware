@@ -88,6 +88,7 @@ LV_IMG_DECLARE(ui_img_infrared_png);       // App 09 Infrared
 LV_IMG_DECLARE(ui_img_mediaremote_png);   // App 10 Media Remote (generated: tools/gen_app_icon.py)
 LV_IMG_DECLARE(ui_img_slideclicker_png);  // App 11 Slide Clicker (generated: tools/gen_app_icon.py)
 LV_IMG_DECLARE(ui_img_voicerec_png);      // App 13 Voice Recorder (generated: tools/gen_app_icon.py)
+LV_IMG_DECLARE(ui_img_boatdash_png);      // App 14 Boat Dash (generated: tools/art/draw_v3_icons.swift)
 LV_IMG_DECLARE(ui_img_radarscan_png);     // App 12 Radio Scanner (generated: tools/gen_app_icon.py)
 LV_IMG_DECLARE(ui_img_nfc_png);            // App 12 (stub)
 LV_IMG_DECLARE(ui_img_smarthome_png);      // App 13 (stub)
