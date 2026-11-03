@@ -14,6 +14,7 @@
 
 ### Security
 - Boat Dash: the Signal K bearer token is sent only to the configured `server.host`, never to servers found via mDNS or the cached address. With a token but no host the app shows "Auth needs fixed host: set server.host" on 401/403.
+- Boat Dash: the Signal K token is never sent to a `.local` (mDNS) `server.host`, since its resolution is spoofable on the LAN; the status page shows "Token needs IP host (not .local)". Use an IP or unicast DNS name. Signal K is plain HTTP (no HTTPS yet), so use a read-only Signal K user.
 
 ### Fixed
 - "Updateing" typo on the update screen; Settings Wi-Fi label now fits its card (ellipsis instead of overflow).

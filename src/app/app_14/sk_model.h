@@ -246,10 +246,28 @@ class Tracker {
   bool everConnected_ = false;
 };
 
+/// True for an mDNS name: ends in ".local" (case-insensitive, optional trailing dot) with a
+/// non-empty label before it. "local", "notlocal" and "pi.lan" are not mDNS names.
+inline bool isMdnsHost(const std::string& host) {
+  std::string h = host;
+  if (!h.empty() && h.back() == '.') h.pop_back();
+  static const char kSuffix[] = ".local";
+  const size_t n = sizeof(kSuffix) - 1;
+  if (h.size() <= n) return false;
+  for (size_t i = 0; i < n; i++) {
+    char c = h[h.size() - n + i];
+    if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+    if (c != kSuffix[i]) return false;
+  }
+  return true;
+}
+
 /// Security: the bearer token is sent only to the explicitly configured server.host (never to a
-/// discovered or cached endpoint, since mDNS can be spoofed on the LAN) and only if a token is set.
+/// discovered or cached endpoint, since mDNS can be spoofed on the LAN), only if a token is set,
+/// and never to a ".local" (mDNS) name, whose resolution is spoofable. Plain HTTP stays cleartext.
 inline bool shouldSendToken(const Endpoint& ep, const Config& cfg) {
-  return ep.configured && !cfg.server.token.empty();
+  return ep.configured && !cfg.server.token.empty() && !isMdnsHost(ep.host) &&
+         !isMdnsHost(cfg.server.host);
 }
 
 }  // namespace sk

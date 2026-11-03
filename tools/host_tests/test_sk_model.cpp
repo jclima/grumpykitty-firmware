@@ -1035,6 +1035,32 @@ static void testShouldSendToken() {
   CHECK(!shouldSendToken(ep, cfg));  // configured but no token
 }
 
+static void testMdnsHost() {
+  CHECK(isMdnsHost("vesselstack.local"));
+  CHECK(isMdnsHost("VESSELSTACK.LOCAL."));
+  CHECK(isMdnsHost("a.b.Local"));
+  CHECK(!isMdnsHost("192.168.1.10"));
+  CHECK(!isMdnsHost("pi.lan"));
+  CHECK(!isMdnsHost("local"));
+  CHECK(!isMdnsHost(".local"));
+  CHECK(!isMdnsHost("notlocal"));
+  CHECK(!isMdnsHost("pi.localhost"));
+  CHECK(!isMdnsHost("pi.local.example.com"));
+  CHECK(!isMdnsHost(""));
+  CHECK(!isMdnsHost("."));
+  Config cfg;
+  cfg.server.token = "SECRET";
+  Endpoint ep;
+  ep.configured = true;
+  const char* hosts[] = {"192.168.1.10", "pi.lan", "local", "notlocal", "vesselstack.local",
+                         "VESSELSTACK.LOCAL."};
+  const bool expect[] = {true, true, true, true, false, false};
+  for (size_t i = 0; i < 6; i++) {
+    ep.host = cfg.server.host = hosts[i];
+    CHECK(shouldSendToken(ep, cfg) == expect[i]);
+  }
+}
+
 int main() {
   testConversionsKnown();
   testNegate();
@@ -1059,6 +1085,7 @@ int main() {
   testTrackerStaleness();
   testTrackerPathsMode();
   testShouldSendToken();
+  testMdnsHost();
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed ? 1 : 0;
 }

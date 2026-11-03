@@ -139,6 +139,7 @@ const char* linkText(LinkState s) {
     case LinkState::Connected: return "Connected";
     case LinkState::AuthRequired: return "Auth required: add token";
     case LinkState::AuthNeedsHost: return "Auth needs fixed host: set server.host";
+    case LinkState::AuthNeedsIp: return "Token needs IP host (not .local)";
     case LinkState::Unreachable: return "Server unreachable";
     case LinkState::NoHost: return "Set host in /grumpykitty/signalk.json";
   }
@@ -412,6 +413,8 @@ void run(Shared& sh) {
   }
   if (!sh.cfg.server.token.empty() && sh.cfg.server.host.empty())
     log_w("[SK] token set but server.host is empty: token not used (set server.host to send it)");
+  if (!sh.cfg.server.token.empty() && isMdnsHost(sh.cfg.server.host))
+    log_w("[SK] server.host is a .local (mDNS) name: token will NOT be sent (use an IP or unicast DNS name)");
   const uint32_t pollMs = uint32_t(std::max(sh.cfg.server.pollMs, 1000));
   Endpoint ep;
   bool resolved = false;
@@ -456,7 +459,10 @@ void run(Shared& sh) {
         Lock l(sh);
         sh.tracker.setConnected(false);
       }
-      const LinkState authState = ep.configured ? LinkState::AuthRequired : LinkState::AuthNeedsHost;
+      const LinkState authState =
+          !ep.configured ? LinkState::AuthNeedsHost
+          : (!sh.cfg.server.token.empty() && !shouldSendToken(ep, sh.cfg)) ? LinkState::AuthNeedsIp
+                                                                           : LinkState::AuthRequired;
       setStatus(sh, o.r == Fetch1::Auth ? authState : LinkState::Unreachable, o.err);
       // A discovered server that keeps failing may have moved: rediscover. An explicit host just retries.
       if (++fails >= 3 && sh.cfg.server.host.empty()) { resolved = false; fails = 0; }

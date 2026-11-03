@@ -25,6 +25,7 @@ enum class LinkState : uint8_t {
   Connected,     // last poll succeeded
   AuthRequired,  // 401/403 from the configured host: token missing or wrong
   AuthNeedsHost, // 401/403 from a discovered server: token is never sent to it
+  AuthNeedsIp,   // 401/403 from a configured .local host: token is never sent to mDNS names
   Unreachable,   // connect/HTTP/parse error (values age normally)
   NoHost,        // nothing configured and nothing discovered
 };
