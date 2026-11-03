@@ -1,17 +1,18 @@
 /**
  * @file app.h
- * @brief Native app registry — install apps + icon table (co-located so they stay in sync).
+ * @brief Native app registry — one table drives installation and the menu icon.
  *
  * ADDING AN APP:
  *   1. Create src/app/app_NN/ (see app_09/infrared.{h,cpp} as template).
- *      Set a unique name (<=31 chars) in the constructor; it is the menu id.
- *   2. #include the header above and add installApp() in registerAllApps(),
- *      after the last existing one (order = menu slot index).
- *   3. Add the icon at the SAME index in APP_BUILTIN_ICONS[].
- *   4. LV_IMG_DECLARE the icon in src/ui/ui.h and add its image .c file.
- *   5. Raise APPS_MENU_MAX_APPS (src/ui/screens/ui_apps_menu.h) and in
- *      ui_apps_menu.c add ui_app_N / ui_name_N (definitions, both app_ptrs[]
- *      and name_ptrs[] arrays, and a row in _app_info[]).
+ *      Set a unique name (<=31 chars) in the constructor; it is the menu id
+ *      and the label shown in the apps menu.
+ *   2. #include the header below and add ONE line to APP_REGISTRY[]:
+ *          { &make<MOONCAKE::APPS::YourApp>, &ui_img_your_png },
+ *      Order in the table = menu slot order.
+ *   3. If it has a new icon: LV_IMG_DECLARE it in src/ui/ui.h and add the
+ *      image .c file (see tools/gen_app_icon.py).
+ *   The menu grid scrolls and holds up to APPS_MENU_MAX_APPS (24) apps; a
+ *   static_assert below fails the build if the table grows past that.
  *   Notes: onCreate runs on first open only; onClose is the only teardown, so
  *   onOpen must re-initialise state. onRunning must return quickly (long-press
  *   B is only checked between updates).
@@ -24,7 +25,7 @@
 /* ── LVGL icon declarations ── */
 #include "../ui/ui.h"
 
-/* ── Active native app headers (app_01 ~ app_09) ── */
+/* ── Active native app headers (app_01 ~ app_13) ── */
 #include "app_01/dino.h"        /* Dino         */
 #include "app_02/matrix_rain.h" /* Matrix Rain  */
 #include "app_03/vu_meter.h"    /* VU Meter     */
@@ -34,44 +35,54 @@
 #include "app_07/ble_spam.h"    /* BLE Spam     */
 #include "app_08/badusb.h"      /* Bad USB      */
 #include "app_09/infrared.h"    /* Infrared     */
+#include "app_10/media_remote.h"  /* Media Remote */
+#include "app_11/slide_clicker.h" /* Slide Clicker */
+#include "app_12/radio_scanner.h"  /* Radio Scanner */
+#include "app_13/voice_recorder.h" /* Voice Recorder */
 
 #include <mooncake.h>
 #include <memory>
 
-/**
- * @brief Register active apps into Mooncake (order determines menu slot index).
- *        Keep in sync with APP_BUILTIN_ICONS below.
- */
-inline void registerAllApps(mooncake::Mooncake& mc, DEVICES* dev)
+/** One registry row: how to construct the app and which icon the menu shows. */
+struct AppReg {
+    std::unique_ptr<mooncake::AppAbility> (*make)(DEVICES*);
+    const void* icon;
+};
+
+template <class T>
+static std::unique_ptr<mooncake::AppAbility> make(DEVICES* dev)
 {
-    /* Menu visual order: left → right, top → bottom (app_01 … app_09) */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App01>(dev));     /* app_01  Dino         */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App02>(dev));     /* app_02  Matrix Rain  */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App03>(dev));     /* app_03  VU Meter     */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App04>(dev));     /* app_04  Retro TV     */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::PCMonitor>(dev)); /* app_05  PC Monitor   */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App06>(dev));     /* app_06  Air Mouse    */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App07>(dev));     /* app_07  BLE Spam     */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::AppBadUSB>(dev)); /* app_08  Bad USB      */
-    mc.installApp(std::make_unique<MOONCAKE::APPS::App09>(dev));     /* app_09  Infrared     */
+    return std::make_unique<T>(dev);
 }
 
 /**
- * @brief App icons — one entry per installApp() call above, same order.
- *        Launcher reads this array by slot index to populate the apps menu grid.
- *
- * Rule: icon[N] must correspond to the Nth installApp() call in registerAllApps().
+ * @brief App registry — order = menu slot index. Names live in each app's
+ *        constructor (read back by the launcher via Mooncake).
  */
-static const void* const APP_BUILTIN_ICONS[] = {
-    &ui_img_dino_png,        /* app_01  Dino        */
-    &ui_img_matrix_rain_png, /* app_02  Matrix Rain */
-    &ui_img_vu_meter_png,    /* app_03  VU Meter    */
-    &ui_img_retro_tv_png,    /* app_04  Retro TV    */
-    &ui_img_pc_montior_png,  /* app_05  PC Monitor  */
-    &ui_img_air_mouse_png,   /* app_06  Air Mouse   */
-    &ui_img_ble_spam_png,    /* app_07  BLE Spam    */
-    &ui_img_badusb_png,      /* app_08  Bad USB     */
-    &ui_img_infrared_png,    /* app_09  Infrared    */
+static const AppReg APP_REGISTRY[] = {
+    { &make<MOONCAKE::APPS::App01>,      &ui_img_dino_png        }, /* app_01  Dino         */
+    { &make<MOONCAKE::APPS::App02>,      &ui_img_matrix_rain_png }, /* app_02  Matrix Rain  */
+    { &make<MOONCAKE::APPS::App03>,      &ui_img_vu_meter_png    }, /* app_03  VU Meter     */
+    { &make<MOONCAKE::APPS::App04>,      &ui_img_retro_tv_png    }, /* app_04  Retro TV     */
+    { &make<MOONCAKE::APPS::PCMonitor>,  &ui_img_pc_montior_png  }, /* app_05  PC Monitor   */
+    { &make<MOONCAKE::APPS::App06>,      &ui_img_air_mouse_png   }, /* app_06  Air Mouse    */
+    { &make<MOONCAKE::APPS::App07>,      &ui_img_ble_spam_png    }, /* app_07  BLE Spam     */
+    { &make<MOONCAKE::APPS::AppBadUSB>,  &ui_img_badusb_png      }, /* app_08  Bad USB      */
+    { &make<MOONCAKE::APPS::App09>,      &ui_img_infrared_png    }, /* app_09  Infrared     */
+    { &make<MOONCAKE::APPS::AppMediaRemote>,  &ui_img_mediaremote_png  }, /* app_10  Media Remote */
+    { &make<MOONCAKE::APPS::AppSlideClicker>, &ui_img_slideclicker_png }, /* app_11  Slide Clicker */
+    { &make<MOONCAKE::APPS::AppRadioScanner>, &ui_img_radarscan_png    }, /* app_12  Radio Scanner */
+    { &make<MOONCAKE::APPS::AppVoiceRecorder>, &ui_img_voicerec_png    }, /* app_13  Voice Recorder */
 };
-static const int APP_BUILTIN_ICONS_COUNT =
-    (int)(sizeof(APP_BUILTIN_ICONS) / sizeof(APP_BUILTIN_ICONS[0]));
+static const int APP_REGISTRY_COUNT =
+    (int)(sizeof(APP_REGISTRY) / sizeof(APP_REGISTRY[0]));
+static_assert(sizeof(APP_REGISTRY) / sizeof(APP_REGISTRY[0]) <= APPS_MENU_MAX_APPS,
+              "APP_REGISTRY has more apps than the apps menu can show");
+
+/** @brief Register all apps into Mooncake (table order = menu slot index). */
+inline void registerAllApps(mooncake::Mooncake& mc, DEVICES* dev)
+{
+    for (const AppReg& r : APP_REGISTRY) {
+        mc.installApp(r.make(dev));
+    }
+}

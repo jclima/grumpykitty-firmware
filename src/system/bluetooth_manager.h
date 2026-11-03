@@ -9,7 +9,7 @@
 
 // Lifecycle operations belong to the launcher task, never a BLE callback.
 namespace bluetooth_manager {
-enum class Owner : uint8_t { None, AirMouse, BadUsb, Other };
+enum class Owner : uint8_t { None, AirMouse, BadUsb, Other, HidRemote, Scanner };
 using Lease = uint32_t;
 using Stop = void (*)();
 void setEnabled(bool enabled);

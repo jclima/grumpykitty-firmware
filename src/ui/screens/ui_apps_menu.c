@@ -9,12 +9,6 @@
 lv_obj_t * ui_apps_menu;
 lv_obj_t * ui_apps_menu_bg;
 lv_obj_t * ui_left;
-lv_obj_t * ui_app_01;  lv_obj_t * ui_app_02;  lv_obj_t * ui_app_03;
-lv_obj_t * ui_app_04;  lv_obj_t * ui_app_05;  lv_obj_t * ui_app_06;
-lv_obj_t * ui_app_07;  lv_obj_t * ui_app_08;  lv_obj_t * ui_app_09;
-lv_obj_t * ui_name_01; lv_obj_t * ui_name_02; lv_obj_t * ui_name_03;
-lv_obj_t * ui_name_04; lv_obj_t * ui_name_05; lv_obj_t * ui_name_06;
-lv_obj_t * ui_name_07; lv_obj_t * ui_name_08; lv_obj_t * ui_name_09;
 
 static lv_obj_t * _scroll_cont = NULL;
 
@@ -22,6 +16,17 @@ static lv_obj_t * _scroll_cont = NULL;
 static AppMenuEntry_t s_entries[APPS_MENU_MAX_APPS];
 static int            s_entry_count = 0;
 static char           s_selected_id[32] = "";
+static lv_obj_t *     s_btn[APPS_MENU_MAX_APPS];
+static lv_obj_t *     s_lbl[APPS_MENU_MAX_APPS];
+
+#define ROW_PITCH      105
+#define GRID_TOP       30
+#define GRID_BOTTOM_PAD 20
+
+/* 3 fixed column X positions */
+static const lv_coord_t _col_x[3] = { 35, 125, 215 };
+
+static void _build_grid(void);
 
 static void on_app_click(lv_event_t * e)
 {
@@ -51,51 +56,68 @@ void ui_apps_menu_load_apps(const AppMenuEntry_t * entries, int count)
     s_entry_count = count;
     s_selected_id[0] = '\0';
 
-    lv_obj_t ** app_ptrs[APPS_MENU_MAX_APPS] = {
-        &ui_app_01, &ui_app_02, &ui_app_03, &ui_app_04, &ui_app_05,
-        &ui_app_06, &ui_app_07, &ui_app_08, &ui_app_09,
-    };
-    lv_obj_t ** name_ptrs[APPS_MENU_MAX_APPS] = {
-        &ui_name_01, &ui_name_02, &ui_name_03, &ui_name_04, &ui_name_05,
-        &ui_name_06, &ui_name_07, &ui_name_08, &ui_name_09,
-    };
+    _build_grid();
+}
 
-    for (int i = 0; i < APPS_MENU_MAX_APPS; i++) {
-        lv_obj_t * btn = *app_ptrs[i];
-        lv_obj_t * lbl = *name_ptrs[i];
-        if (!btn || !lbl) continue;
-        if (i < count) {
-            lv_obj_clear_flag(btn, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-            if (entries[i].icon)
-                lv_obj_set_style_bg_img_src(btn, entries[i].icon, LV_PART_MAIN | LV_STATE_DEFAULT);
-            lv_label_set_text(lbl, entries[i].name);
-        } else {
-            lv_obj_add_flag(btn, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(lbl, LV_OBJ_FLAG_HIDDEN);
-        }
+/* ── Grid construction ───────────────────────────────────────────── */
+
+static void _build_grid(void)
+{
+    if (!_scroll_cont) return;
+    lv_obj_clean(_scroll_cont);
+    memset(s_btn, 0, sizeof(s_btn));
+    memset(s_lbl, 0, sizeof(s_lbl));
+
+    for (int i = 0; i < s_entry_count; i++) {
+        int        col = i % 3;
+        int        row = i / 3;
+        lv_coord_t bx  = _col_x[col];
+        lv_coord_t by  = (lv_coord_t)(GRID_TOP + row * ROW_PITCH);
+
+        lv_obj_t * btn = lv_btn_create(_scroll_cont);
+        lv_obj_set_width(btn, 70);
+        lv_obj_set_height(btn, 70);
+        lv_obj_set_x(btn, bx);
+        lv_obj_set_y(btn, by);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
+        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+        lv_obj_set_style_radius(btn, 35, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0xBEE700), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_bg_opa(btn, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+        if (s_entries[i].icon)
+            lv_obj_set_style_bg_img_src(btn, s_entries[i].icon, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_shadow_opa(btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_color(btn, lv_color_hex(0x9DDE00), LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_outline_opa(btn, 255, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_outline_width(btn, 10, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_PRESSED);
+        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_add_event_cb(btn, on_app_click, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+        s_btn[i] = btn;
+
+        lv_obj_t * lbl = lv_label_create(_scroll_cont);
+        lv_obj_set_width(lbl, 86);
+        lv_obj_set_height(lbl, LV_SIZE_CONTENT);
+        lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_label_set_text(lbl, s_entries[i].name);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_opa(lbl, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_font(lbl, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+        /* Center label horizontally below button */
+        lv_obj_align_to(lbl, btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
+        s_lbl[i] = lbl;
     }
 }
 
-/* ── App metadata table ──────────────────────────────────────────── */
-/* One unique icon per app — replace placeholder .c files with SquareLine exports */
-static const struct {
-    const lv_img_dsc_t * icon;
-    const char *         name;
-} _app_info[APPS_MENU_MAX_APPS] = {
-    { &ui_img_dino_png,        "Dino"        },
-    { &ui_img_matrix_rain_png, "Matrix Rain" },
-    { &ui_img_vu_meter_png,    "VU Meter"    },
-    { &ui_img_retro_tv_png,    "Retro TV"    },
-    { &ui_img_pc_montior_png,  "PC Monitor"  },
-    { &ui_img_air_mouse_png,   "Air Mouse"   },
-    { &ui_img_ble_spam_png,    "BLE Spam"    },
-    { &ui_img_badusb_png,      "BadUSB"      },
-    { &ui_img_infrared_png,    "Infrared"    },
-};
-
-/* 3 fixed column X positions */
-static const lv_coord_t _col_x[3] = { 35, 125, 215 };
+void ui_apps_menu_scroll_step(int dir)
+{
+    if (!_scroll_cont || dir == 0) return;
+    lv_obj_scroll_by_bounded(_scroll_cont, 0, dir > 0 ? -ROW_PITCH : ROW_PITCH, LV_ANIM_ON);
+}
 
 /* ── Screen-level event (left swipe → home) ─────────────────────── */
 
@@ -144,6 +166,7 @@ void ui_apps_menu_screen_init(void)
     lv_obj_set_style_bg_opa(_scroll_cont,     LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_scroll_cont, 0, 0);
     lv_obj_set_style_pad_all(_scroll_cont,    0, 0);
+    lv_obj_set_style_pad_bottom(_scroll_cont, GRID_BOTTOM_PAD, 0);
     lv_obj_set_style_radius(_scroll_cont,     0, 0);
     lv_obj_set_scroll_dir(_scroll_cont, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(_scroll_cont, LV_SCROLLBAR_MODE_AUTO);
@@ -152,56 +175,7 @@ void ui_apps_menu_screen_init(void)
     lv_obj_set_style_bg_opa(_scroll_cont, 255,
                              LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
 
-    /* Pointer arrays map loop index → named global variable */
-    lv_obj_t ** app_ptrs[APPS_MENU_MAX_APPS] = {
-        &ui_app_01, &ui_app_02, &ui_app_03, &ui_app_04, &ui_app_05,
-        &ui_app_06, &ui_app_07, &ui_app_08, &ui_app_09,
-    };
-    lv_obj_t ** name_ptrs[APPS_MENU_MAX_APPS] = {
-        &ui_name_01, &ui_name_02, &ui_name_03, &ui_name_04, &ui_name_05,
-        &ui_name_06, &ui_name_07, &ui_name_08, &ui_name_09,
-    };
-
-    for (int i = 0; i < APPS_MENU_MAX_APPS; i++) {
-        int        col = i % 3;
-        int        row = i / 3;
-        lv_coord_t bx  = _col_x[col];
-        lv_coord_t by  = (lv_coord_t)(30 + row * 105);
-
-        lv_obj_t * btn = lv_btn_create(_scroll_cont);
-        lv_obj_set_width(btn, 70);
-        lv_obj_set_height(btn, 70);
-        lv_obj_set_x(btn, bx);
-        lv_obj_set_y(btn, by);
-        lv_obj_add_flag(btn, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-        lv_obj_set_style_radius(btn, 35, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_color(btn, lv_color_hex(0xBEE700), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_opa(btn, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_bg_img_src(btn, _app_info[i].icon, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_shadow_opa(btn, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_outline_color(btn, lv_color_hex(0x9DDE00), LV_PART_MAIN | LV_STATE_PRESSED);
-        lv_obj_set_style_outline_opa(btn, 255, LV_PART_MAIN | LV_STATE_PRESSED);
-        lv_obj_set_style_outline_width(btn, 10, LV_PART_MAIN | LV_STATE_PRESSED);
-        lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_PRESSED);
-        lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_add_event_cb(btn, on_app_click, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
-        *app_ptrs[i] = btn;
-
-        lv_obj_t * lbl = lv_label_create(_scroll_cont);
-        lv_obj_set_width(lbl, LV_SIZE_CONTENT);
-        lv_obj_set_height(lbl, LV_SIZE_CONTENT);
-        lv_label_set_text(lbl, _app_info[i].name);
-        lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_opa(lbl, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(lbl, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
-        /* Center label horizontally below button */
-        lv_obj_align_to(lbl, btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
-        *name_ptrs[i] = lbl;
-    }
+    if (s_entry_count > 0) _build_grid();
 
     lv_obj_add_event_cb(ui_apps_menu, ui_event_apps_menu, LV_EVENT_ALL, NULL);
 }
@@ -216,10 +190,6 @@ void ui_apps_menu_screen_destroy(void)
     ui_apps_menu_bg = NULL;
     ui_left         = NULL;
     _scroll_cont    = NULL;
-    ui_app_01  = NULL; ui_app_02  = NULL; ui_app_03  = NULL;
-    ui_app_04  = NULL; ui_app_05  = NULL; ui_app_06  = NULL;
-    ui_app_07  = NULL; ui_app_08  = NULL; ui_app_09  = NULL;
-    ui_name_01 = NULL; ui_name_02 = NULL; ui_name_03 = NULL;
-    ui_name_04 = NULL; ui_name_05 = NULL; ui_name_06 = NULL;
-    ui_name_07 = NULL; ui_name_08 = NULL; ui_name_09 = NULL;
+    memset(s_btn, 0, sizeof(s_btn));
+    memset(s_lbl, 0, sizeof(s_lbl));
 }

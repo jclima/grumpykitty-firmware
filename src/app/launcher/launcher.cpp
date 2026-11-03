@@ -557,12 +557,11 @@ void Launcher::loadAppsMenu()
     static AppMenuEntry_t entries[APPS_MENU_MAX_APPS];
     memset(entries, 0, sizeof(entries));
 
-    /* Icons are defined in app.h alongside registerAllApps() so they stay
-     * in sync with the registration order automatically. */
+    /* Icons come from APP_REGISTRY in app.h (same table that installs apps). */
     for (int i = 0; i < count; i++) {
         strncpy(entries[i].id,   allInfo[i].name.c_str(), sizeof(entries[i].id)   - 1);
         strncpy(entries[i].name, allInfo[i].name.c_str(), sizeof(entries[i].name) - 1);
-        entries[i].icon = (i < APP_BUILTIN_ICONS_COUNT) ? APP_BUILTIN_ICONS[i] : nullptr;
+        entries[i].icon = (i < APP_REGISTRY_COUNT) ? APP_REGISTRY[i].icon : nullptr;
     }
 
     ui_apps_menu_load_apps(entries, count);
@@ -775,6 +774,8 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     /* ── Cross sub-screens: reverse joystick → Home ── */
     if (cur == ui_apps_menu) {
         if (right) { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_LEFT,   500, 0, &ui_home_screen_init); return; }
+        if (up)    { ui_apps_menu_scroll_step(-1); return; }
+        if (down)  { ui_apps_menu_scroll_step(1);  return; }
     } else if (cur == ui_settings) {
         if (left)  { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_home_screen_init); return; }
     } else if (cur == ui_sd_card_files) {
