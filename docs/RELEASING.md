@@ -5,6 +5,7 @@
 
 - The repository must be **public** (GitHub Pages on private repos needs a paid plan).
 - Settings > Pages > Source: **GitHub Actions**.
+- Settings > Environments > `github-pages` > Deployment branches and tags > add a **Tag** rule `v*`. The release workflow deploys Pages from the tag ref; without this rule the deploy job fails immediately with no runner.
 - The flasher then lives at `https://jclima.github.io/grumpykitty-firmware/flash/`.
 
 ## Version

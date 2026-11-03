@@ -2,6 +2,8 @@
 
 Community firmware for the MeowKit-S3 (ESP32-S3-WROOM-1-N16R8): more apps, bug fixes and a grumpy alley-cat theme. Unofficial fork of the MeowKit-S3 firmware by Mingo / Whitecliff, see [NOTICE.md](NOTICE.md).
 
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-jclima-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/jclima)
+
 | Home | Apps | Dialogs | Update |
 |---|---|---|---|
 | ![Home](docs/images/home.png) | ![Apps menu](docs/images/apps_menu.png) | ![Message box](docs/images/message_box.png) | ![Update](docs/images/update.png) |
@@ -56,6 +58,10 @@ Create `/grumpykitty/signalk.json` on the SD card (or rely on mDNS discovery) an
 ## Building and contributing
 
 `make build`, `make upload`, `make monitor` and `make dist` are described in [DEVELOPMENT.md](DEVELOPMENT.md); releases in [docs/RELEASING.md](docs/RELEASING.md). Bug reports and pull requests are welcome, use the templates. Security issues: see [SECURITY.md](SECURITY.md).
+
+## Support
+
+If GrumpyKitty saved you a trip to the boat, [buy the cat a coffee](https://buymeacoffee.com/jclima). He won't thank you, but I will.
 
 ## License
 
