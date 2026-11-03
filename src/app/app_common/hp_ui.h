@@ -42,16 +42,16 @@ namespace hp {
 
 /* ─────────────── Palette ───────────────
  *  Dark-olive / phosphor-lime CRT aesthetic ("old-terminal" look).
- *  COL_BG  : dark olive/army green background
- *  COL_FG  : bright lime phosphor (text, borders, list-selection fill)
- *  COL_DIM : medium olive (dotted separators, inactive hints)
- *  COL_HL  : same as FG (selected list row is fully filled with lime)
+ *  COL_BG  : midnight plum background
+ *  COL_FG  : soft pink (text, borders, list-selection fill)
+ *  COL_DIM : dim lavender (dotted separators, inactive hints)
+ *  COL_HL  : same as FG (selected list row is fully filled with pink)
  */
-static constexpr uint16_t COL_BG       = 0x1A22;   // dark olive green   (RGB ~26,68,18)
-static constexpr uint16_t COL_FG       = 0xC7E6;   // phosphor lime      (RGB ~198,252,50)
-static constexpr uint16_t COL_DIM      = 0x4A86;   // medium olive       (RGB ~74,144,50)
+static constexpr uint16_t COL_BG       = 0x18A6;   // midnight plum       (RGB ~30,21,48)
+static constexpr uint16_t COL_FG       = 0xFCF8;   // soft pink          (RGB ~255,158,199)
+static constexpr uint16_t COL_DIM      = 0x7B55;   // dim lavender       (RGB ~124,106,168)
 static constexpr uint16_t COL_ACCENT   = 0xFFFF;   // white   (rare strong highlight)
-static constexpr uint16_t COL_HL       = 0xC7E6;   // = COL_FG (full-row selection bar)
+static constexpr uint16_t COL_HL       = 0xFCF8;   // = COL_FG (full-row selection bar)
 static constexpr uint16_t COL_WARN     = 0xFFE0;   // yellow
 static constexpr uint16_t COL_ERR      = 0xF800;   // red
 static constexpr uint16_t COL_INFO     = 0x07FF;   // cyan
@@ -108,7 +108,7 @@ inline void drawChrome(LCD& lcd)
 }
 
 /* Draw header: "[ TITLE ]" left, optional status badge on the right.
- *  If `badgeColor == COL_FG` (default) the badge is rendered as plain lime
+ *  If `badgeColor == COL_FG` (default) the badge is rendered as plain pink
  *  text (e.g. "2026, EARTH").  If a different color is given, the badge is
  *  drawn as a filled rounded pill (used for status badges like "SD", "RUN"). */
 template<typename LCD>

@@ -148,7 +148,7 @@ void ui_manual_screen_init(void)
     lv_obj_add_flag(ui_date_button, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_clear_flag(ui_date_button, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(ui_date_button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_date_button, lv_color_hex(0xBEE700), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_date_button, lv_color_hex(0xB9A6FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_date_button, 60, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_img_src(ui_date_button, &ui_img_date_png, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_shadow_opa(ui_date_button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -166,7 +166,7 @@ void ui_manual_screen_init(void)
     lv_obj_add_flag(ui_time_button, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_clear_flag(ui_time_button, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_radius(ui_time_button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(ui_time_button, lv_color_hex(0xBEE700), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_time_button, lv_color_hex(0xB9A6FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_time_button, 0, LV_PART_MAIN | LV_STATE_DEFAULT); /* unfocused */
     lv_obj_set_style_bg_img_src(ui_time_button, &ui_img_time_png, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_shadow_opa(ui_time_button, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -175,7 +175,7 @@ void ui_manual_screen_init(void)
     lv_obj_set_style_outline_pad(ui_time_button, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
     lv_obj_add_event_cb(ui_time_button, on_time_click, LV_EVENT_CLICKED, NULL);
 
-    /* Focus frame overlays — 109×103 / radius 16 / border 5px (#BBE700)
+    /* Focus frame overlays — 109×103 / radius 16 / border 5px (#FF9EC7)
      * remove_style_all 必须在 set_size/set_pos 之前调用：LVGL v8 的
      * lv_obj_set_size/pos 写入本地样式，若先设尺寸/位置再 remove_style_all
      * 会把这些值一起清掉，导致焦点框错位到 (0,0)。                        */
@@ -184,7 +184,7 @@ void ui_manual_screen_init(void)
     lv_obj_set_size(ui_date_focus_frame, 109, 103);
     lv_obj_set_pos(ui_date_focus_frame, 31, 63);
     lv_obj_set_style_radius(ui_date_focus_frame, 16, 0);
-    lv_obj_set_style_border_color(ui_date_focus_frame, lv_color_hex(0xBBE700), 0);
+    lv_obj_set_style_border_color(ui_date_focus_frame, lv_color_hex(0xFF9EC7), 0);
     lv_obj_set_style_border_width(ui_date_focus_frame, 5, 0);
     lv_obj_set_style_border_opa(ui_date_focus_frame, LV_OPA_COVER, 0);
     lv_obj_clear_flag(ui_date_focus_frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
@@ -194,7 +194,7 @@ void ui_manual_screen_init(void)
     lv_obj_set_size(ui_time_focus_frame, 109, 103);
     lv_obj_set_pos(ui_time_focus_frame, 181, 63);
     lv_obj_set_style_radius(ui_time_focus_frame, 16, 0);
-    lv_obj_set_style_border_color(ui_time_focus_frame, lv_color_hex(0xBBE700), 0);
+    lv_obj_set_style_border_color(ui_time_focus_frame, lv_color_hex(0xFF9EC7), 0);
     lv_obj_set_style_border_width(ui_time_focus_frame, 5, 0);
     lv_obj_set_style_border_opa(ui_time_focus_frame, LV_OPA_COVER, 0);
     lv_obj_clear_flag(ui_time_focus_frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);

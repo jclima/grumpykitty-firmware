@@ -5,9 +5,9 @@
 #include <algorithm>
 
 namespace {
-// RGB565 palette: near-black forest, lime accents and muted olive surfaces.
-constexpr uint16_t BG=0x10C2, GREEN=0xC7A7, DIM=0x6C26, WHITE=0xFFFF;
-constexpr uint16_t MESH=0x84E7, PANEL=0x3244, PANEL_ACTIVE=0x42E5, SCANLINE=0x3A65;
+// RGB565 palette: midnight plum, pink accents and muted lavender surfaces.
+constexpr uint16_t BG=0x18A6, GREEN=0xFCF8, DIM=0x7B55, WHITE=0xFFFF;
+constexpr uint16_t MESH=0x5A51, PANEL=0x2908, PANEL_ACTIVE=0x396B, SCANLINE=0x314A;
 constexpr int SX=174, SY=44, SW=142, SH=146;
 constexpr float GAINS[]={30.f,50.f,75.f};
 const char* SPEEDS[]={"Low","Normal","High"};

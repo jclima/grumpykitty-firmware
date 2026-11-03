@@ -8,6 +8,7 @@
 - Shared BLE remote HID helper, SD guard helper and `tools/gen_app_icon.py` icon generator.
 
 ### Changed
+- New FancyKitty visual theme (grumpy kitty mascots, cat-gag app icons, midnight plum backgrounds, paw UI icons); accent colours moved from lime to soft pink / lavender / mint.
 - Rebranded the firmware identity to FancyKitty (fork of MeowKit-S3): BLE advertised names and HID manufacturer, default BLE device name, USB MSC SCSI vendor id (`FancyKit`), About dialog name and serial log banners. Saved BLE names in NVS are not modified.
 
 ### Fixed

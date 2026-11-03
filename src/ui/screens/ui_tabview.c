@@ -17,14 +17,14 @@
 #include <nvs.h>
 
 // ── Color palette ─────────────────────────────────────────────────────────
-#define TV_BG      0x0A0B09
-#define TV_LIME    0xC4EE1F
-#define TV_INK     0x14180C
+#define TV_BG      0x1B1230
+#define TV_LIME    0xFF9EC7  /* accent: soft pink (name kept) */
+#define TV_INK     0x2A1A40
 #define TV_TEXT    0xE9EFE2
-#define TV_MUTED   0x9AA394
-#define TV_TRACK   0x2A2D26
+#define TV_MUTED   0xA89CC0
+#define TV_TRACK   0x3A2D55
 #define TV_DANGER  0xFF5A4D
-#define TV_CARD    0x141713
+#define TV_CARD    0x2A1F45
 #define TV_ORANGE  0xF5A623
 
 // ── Layout constants ──────────────────────────────────────────────────────
@@ -300,7 +300,7 @@ static lv_obj_t * mk_switch(lv_obj_t * p, lv_coord_t y, bool checked)
     lv_obj_set_style_outline_width(sw, 0,                      LV_PART_MAIN | LV_STATE_FOCUSED);
 
     // Indicator (the lime fill, visible when checked)
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0xC4F000),     LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(sw, lv_color_hex(0xFF9EC7),     LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(sw,   LV_OPA_COVER,               LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_radius(sw,   LV_RADIUS_CIRCLE,           LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), LV_PART_INDICATOR | LV_STATE_CHECKED);
@@ -746,7 +746,7 @@ static void build_tab_system(lv_obj_t * page)
     lv_obj_t * c_rb = mk_card(sc, y, 66);
     mk_lbl(c_rb, "Reboot", 0, 0, TV_TEXT, &ui_font_name_14);
     mk_lbl(c_rb, "soft restart", 0, 30, TV_MUTED, &ui_font_name_14);
-    mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", 0xBEE700, tab_reboot_cb);
+    mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", 0xFF9EC7, tab_reboot_cb);
     y += 66 + 8;
 
     // ── STORAGE ──────────────────────────────────────────────────────────────
