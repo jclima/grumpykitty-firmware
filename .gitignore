@@ -28,3 +28,6 @@ src/system/system_sound_assets.S
 src/system/system_sound_assets.cpp
 src/app/app_03/vu_meter_assets.S
 src/app/app_03/vu_meter_assets.h
+
+# Generated art previews (tools/art)
+tools/art/out/
