@@ -18,6 +18,10 @@ extern "C" {
  *  Safe to call multiple times; subsequent calls are no-ops. */
 void ui_wifi_bridge_init(void);
 
+/** Erase WiFi credentials persisted by the IDF itself (esp_wifi_restore +
+ *  'nvs.net80211' namespace). Used by 'forget network' and factory reset. */
+void ui_wifi_bridge_wipe_stored_config(void);
+
 /* ── Scan ───────────────────────────────────────────────────── */
 /** Start an async WiFi scan. Returns immediately. */
 void ui_wifi_bridge_scan(void);

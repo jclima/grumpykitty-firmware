@@ -59,6 +59,9 @@ bool persist_init(void)
          * All other settings (brightness, volume, LED, BLE …) are kept. */
         Serial.println("[persist] Schema v2 → v3: migrating wifi_pass");
         String old_pass = s_prefs.getString(PKEY_WIFI_PASS, "");
+        /* NVS looks keys up by type: drop the old plaintext string entry so it
+         * cannot survive next to (or shadow) the new blob. */
+        s_prefs.remove(PKEY_WIFI_PASS);
         if (old_pass.length() > 0) {
             uint8_t buf[65] = {};
             size_t  plen    = old_pass.length();
@@ -154,7 +157,11 @@ bool persist_set_str(const char* key, const char* val)
     if (strcmp(key, PKEY_WIFI_PASS) == 0) {
         /* Store as XOR-obfuscated blob so the password is not plaintext on Flash. */
         size_t plen = strlen(val);
-        if (plen == 0) return s_prefs.putString(key, "") > 0;
+        /* Remove any previous entry first (string or blob): NVS keys are
+         * type-tagged, so an old blob would otherwise survive a put of a
+         * different type and be returned by persist_get_str(). */
+        s_prefs.remove(key);
+        if (plen == 0) return true;   /* cleared: key absent -> default "" */
         if (plen > 64) plen = 64;
         uint8_t buf[65] = {};
         memcpy(buf, val, plen);

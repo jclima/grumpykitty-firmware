@@ -10,6 +10,7 @@
 
 void WiFi_Class::begin()
 {
+    WiFi.persistent(false);         /* never store creds in IDF flash NVS */
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(false);   /* we manage reconnect manually */
     _setState(State::IDLE);

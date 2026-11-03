@@ -20,6 +20,8 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <string.h>
+#include <esp_wifi.h>
+#include <nvs.h>
 
 /* ── NVS keys ────────────────────────────────────────────────── */
 static constexpr char kKeySsid[] = PKEY_WIFI_SSID;
@@ -56,6 +58,22 @@ static char s_pending_ssid[33] = "";
 
 static bool s_inited = false;
 
+/* Protects scan-result reads/frees and the scan task bookkeeping below. */
+static SemaphoreHandle_t s_lock = nullptr;
+static inline void _lock(void)   { if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY); }
+static inline void _unlock(void) { if (s_lock) xSemaphoreGive(s_lock); }
+
+/* At most one scan task exists at a time. A start_scan() while one runs sets
+ * s_rescan_req; the running task then scans again instead of a 2nd task. */
+static bool s_scan_task_active = false;
+static bool s_rescan_req       = false;
+
+/* Credentials of the connection attempt in flight. Persisted to NVS only once
+ * the link reaches GOT_IP, so a typo never overwrites working saved creds. */
+static char s_try_ssid[33] = "";
+static char s_try_pass[65] = "";
+static bool s_try_valid    = false;
+
 /* ── WiFi event handler ──────────────────────────────────────────
  *  Runs on the WiFi event task, NOT the LVGL/Arduino-loop task.
  *  Only touches volatile primitives and short char arrays.
@@ -76,6 +94,30 @@ static void _wifi_event(WiFiEvent_t event, WiFiEventInfo_t /*info*/)
             }
             Serial.printf("[wifi] Connected  SSID=%s  IP=%s\n",
                           s_current_ssid, s_current_ip);
+            /* Persist credentials only now that they are proven to work. */
+            {
+                char try_ssid[33], try_pass[65];
+                bool valid;
+                _lock();
+                valid = s_try_valid && strcmp(s_try_ssid, s_current_ssid) == 0;
+                if (valid) {
+                    strcpy(try_ssid, s_try_ssid);
+                    strcpy(try_pass, s_try_pass);
+                    s_try_valid = false;
+                }
+                _unlock();
+                if (valid) {
+                    char sv_ssid[33] = {}, sv_pass[65] = {};
+                    persist_get_str(kKeySsid, sv_ssid, sizeof(sv_ssid), "");
+                    persist_get_str(kKeyPass, sv_pass, sizeof(sv_pass), "");
+                    if (strcmp(sv_ssid, try_ssid) != 0 || strcmp(sv_pass, try_pass) != 0) {
+                        persist_set_str(kKeySsid, try_ssid);
+                        persist_set_str(kKeyPass, try_pass);
+                        Serial.println("[wifi] credentials saved");
+                    }
+                    memset(try_pass, 0, sizeof(try_pass));
+                }
+            }
             break;
 
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
@@ -111,40 +153,53 @@ static void _wifi_event(WiFiEvent_t event, WiFiEventInfo_t /*info*/)
 }
 
 /* ── Scan FreeRTOS task ──────────────────────────────────────── */
-static void _scan_task(void *arg)
+static void _scan_task(void * /*arg*/)
 {
-    int my_gen = (int)(intptr_t)arg;
+    for (;;) {
+        _lock();
+        int my_gen = (int)s_scan_gen;
+        _unlock();
 
-    /* Step 1 — ensure STA mode */
-    WiFi.mode(WIFI_STA);
+        /* Step 1 — ensure STA mode */
+        WiFi.mode(WIFI_STA);
 
-    /* Step 2 — disconnect if we were mid-connect so the driver is free */
-    if (s_need_reconnect) {
-        WiFi.disconnect(false);
-        vTaskDelay(pdMS_TO_TICKS(200));   /* let driver settle */
-    }
+        /* Step 2 — disconnect if we were mid-connect so the driver is free */
+        if (s_need_reconnect) {
+            WiFi.disconnect(false);
+            vTaskDelay(pdMS_TO_TICKS(200));   /* let driver settle */
+        }
 
-    /* Step 3 — scan (blocking, 400 ms/channel, 13 channels ≈ 5 s max) */
-    int n = WiFi.scanNetworks(/*async=*/false,
-                               /*show_hidden=*/false,
-                               /*passive=*/false,
-                               /*max_ms_per_chan=*/400);
+        /* Step 3 — scan (blocking, 400 ms/channel, 13 channels ≈ 5 s max) */
+        int n = WiFi.scanNetworks(/*async=*/false,
+                                   /*show_hidden=*/false,
+                                   /*passive=*/false,
+                                   /*max_ms_per_chan=*/400);
 
-    /* Step 4 — publish result or discard if superseded */
-    if (my_gen == (int)s_scan_gen) {
-        s_scan_count = (n >= 0) ? n : 0;   /* treat WIFI_SCAN_FAILED as 0 */
-        Serial.printf("[wifi] scan done: %d AP(s)\n", (int)s_scan_count);
-    } else {
-        /* A newer scan or stop_scan() has superseded us */
-        WiFi.scanDelete();
-        Serial.printf("[wifi] scan discarded (gen %d < %d)\n", my_gen, (int)s_scan_gen);
+        /* Step 4 — publish result or discard if superseded.
+         * This task is the only one that frees results (under s_lock, so no
+         * reader is mid-access); it also decides whether to run again. */
+        _lock();
+        bool again = false;
+        if (my_gen == (int)s_scan_gen) {
+            s_scan_count = (n >= 0) ? n : 0;   /* treat WIFI_SCAN_FAILED as 0 */
+            Serial.printf("[wifi] scan done: %d AP(s)\n", (int)s_scan_count);
+        } else {
+            WiFi.scanDelete();
+            Serial.printf("[wifi] scan discarded (gen %d < %d)\n", my_gen, (int)s_scan_gen);
+            if (s_rescan_req) { s_rescan_req = false; again = true; }
+        }
+        if (!again) s_scan_task_active = false;   /* same critical section as the check */
+        _unlock();
+        if (again) continue;
+        break;
     }
 
     /* Step 5 — allow disconnect events to propagate again */
     s_scan_running = false;
 
     /* Step 6 — reconnect to the network we interrupted (if any) */
-    if (my_gen == (int)s_scan_gen && s_need_reconnect && s_post_scan_ssid[0] != '\0') {
+    if (s_need_reconnect && s_post_scan_ssid[0] != '\0'
+        && s_scan_count >= 0) {          /* not stopped / superseded by connect() */
         s_need_reconnect = false;
         s_status = WIFI_BRIDGE_CONNECTING;
         WiFi.begin(s_post_scan_ssid, s_post_scan_pass);
@@ -161,6 +216,14 @@ void ui_wifi_bridge_init(void)
 {
     if (s_inited) return;
     s_inited = true;
+
+    if (!s_lock) s_lock = xSemaphoreCreateMutex();
+
+    /* Arduino core default is persistent=true (WIFI_STORAGE_FLASH): SSID and
+     * password would be written in plaintext to the IDF 'nvs.net80211'
+     * namespace. Keep the IDF config in RAM; we store creds via persist.cpp.
+     * Must run before the first WiFi.mode()/begin(). */
+    WiFi.persistent(false);
 
     WiFi.onEvent(_wifi_event);
     WiFi.mode(WIFI_STA);
@@ -180,42 +243,66 @@ void ui_wifi_bridge_init(void)
 /* ── Scan ────────────────────────────────────────────────────── */
 void ui_wifi_bridge_start_scan(void)
 {
+    _lock();
+
+    /* A scan task is already running: don't spawn a second one, ask it to
+     * scan again (it discards its current results first). */
+    if (s_scan_task_active) {
+        s_scan_gen++;
+        s_rescan_req   = true;
+        s_scan_count   = -1;
+        s_scan_running = true;
+        _unlock();
+        Serial.println("[wifi] scan already running — rescan queued");
+        return;
+    }
+
     /* If we are currently connecting/connected, save the target so we
      * can reconnect after the scan finishes.                          */
     s_need_reconnect = (s_status == WIFI_BRIDGE_CONNECTING ||
                         s_status == WIFI_BRIDGE_CONNECTED);
     if (s_need_reconnect) {
-        persist_get_str(kKeySsid, s_post_scan_ssid, sizeof(s_post_scan_ssid), "");
-        persist_get_str(kKeyPass, s_post_scan_pass, sizeof(s_post_scan_pass), "");
+        if (s_try_valid) {   /* attempt in flight: not saved yet */
+            strcpy(s_post_scan_ssid, s_try_ssid);
+            strcpy(s_post_scan_pass, s_try_pass);
+        } else {
+            persist_get_str(kKeySsid, s_post_scan_ssid, sizeof(s_post_scan_ssid), "");
+            persist_get_str(kKeyPass, s_post_scan_pass, sizeof(s_post_scan_pass), "");
+        }
         if (s_post_scan_ssid[0] == '\0') s_need_reconnect = false;
     }
 
-    /* Advance generation (invalidates any still-running previous task) */
+    /* Advance generation (invalidates any previous results) */
     s_scan_gen++;
-    s_scan_count  = -1;       /* mark: scan in progress */
+    s_scan_count   = -1;      /* mark: scan in progress */
     s_scan_running = true;    /* suppress disconnect→FAILED during pre-scan disconnect */
+    s_rescan_req   = false;
 
     int gen = (int)s_scan_gen;
-    BaseType_t rc = xTaskCreate(_scan_task, "wifi_scan",
-                                 4096, (void *)(intptr_t)gen,
-                                 3, NULL);
+    BaseType_t rc = xTaskCreate(_scan_task, "wifi_scan", 4096, NULL, 3, NULL);
     if (rc != pdPASS) {
-        s_scan_count  = 0;
+        s_scan_count   = 0;
         s_scan_running = false;
+        s_need_reconnect = false;
         Serial.println("[wifi] ERROR: scan task creation failed");
     } else {
+        s_scan_task_active = true;
         Serial.printf("[wifi] scan task started (gen=%d, reconnect=%d)\n",
                       gen, (int)s_need_reconnect);
     }
+    _unlock();
 }
 
 void ui_wifi_bridge_scan(void) { ui_wifi_bridge_start_scan(); }
 
 void ui_wifi_bridge_stop_scan(void)
 {
+    _lock();
     s_scan_gen++;          /* invalidate running task's generation */
     s_scan_count  = -2;    /* idle */
     s_scan_running = false;
+    s_rescan_req  = false;
+    _unlock();
     /* Do NOT call WiFi.scanDelete() here — the scan task owns the buffer
      * and will call scanDelete() itself when it detects gen mismatch.   */
     Serial.println("[wifi] scan stopped");
@@ -233,25 +320,48 @@ bool ui_wifi_bridge_scan_complete(void) { return (s_scan_count >= 0);  }
 void ui_wifi_bridge_get_ssid(int idx, char *buf, int len)
 {
     if (!buf || !len) return;
-    String s = WiFi.SSID(idx);
-    strncpy(buf, s.c_str(), len - 1);
-    buf[len - 1] = '\0';
+    buf[0] = '\0';
+    _lock();
+    if (idx >= 0 && idx < (int)s_scan_count) {
+        String s = WiFi.SSID(idx);
+        strncpy(buf, s.c_str(), len - 1);
+        buf[len - 1] = '\0';
+    }
+    _unlock();
 }
 
-int  ui_wifi_bridge_get_rssi(int idx)     { return WiFi.RSSI(idx); }
-bool ui_wifi_bridge_is_encrypted(int idx) { return (WiFi.encryptionType(idx) != WIFI_AUTH_OPEN); }
+int ui_wifi_bridge_get_rssi(int idx)
+{
+    int r = -100;
+    _lock();
+    if (idx >= 0 && idx < (int)s_scan_count) r = WiFi.RSSI(idx);
+    _unlock();
+    return r;
+}
+
+bool ui_wifi_bridge_is_encrypted(int idx)
+{
+    bool e = false;
+    _lock();
+    if (idx >= 0 && idx < (int)s_scan_count) e = (WiFi.encryptionType(idx) != WIFI_AUTH_OPEN);
+    _unlock();
+    return e;
+}
 
 bool ui_wifi_bridge_get_ap(int i, char *ssid, int ssid_len, int *pct_out, bool *saved_out)
 {
+    int rssi = -100;
+    _lock();
     int n = (int)s_scan_count;
-    if (n < 0 || i < 0 || i >= n) return false;
-
+    if (n < 0 || i < 0 || i >= n) { _unlock(); return false; }
     String s = WiFi.SSID(i);
+    rssi = WiFi.RSSI(i);
+    _unlock();
+
     strncpy(ssid, s.c_str(), ssid_len - 1);
     ssid[ssid_len - 1] = '\0';
 
     if (pct_out) {
-        int rssi = WiFi.RSSI(i);
         int pct  = (rssi < -100) ? 0 : (rssi > -50) ? 100 : 2 * (rssi + 100);
         *pct_out = pct;
     }
@@ -270,21 +380,31 @@ void ui_wifi_bridge_connect(const char *ssid, const char *pass)
 {
     if (!ssid || ssid[0] == '\0') return;
 
-    /* Stop any in-progress scan before connecting */
-    if (s_scan_count == -1) {
+    /* Stop any in-progress scan before connecting. The scan task (sole owner
+     * of the results) notices the generation change and frees them itself. */
+    _lock();
+    bool was_scanning = (s_scan_count == -1);
+    if (was_scanning) {
         s_scan_gen++;
         s_scan_count  = -2;
         s_scan_running = false;
+        s_rescan_req  = false;
+        s_need_reconnect = false;   /* we are choosing a new target */
     }
+    /* Remember the attempt in RAM; persisted only on GOT_IP. */
+    strncpy(s_try_ssid, ssid, sizeof(s_try_ssid) - 1);
+    s_try_ssid[sizeof(s_try_ssid) - 1] = '\0';
+    strncpy(s_try_pass, pass ? pass : "", sizeof(s_try_pass) - 1);
+    s_try_pass[sizeof(s_try_pass) - 1] = '\0';
+    s_try_valid = true;
+    _unlock();
+    if (was_scanning) esp_wifi_scan_stop();   /* abort the radio scan before begin() */
 
     Serial.printf("[wifi] Connecting → %s\n", ssid);
     WiFi.disconnect(false);
     WiFi.mode(WIFI_STA);
     s_status = WIFI_BRIDGE_CONNECTING;
-    WiFi.begin(ssid, pass ? pass : "");
-
-    persist_set_str(kKeySsid, ssid);
-    persist_set_str(kKeyPass, pass ? pass : "");
+    WiFi.begin(s_try_ssid, s_try_pass);
 }
 
 void ui_wifi_bridge_connect_saved(const char *ssid)
@@ -314,6 +434,9 @@ void ui_wifi_bridge_connect_pending(const char *password)
 
 void ui_wifi_bridge_disconnect(void)
 {
+    _lock();
+    s_try_valid = false;
+    _unlock();
     WiFi.disconnect(false);
     s_status = WIFI_BRIDGE_IDLE;
     s_current_ssid[0] = '\0';
@@ -373,6 +496,10 @@ void ui_wifi_bridge_forget(const char *ssid)
     if (strcmp(ssid, saved) == 0) {
         persist_set_str(kKeySsid, "");
         persist_set_str(kKeyPass, "");
+        _lock();
+        s_try_valid = false;
+        _unlock();
+        ui_wifi_bridge_wipe_stored_config();
         WiFi.disconnect(false);
         s_status = WIFI_BRIDGE_IDLE;
         s_current_ssid[0] = '\0';
@@ -385,4 +512,19 @@ void ui_wifi_bridge_get_saved_pass(char *buf, int len)
 {
     if (!buf || len <= 0) return;
     persist_get_str(kKeyPass, buf, len, "");
+}
+
+/* Erase any WiFi credentials the IDF itself may have persisted (e.g. by older
+ * firmware that ran with persistent=true). Safe to call at any time. */
+void ui_wifi_bridge_wipe_stored_config(void)
+{
+    if (WiFi.getMode() != WIFI_OFF) {
+        esp_wifi_restore();   /* only valid once the driver is initialised */
+    }
+    nvs_handle_t h;
+    if (nvs_open("nvs.net80211", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_erase_all(h);
+        nvs_commit(h);
+        nvs_close(h);
+    }
 }
