@@ -12,7 +12,7 @@ bool MeowKit::Setup()
 {
     _device = std::make_unique<DEVICES>();
     if (!_device) {
-        printf("[FancyKitty] BSP create failed\n");
+        printf("[GrumpyKitty] BSP create failed\n");
         return false;
     }
 

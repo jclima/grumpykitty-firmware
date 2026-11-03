@@ -62,7 +62,7 @@ Whether a given build is distributable under your intended terms depends on thes
 
 ## Name
 
-FancyKitty is the name of this fork. "MeowKit" and "MeowKit-S3" are the upstream project and product names and remain theirs; every upstream reference in this repository (URLs, attribution, class and file names, historical changelog entries) keeps the original name.
+GrumpyKitty is the name of this fork. "MeowKit" and "MeowKit-S3" are the upstream project and product names and remain theirs; every upstream reference in this repository (URLs, attribution, class and file names, historical changelog entries) keeps the original name.
 
 ## (f) Trademark
 

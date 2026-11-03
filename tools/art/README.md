@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 JC Lima -->
-# FancyKitty art pipeline
+# GrumpyKitty art pipeline
 
 Procedural kawaii-kitty art plus converters between PNG and LVGL `.c` images.
 Standard-library Python 3 and macOS `swiftc`/`sips` only; no external art.

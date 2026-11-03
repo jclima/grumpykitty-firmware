@@ -241,7 +241,7 @@ skip_display:
      *  Each test: A = Start, B = Skip
      *  Set MEOWKIT_HW_TEST_ENABLE to 0 in config.h to disable
      * ══════════════════════════════════════════════════════════════ */
-    Serial.println("\n========== FancyKitty Hardware BBT ==========\n");
+    Serial.println("\n========== GrumpyKitty Hardware BBT ==========\n");
 
     /* ── Run-once guard: skip BBT after factory test has been completed ── */
     {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 JC Lima
 //
-// FancyKitty procedural art, shared kit + v1 kawaii sampler. CoreGraphics only,
+// GrumpyKitty procedural art, shared kit + v1 kawaii sampler. CoreGraphics only,
 // no external art. Compiled together with draw_v2.swift and main.swift by
 // make_preview.sh / make_v2.sh. Origin is top-left, y grows down.
 

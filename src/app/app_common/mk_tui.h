@@ -30,7 +30,7 @@
 namespace MK_PAL {
     static constexpr uint32_t BLACK       = 0x000000;
     static constexpr uint32_t WHITE       = 0xFFFFFF;
-    static constexpr uint32_t ACCENT      = 0xFF9EC7;  /* FancyKitty soft pink */
+    static constexpr uint32_t ACCENT      = 0xFF9EC7;  /* GrumpyKitty soft pink */
     static constexpr uint32_t ACCENT_DIM  = 0x9A6A8C;
     static constexpr uint32_t ACCENT_DARK = 0x2E1F42;
     static constexpr uint32_t TEXT_PRI    = 0xFFFFFF;
@@ -353,7 +353,7 @@ static void bbt_drawOverview(LCD& lcd, int8_t* results, bool showStart = true)
     lcd.setFont(&fonts::efontCN_16);
     lcd.setTextColor(_BBT_CYAN, _BBT_BG);
     lcd.setCursor(4, 2);
-    lcd.printf("FANCYKITTY HARDWARE BOARD TEST");
+    lcd.printf("GRUMPYKITTY HARDWARE BOARD TEST");
     lcd.setTextColor(_BBT_DIM, _BBT_BG);
     lcd.setCursor(256, 2);
     lcd.printf("12 ITEMS");

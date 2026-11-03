@@ -1,4 +1,4 @@
-FancyKitty is a fork of MeowKit-S3 firmware by Mingo / Whitecliff, see [NOTICE.md](NOTICE.md).
+GrumpyKitty is a fork of MeowKit-S3 firmware by Mingo / Whitecliff, see [NOTICE.md](NOTICE.md).
 
 ## Documentation
 

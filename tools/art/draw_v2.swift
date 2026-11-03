@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 JC Lima
 //
-// FancyKitty art v2: a grumpy, witty cream calico kitty with props, on a
+// GrumpyKitty art v2: a grumpy, witty cream calico kitty with props, on a
 // "midnight plum" theme. One function per asset, driven by the registry at the
 // bottom (see assetRegistry). Reuses the kit from draw.swift.
 
@@ -1218,7 +1218,7 @@ func mascotSheet(_ bgPlum: CGContext, _ mascots: [(Asset, CGContext)]) -> CGCont
             img(ctx)(c, x, y)
         })
     }
-    return flowSheet(width: 1000, title: "FancyKitty v2 - mascots (1x on plum) + expression set", cells)
+    return flowSheet(width: 1000, title: "GrumpyKitty v2 - mascots (1x on plum) + expression set", cells)
 }
 
 func iconSheet(_ icons: [(Asset, CGContext)], _ small: [(Asset, CGContext)], _ bgPlum: CGContext) -> CGContext {
@@ -1252,7 +1252,7 @@ func iconSheet(_ icons: [(Asset, CGContext)], _ small: [(Asset, CGContext)], _ b
         var px = x + 6
         for (_, ctx) in small where ctx.height < 50 { img(ctx)(c, px, y + 2); img(ctx)(c, px, y + 54); px += CGFloat(ctx.width) + 8 }
     })
-    return flowSheet(width: 1180, title: "FancyKitty v2 - app icons (lime / plum / light tile) and small UI icons", cells)
+    return flowSheet(width: 1180, title: "GrumpyKitty v2 - app icons (lime / plum / light tile) and small UI icons", cells)
 }
 
 func panelSheet(_ bgPlum: CGContext, _ panels: [(Asset, CGContext)]) -> CGContext {
@@ -1287,7 +1287,7 @@ func panelSheet(_ bgPlum: CGContext, _ panels: [(Asset, CGContext)]) -> CGContex
         c.restoreGState()
     }
     cells.append(mock2)
-    return flowSheet(width: 1100, title: "FancyKitty v2 - backgrounds and panels (opaque ones raw, panels over plum)", cells)
+    return flowSheet(width: 1100, title: "GrumpyKitty v2 - backgrounds and panels (opaque ones raw, panels over plum)", cells)
 }
 
 // MARK: v2 main

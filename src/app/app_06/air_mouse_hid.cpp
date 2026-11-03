@@ -37,7 +37,7 @@ uint8_t info[] = {0x11, 0x01, 0, 2}, control = 0, protocol = 1;
 std::atomic<uint8_t> protocolMode{1};
 uint8_t report[5] = {}, ccc[2] = {}, ref[] = {0, 1};
 uint8_t bootReport[3] = {}, bootCcc[2] = {};
-uint8_t manufacturer[] = "FancyKitty", pnp[] = {2, 2, 0xE5, 0x11, 0xA1, 0x10, 2};
+uint8_t manufacturer[] = "GrumpyKitty", pnp[] = {2, 2, 0xE5, 0x11, 0xA1, 0x10, 2};
 // Battery level is not exposed: the board has no validated percentage source.
 // Report protocol matches the previous five-byte mouse descriptor. Boot
 // protocol exposes three-byte pointer reports for hosts that request it.
@@ -179,7 +179,7 @@ namespace air_mouse_hid {
 bool begin() {
     if (bluetooth_manager::owns(lease)) return !error;
     // The Bluetooth manager owns stack init/deinit and callback registration.
-    lease=bluetooth_manager::acquire(bluetooth_manager::Owner::AirMouse,"FancyKitty AirMouse",gap,gatts,stopped);
+    lease=bluetooth_manager::acquire(bluetooth_manager::Owner::AirMouse,"GrumpyKitty AirMouse",gap,gatts,stopped);
     if (!lease) { active=false; error=true; return false; }
     active=true; linked=false; secure=false; subscribed=false; error=false;
     services=advReady=0; iface=ESP_GATT_IF_NONE; head=tail=0;
@@ -195,7 +195,7 @@ bool begin() {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY,&keys,1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,&keys,1);
     static uint8_t ad[]={2,1,6,3,3,0x12,0x18,3,0x19,0xC2,3};
-    static uint8_t name[]={20,9,'F','a','n','c','y','K','i','t','t','y',' ','A','i','r','M','o','u','s','e'};
+    static uint8_t name[]={21,9,'G','r','u','m','p','y','K','i','t','t','y',' ','A','i','r','M','o','u','s','e'};
     // A stable, app-specific static random identity prevents host HID caches
     // from confusing the mouse with another firmware Bluetooth profile.
     const uint8_t* baseAddress=esp_bt_dev_get_address();

@@ -86,7 +86,7 @@ void AppMediaRemote::_status_ui() {
             color = hp::COL_ERR;
         } else if (st == S_CONNECTED) { snprintf(line, sizeof(line), "Ready"); color = COL_OK; }
         else if (st == S_PAIRING) { snprintf(line, sizeof(line), "Pairing..."); color = hp::COL_WARN; }
-        else { snprintf(line, sizeof(line), "Pair 'FancyKitty Remote'"); color = hp::COL_INFO; }
+        else { snprintf(line, sizeof(line), "Pair 'GrumpyKitty Remote'"); color = hp::COL_INFO; }
     }
     if (strcmp(line, _drawn_msg) != 0 || _msg_dirty) {
         lcd.fillRect(1, 150, 318, 30, hp::COL_BG);

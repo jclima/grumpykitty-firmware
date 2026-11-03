@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 JC Lima
 //
-// FancyKitty art v3: a MEAN, GRUMPY alley cat. Three palettes, same drawings.
+// GrumpyKitty art v3: a MEAN, GRUMPY alley cat. Three palettes, same drawings.
 // Compiled with draw.swift (shared helpers) + main_v3.swift by make_v3.sh.
 // Origin is top-left, y grows down. Hand-inked look: wobbled paths, outlines drawn as
 // short segments with varying width, flat fills with ONE hard shadow tone and a rim band.
@@ -796,7 +796,7 @@ func contactSheet(_ p: Pal, _ r: [String: CGContext]) -> CGContext {
     let W = 960, H = 760
     let c = makeCtx(W, H)
     fill(c, rectP(0, 0, CGFloat(W), CGFloat(H)), col(0x0a0a0c))
-    label(c, "FancyKitty v3 / \(p.name)", 16, 22, 14, col(0xdddddd), bold: true)
+    label(c, "GrumpyKitty v3 / \(p.name)", 16, 22, 14, col(0xdddddd), bold: true)
     // hero + update on the palette background
     let bg = r["ui_img_background_png"]!
     for (x, nm) in [(16, "ui_img_mascot_png"), (300, "ui_img_mascot_update_png")] {

@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 JC Lima
-# Render the FancyKitty art v2 set to tools/art/out/v2/ (<ui_img_name>.png at the exact
+# Render the GrumpyKitty art v2 set to tools/art/out/v2/ (<ui_img_name>.png at the exact
 # LVGL sizes plus contact_sheet_v2_*.png), then verify sizes against src/ui/images/*.c.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)

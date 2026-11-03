@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 JC Lima
-# Regenerate the FancyKitty style-sampler previews into tools/art/out/.
+# Regenerate the GrumpyKitty style-sampler previews into tools/art/out/.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/out"

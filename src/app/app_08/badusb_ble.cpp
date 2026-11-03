@@ -48,7 +48,7 @@ uint8_t info[] = {0x11, 0x01, 0, 2}, control = 0, protocol = 1;
 std::atomic<uint8_t> protocolMode{1};
 uint8_t report[8] = {}, ccc[2] = {}, ref[] = {1, 1};
 uint8_t bootReport[8] = {}, bootCcc[2] = {};
-uint8_t manufacturer[] = "FancyKitty", pnp[] = {2, 0xAC, 0x05, 0x0A, 0x82, 0x10, 0x02};
+uint8_t manufacturer[] = "GrumpyKitty", pnp[] = {2, 0xAC, 0x05, 0x0A, 0x82, 0x10, 0x02};
 // Battery level is not exposed: the board has no validated percentage source.
 // Report protocol matches the previous five-byte mouse descriptor. Boot
 // protocol exposes three-byte pointer reports for hosts that request it.
@@ -399,7 +399,7 @@ bool ready() {
 }
 bool bu_ble_begin() {
     if (bluetooth_manager::owns(lease)) return !error;
-    lease=bluetooth_manager::acquire(bluetooth_manager::Owner::BadUsb,"FancyKitty BadUSB",gap,gatts,stopped);
+    lease=bluetooth_manager::acquire(bluetooth_manager::Owner::BadUsb,"GrumpyKitty BadUSB",gap,gatts,stopped);
     if (!lease) return false;
     active=true; linked=false; secure=false; subscribed=false; bootSubscribed=false; error=false;
     suspended=false; congested=false; sendFault=false; clearKeys();
@@ -415,7 +415,7 @@ bool bu_ble_begin() {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY,&mask,1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,&mask,1);
     static uint8_t ad[]={2,1,6,3,3,0x12,0x18,3,0x19,0xC1,3};
-    static uint8_t name[]={17,9,'F','a','n','c','y','K','i','t','t','y',' ','B','a','d','U','S','B'};
+    static uint8_t name[]={18,9,'G','r','u','m','p','y','K','i','t','t','y',' ','B','a','d','U','S','B'};
     if (esp_ble_gap_config_adv_data_raw(ad,sizeof(ad))!=ESP_OK ||
         esp_ble_gap_config_scan_rsp_data_raw(name,sizeof(name))!=ESP_OK ||
         esp_ble_gatts_app_register(APP_ID)!=ESP_OK) error=true;

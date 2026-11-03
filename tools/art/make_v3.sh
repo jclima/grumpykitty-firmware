@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 JC Lima
-# Render the FancyKitty art v3 sampler (mean grumpy alley cat, 3 palettes) to
+# Render the GrumpyKitty art v3 sampler (mean grumpy alley cat, 3 palettes) to
 # tools/art/out/v3/<alley|toxic|bloodmoon>/ plus tools/art/out/v3/overview.png,
 # then verify every asset size against src/ui/images/*.c. Nothing here writes to src/.
 set -e
