@@ -1,0 +1,13 @@
+{
+  "name": "GrumpyKitty",
+  "version": "@VERSION@",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        { "path": "grumpykitty-@VERSION@-merged.bin", "offset": 0 }
+      ]
+    }
+  ]
+}

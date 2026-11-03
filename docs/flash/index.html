@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 JC Lima -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrumpyKitty Web Flasher</title>
+<meta name="description" content="Flash GrumpyKitty firmware to an ESP32-S3 MeowKit-S3 device from Chrome or Edge.">
+<style>
+  :root { --bg:#14161c; --panel:#1d2029; --line:#2d313d; --amber:#ffb000; --bone:#f2e6d0; --dim:#b3a998; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--bone); font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { color:var(--amber); font-size:2rem; margin:0 0 4px; letter-spacing:.02em; }
+  h2 { color:var(--amber); font-size:1.15rem; margin:32px 0 8px; }
+  p, li { color:var(--bone); }
+  .sub { color:var(--dim); margin:0 0 24px; }
+  a { color:var(--amber); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin:16px 0; }
+  .warn { border-color:var(--amber); }
+  ol, ul { padding-left:1.3rem; }
+  li { margin:6px 0; }
+  code, kbd { background:#0e1015; border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-size:.9em; }
+  .flash { text-align:center; padding:24px 16px; }
+  esp-web-install-button button {
+    background:var(--amber); color:#14161c; border:0; border-radius:8px;
+    font:700 1.05rem system-ui,sans-serif; padding:14px 28px; cursor:pointer;
+  }
+  esp-web-install-button button:hover { filter:brightness(1.1); }
+  #unsupported { display:none; }
+  footer { margin-top:40px; color:var(--dim); font-size:.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>GrumpyKitty Web Flasher</h1>
+  <p class="sub">Install the GrumpyKitty firmware on an ESP32-S3 (N16R8) MeowKit-S3 device, straight from your browser.</p>
+
+  <div class="card warn" id="unsupported">
+    <strong>This browser cannot flash devices.</strong> Web Serial is needed: use desktop Chrome or Edge (not Safari, Firefox or a phone browser).
+  </div>
+
+  <div class="card flash">
+    <esp-web-install-button manifest="manifest.json">
+      <span slot="unsupported">Use desktop Chrome or Edge to flash.</span>
+      <span slot="not-allowed">Web Serial needs a secure (HTTPS) page.</span>
+    </esp-web-install-button>
+    <p class="sub" style="margin:12px 0 0">Put the device in Download Mode first (below), then click Install and pick the <em>USB JTAG/serial debug unit</em> port.</p>
+  </div>
+
+  <h2>1. Before you start</h2>
+  <ul>
+    <li>Desktop <strong>Chrome or Edge</strong> (Web Serial). Safari and Firefox do not work.</li>
+    <li>A USB-C <strong>data</strong> cable (some cables are charge-only), plugged <strong>directly</strong> into the computer, no hub.</li>
+    <li>A Dupont jumper wire (or a straightened paper clip) to reach the BOOT button.</li>
+    <li>Flashing never touches the SD card.</li>
+  </ul>
+
+  <h2>2. Enter Download Mode</h2>
+  <ol>
+    <li>Power the device <strong>off</strong>.</li>
+    <li>Push the jumper wire through the small hole on the back and keep <kbd>BOOT</kbd> pressed.</li>
+    <li>While holding BOOT, press and hold <kbd>Power</kbd> for 1-2 seconds.</li>
+    <li>Release Power, then release BOOT. The screen stays <strong>off</strong>; that is correct.</li>
+    <li>Connect the USB-C cable to the computer.</li>
+  </ol>
+
+  <h2>3. Flash</h2>
+  <ol>
+    <li>Click <strong>Install</strong> above.</li>
+    <li>Choose the port named <strong>USB JTAG/serial debug unit</strong> and click Connect.</li>
+    <li>Answer the <em>Erase device?</em> question (see below), then confirm. Do not unplug until it says finished (about a minute).</li>
+  </ol>
+
+  <div class="card">
+    <strong>Erase device?</strong>
+    <ul>
+      <li><strong>Leave it unticked</strong> when updating from MeowKit or an earlier GrumpyKitty. Your settings are kept.</li>
+      <li>Tick it for a clean start or if the device misbehaves after an update. Erasing wipes saved settings (including Wi-Fi). It never touches the SD card.</li>
+    </ul>
+  </div>
+
+  <h2>4. After flashing</h2>
+  <ol>
+    <li>Hold <kbd>Power</kbd> for 4-5 seconds to power the device off.</li>
+    <li>Press <kbd>Power</kbd> to boot. (Alternatively, briefly short RESET to GND.)</li>
+  </ol>
+
+  <h2>Port does not appear?</h2>
+  <ul>
+    <li>Try another USB-C cable: it must carry data.</li>
+    <li>Plug directly into the computer, no hub or dock.</li>
+    <li>Repeat Download Mode: unplug, power off, redo the BOOT + Power sequence, then reconnect.</li>
+    <li>Close any serial monitor, PlatformIO or other app that may hold the port.</li>
+    <li>On Linux, your user may need to be in the <code>dialout</code> group.</li>
+  </ul>
+
+  <footer>
+    Unofficial community fork of the MeowKit-S3 firmware; not affiliated with or endorsed by the vendor.
+    <a href="https://github.com/jclima/grumpykitty-firmware">Source</a> &middot;
+    <a href="https://github.com/jclima/grumpykitty-firmware/releases">Releases</a> &middot;
+    <a href="https://docs.meowkit.cc/">Hardware docs</a>.
+    Flashing uses <a href="https://github.com/esphome/esp-web-tools">ESP Web Tools</a> (Apache-2.0). Use at your own risk.
+  </footer>
+</main>
+<script>
+  if (!("serial" in navigator)) document.getElementById("unsupported").style.display = "block";
+</script>
+<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+</body>
+</html>

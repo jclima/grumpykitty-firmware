@@ -20,6 +20,7 @@ These files were written for this fork and are licensed under the MIT License (s
 - `tools/gen_app_icon.py`
 - `tools/host_tests/*`, `tools/mock_signalk.py`
 - `Makefile`, `DEVELOPMENT.md`, `LICENSE-MIT`, `NOTICE.md`
+- `README.md` (rewritten), `SECURITY.md`, `VERSION`, `docs/*` (flasher page, RELEASING.md; the screenshots in `docs/images/` are the owner's own art), `.github/*`, `tools/release/*`
 
 Note on `ble_remote_hid.*`: its GATT layout and HID report map are derived from the upstream file `src/app/app_08/badusb_ble.cpp`, and its queueing follows upstream `app_06/air_mouse_hid.cpp`. It is therefore a derivative of upstream code. JC Lima offers his own contribution under MIT, but this cannot grant rights in the upstream code the file derives from.
 
