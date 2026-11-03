@@ -773,7 +773,7 @@ bool buildFilter(const Config& cfg, JsonDocument& filter) {
 }
 
 DeserializationError parseTree(const char* json, size_t len, const JsonDocument& filter, JsonDocument& out) {
-  return deserializeJson(out, json, len, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(16));
+  return deserializeJson(out, json, len, DeserializationOption::Filter(filter), DeserializationOption::NestingLimit(kNestingLimit));
 }
 
 Reading readNode(JsonVariantConst node) {

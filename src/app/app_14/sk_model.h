@@ -28,6 +28,7 @@ constexpr size_t kMaxItems = 32;        // instruments + notifications in one co
 constexpr size_t kMaxPages = 8;
 constexpr size_t kMaxPageItems = 8;
 constexpr double kMaxAbsValue = 1e15;   // larger converted readings are invalid
+constexpr size_t kNestingLimit = 20;    // JSON nesting limit for vessels/self (filtered-out noise counts too)
 
 // ---------------------------------------------------------------------------
 // Severity
@@ -157,7 +158,7 @@ bool parseConfig(const char* json, size_t len, Config& out, std::string& err);
 /// Filter document for deserializeJson(DeserializationOption::Filter): keeps `value` and
 /// `timestamp` of every configured instrument path (`value.state` + `timestamp` for notifications).
 bool buildFilter(const Config& cfg, JsonDocument& filter);
-/// Parse a vessels/self body through the filter (nesting limit 16 so noise does not abort).
+/// Parse a vessels/self body through the filter (nesting limit kNestingLimit so noise does not abort).
 DeserializationError parseTree(const char* json, size_t len, const JsonDocument& filter, JsonDocument& out);
 
 struct Reading {

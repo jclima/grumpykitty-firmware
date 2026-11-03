@@ -52,6 +52,9 @@ extern "C" {
 #define PKEY_BLE_NAME       "ble_name"   /* str  ≤20 B    BLE advertisement name     */
 #define PKEY_BLE_EN         "ble_en"     /* int  0|1      Bluetooth master permission */
 
+/* Boat Dash (app_14): added without a schema bump (absent key reads as the default) */
+#define PKEY_SK_LAST_IP     "sk_last_ip" /* str  ≤39 B    last working Signal K server "ip:port" */
+
 /* Internal — do not read/write from application code */
 #define PKEY_NVS_VER        "nvs_ver"   /* int  schema version sentinel             */
 
