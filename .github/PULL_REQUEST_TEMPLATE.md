@@ -1,3 +1,5 @@
+Thanks for the PR! See [CONTRIBUTING.md](../CONTRIBUTING.md) for the short version of the rules.
+
 ## What and why
 
 ## How it was tested

@@ -3,6 +3,7 @@
 Community firmware for the MeowKit-S3 (ESP32-S3-WROOM-1-N16R8): more apps, bug fixes and a grumpy alley-cat theme. Unofficial fork of the MeowKit-S3 firmware by Mingo / Whitecliff, see [NOTICE.md](NOTICE.md).
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-jclima-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/jclima)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-ffb000.svg)](CONTRIBUTING.md)
 
 | Home | Apps | Dialogs | Update |
 |---|---|---|---|
@@ -57,7 +58,9 @@ Create `/grumpykitty/signalk.json` on the SD card (or rely on mDNS discovery) an
 
 ## Building and contributing
 
-`make build`, `make upload`, `make monitor` and `make dist` are described in [DEVELOPMENT.md](DEVELOPMENT.md); releases in [docs/RELEASING.md](docs/RELEASING.md). Bug reports and pull requests are welcome, use the templates. Security issues: see [SECURITY.md](SECURITY.md).
+`make build`, `make upload`, `make monitor` and `make dist` are described in [DEVELOPMENT.md](DEVELOPMENT.md); releases in [docs/RELEASING.md](docs/RELEASING.md). Security issues: see [SECURITY.md](SECURITY.md).
+
+Pull requests and feature requests are welcome. The cat grumbles, but he reads everything. Got an idea? [Open a feature request](https://github.com/jclima/grumpykitty-firmware/issues/new/choose). Want to send code? See [CONTRIBUTING.md](CONTRIBUTING.md). Bug reports with a serial log (`make monitor`) are gold.
 
 ## Support
 
