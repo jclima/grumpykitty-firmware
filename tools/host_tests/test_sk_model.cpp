@@ -1020,6 +1020,21 @@ static void testTrackerPathsMode() {
   CHECK_STR(s.items[1].display, "WARN");
 }
 
+static void testShouldSendToken() {
+  Config cfg;
+  Endpoint ep;
+  cfg.server.token = "SECRET";
+  CHECK(!shouldSendToken(ep, cfg));  // default endpoint is not configured
+  ep.fromDiscovery = true;
+  CHECK(!shouldSendToken(ep, cfg));  // discovered
+  ep.fromDiscovery = false;
+  CHECK(!shouldSendToken(ep, cfg));  // cached
+  ep.configured = true;
+  CHECK(shouldSendToken(ep, cfg));   // explicit server.host
+  cfg.server.token.clear();
+  CHECK(!shouldSendToken(ep, cfg));  // configured but no token
+}
+
 int main() {
   testConversionsKnown();
   testNegate();
@@ -1043,6 +1058,7 @@ int main() {
   testTrackerTree();
   testTrackerStaleness();
   testTrackerPathsMode();
+  testShouldSendToken();
   std::printf("%d checks, %d failed\n", g_checks, g_failed);
   return g_failed ? 1 : 0;
 }

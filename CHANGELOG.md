@@ -12,6 +12,9 @@
 - New GrumpyKitty visual theme: mean alley-cat mascots, cat-gag app icons, brick-alley backgrounds, amber accents; colours centralised in src/ui/ui_theme.h
 - Rebranded the firmware identity to GrumpyKitty (fork of MeowKit-S3): BLE advertised names and HID manufacturer, default BLE device name, USB MSC SCSI vendor id (`GrumpyKt`), About dialog name and serial log banners. Saved BLE names in NVS are not modified.
 
+### Security
+- Boat Dash: the Signal K bearer token is sent only to the configured `server.host`, never to servers found via mDNS or the cached address. With a token but no host the app shows "Auth needs fixed host: set server.host" on 401/403.
+
 ### Fixed
 - "Updateing" typo on the update screen; Settings Wi-Fi label now fits its card (ellipsis instead of overflow).
 - SD: a card that is inserted but cannot be mounted (exFAT, unformatted, non-FAT) is now reported as "unsupported format - use FAT32" instead of "No SD card"; failed remounts are throttled to once per 3 s.

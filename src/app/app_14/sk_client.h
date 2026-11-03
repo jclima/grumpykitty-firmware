@@ -23,7 +23,8 @@ enum class LinkState : uint8_t {
   Starting,      // worker running, nothing known yet
   Discovering,   // looking for a server
   Connected,     // last poll succeeded
-  AuthRequired,  // 401/403
+  AuthRequired,  // 401/403 from the configured host: token missing or wrong
+  AuthNeedsHost, // 401/403 from a discovered server: token is never sent to it
   Unreachable,   // connect/HTTP/parse error (values age normally)
   NoHost,        // nothing configured and nothing discovered
 };

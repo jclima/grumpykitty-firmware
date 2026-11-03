@@ -114,6 +114,15 @@ struct Server {
   Fetch fetch = Fetch::Tree;
 };
 
+/// A Signal K server address. `configured` is true ONLY for the endpoint built from the config file's
+/// server.host/port; discovered (mDNS) and cached (NVS) endpoints are never configured.
+struct Endpoint {
+  std::string host;
+  int port = 3000;
+  bool fromDiscovery = false;  // cache it on success
+  bool configured = false;     // came from server.host: the only endpoint that may receive the token
+};
+
 struct Instrument {
   std::string id, path, label, convert, unit;
   int precision = 0;
@@ -236,5 +245,11 @@ class Tracker {
   bool connected_ = false;
   bool everConnected_ = false;
 };
+
+/// Security: the bearer token is sent only to the explicitly configured server.host (never to a
+/// discovered or cached endpoint, since mDNS can be spoofed on the LAN) and only if a token is set.
+inline bool shouldSendToken(const Endpoint& ep, const Config& cfg) {
+  return ep.configured && !cfg.server.token.empty();
+}
 
 }  // namespace sk

@@ -106,12 +106,6 @@ class BodyStream : public Stream {
   bool aborted_ = false, timedOut_ = false;
 };
 
-struct Endpoint {
-  std::string host;
-  int port = 3000;
-  bool fromDiscovery = false;  // cache it on success
-};
-
 enum class Fetch1 : uint8_t { Ok, Stopped, Auth, NotFound, Failed };
 
 }  // namespace
@@ -144,6 +138,7 @@ const char* linkText(LinkState s) {
     case LinkState::Discovering: return "Looking for server...";
     case LinkState::Connected: return "Connected";
     case LinkState::AuthRequired: return "Auth required: add token";
+    case LinkState::AuthNeedsHost: return "Auth needs fixed host: set server.host";
     case LinkState::Unreachable: return "Server unreachable";
     case LinkState::NoHost: return "Set host in /grumpykitty/signalk.json";
   }
@@ -184,7 +179,7 @@ std::string baseUrl(const Endpoint& ep) { return "http://" + hostPort(ep); }
 
 // One GET. On 200, `onBody` is called with the response stream. Returns Ok only if onBody returned true.
 template <typename BodyFn>
-Fetch1 httpGet(Shared& sh, const std::string& url, bool withToken, int& code, int64_t& dateMs,
+Fetch1 httpGet(Shared& sh, const Endpoint& ep, const std::string& url, int& code, int64_t& dateMs,
                char* err, size_t errLen, BodyFn onBody) {
   code = 0;
   dateMs = -1;
@@ -200,7 +195,7 @@ Fetch1 httpGet(Shared& sh, const std::string& url, bool withToken, int& code, in
     return Fetch1::Failed;
   }
   http.addHeader("Accept", "application/json");
-  if (withToken && !sh.cfg.server.token.empty()) {
+  if (shouldSendToken(ep, sh.cfg)) {  // configured host only; never discovered/cached endpoints
     String auth("Bearer ");
     auth += sh.cfg.server.token.c_str();
     http.addHeader("Authorization", auth);
@@ -237,7 +232,7 @@ bool validate(Shared& sh, const Endpoint& ep) {
   int64_t dateMs;
   JsonDocument filter;
   filter["endpoints"]["v1"] = true;
-  const Fetch1 r = httpGet(sh, baseUrl(ep) + "/signalk", false, code, dateMs, err, sizeof err,
+  const Fetch1 r = httpGet(sh, ep, baseUrl(ep) + "/signalk", code, dateMs, err, sizeof err,
                            [&](Stream& s, char*, size_t) {
                              JsonDocument doc;
                              if (deserializeJson(doc, s, DeserializationOption::Filter(filter),
@@ -311,6 +306,7 @@ Found resolve(Shared& sh, Endpoint& out) {
     Endpoint ep;
     ep.host = sv.host;
     ep.port = sv.port;
+    ep.configured = true;  // the only place an endpoint becomes configured
     setStatus(sh, LinkState::Discovering, "", hostPort(ep).c_str());
     if (validate(sh, ep)) { out = ep; return Found::Yes; }
     return sh.stop.load() ? Found::Stopped : Found::No;
@@ -321,6 +317,7 @@ Found resolve(Shared& sh, Endpoint& out) {
   Endpoint ep;
   if (cached[0] && parseCache(cached, ep)) {
     ep.fromDiscovery = false;  // already cached
+    ep.configured = false;     // cached endpoints never get the token
     if (validate(sh, ep)) { out = ep; return Found::Yes; }
   }
   if (sh.stop.load()) return Found::Stopped;
@@ -346,7 +343,7 @@ PollOutcome pollTree(Shared& sh, const Endpoint& ep, const JsonDocument& filter,
   int code;
   int64_t dateMs;
   JsonDocument doc(&alloc);
-  o.r = httpGet(sh, baseUrl(ep) + "/signalk/v1/api/vessels/self", true, code, dateMs, o.err, sizeof o.err,
+  o.r = httpGet(sh, ep, baseUrl(ep) + "/signalk/v1/api/vessels/self", code, dateMs, o.err, sizeof o.err,
                 [&](Stream& s, char* err, size_t errLen) {
                   const DeserializationError de =
                       deserializeJson(doc, s, DeserializationOption::Filter(filter),
@@ -382,7 +379,7 @@ PollOutcome pollPaths(Shared& sh, const Endpoint& ep) {
     int64_t dateMs;
     JsonDocument doc;
     char err[56] = "";
-    const Fetch1 r = httpGet(sh, base + pathToUrlTail(path), true, code, dateMs, err, sizeof err,
+    const Fetch1 r = httpGet(sh, ep, base + pathToUrlTail(path), code, dateMs, err, sizeof err,
                              [&](Stream& s, char* e, size_t eLen) {
                                const DeserializationError de =
                                    deserializeJson(doc, s, DeserializationOption::Filter(isInst ? instFilter : noteFilter),
@@ -413,6 +410,8 @@ void run(Shared& sh) {
     setStatus(sh, LinkState::Unreachable, "config too large");
     return;
   }
+  if (!sh.cfg.server.token.empty() && sh.cfg.server.host.empty())
+    log_w("[SK] token set but server.host is empty: token not used (set server.host to send it)");
   const uint32_t pollMs = uint32_t(std::max(sh.cfg.server.pollMs, 1000));
   Endpoint ep;
   bool resolved = false;
@@ -457,7 +456,8 @@ void run(Shared& sh) {
         Lock l(sh);
         sh.tracker.setConnected(false);
       }
-      setStatus(sh, o.r == Fetch1::Auth ? LinkState::AuthRequired : LinkState::Unreachable, o.err);
+      const LinkState authState = ep.configured ? LinkState::AuthRequired : LinkState::AuthNeedsHost;
+      setStatus(sh, o.r == Fetch1::Auth ? authState : LinkState::Unreachable, o.err);
       // A discovered server that keeps failing may have moved: rediscover. An explicit host just retries.
       if (++fails >= 3 && sh.cfg.server.host.empty()) { resolved = false; fails = 0; }
     }

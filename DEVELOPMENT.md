@@ -122,7 +122,9 @@ If you omit all of `instruments`, `notifications` and `pages`, the built-in ones
 3. mDNS service `_signalk-http._tcp` (2 s), then the host `vesselstack.local` (2 s). The device advertises itself as `grumpykitty` only while discovering.
 4. Otherwise "Set host in /grumpykitty/signalk.json", retried every 8 s.
 
-Each candidate must answer `GET /signalk` with `endpoints.v1`; the winner from step 3 is cached. After 3 failed polls on a discovered server it is discovered again. If the server answers 401/403 the app shows "Auth required: add token". The token goes in `server.token` and is sent only as `Authorization: Bearer ...`; it is never logged or displayed (it does sit in plain text on the SD card).
+Each candidate must answer `GET /signalk` with `endpoints.v1`; the winner from step 3 is cached. After 3 failed polls on a discovered server it is discovered again. If the configured host answers 401/403 the app shows "Auth required: add token". The token goes in `server.token` and is sent only as `Authorization: Bearer ...`; it is never logged or displayed (it does sit in plain text on the SD card).
+
+Token security: the token is sent ONLY to the configured `server.host`:`port`, never to a server found via mDNS or the NVS cache (mDNS can be spoofed on the LAN). With a token but no host, discovery runs without the token (a warning is logged at startup); if the discovered server answers 401/403 the app shows "Auth needs fixed host: set server.host". Signal K is plain HTTP here, so the token travels unencrypted on the boat LAN: use a read-only Signal K user/token. Always set a fixed `server.host` when you use a token.
 
 ### Using the app
 
