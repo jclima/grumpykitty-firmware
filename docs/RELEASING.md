@@ -32,6 +32,16 @@ make dist     # builds first (make build), then writes dist/ (git-ignored)
 
 `dist/` contains the merged image (flash at 0x0), the app-only image and `manifest.json`. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-merged.bin`.
 
+## Updating the vendored flasher library
+
+The web flasher self-hosts ESP Web Tools in `docs/flash/vendor/esp-web-tools-<version>/` (the page has a strict CSP, no CDN). To update:
+
+1. `curl -s https://registry.npmjs.org/esp-web-tools/<version>` and note `dist.tarball` and `dist.integrity`.
+2. Download the tarball into a new empty directory and check it: `openssl dgst -sha512 -binary esp-web-tools-<version>.tgz | openssl base64 -A` must equal the integrity string (without the `sha512-` prefix). Stop if it differs.
+3. `tar -xzf` it (never run package scripts). Check `package/dist/web/*.js` for remote imports, `eval` and `new Function` (the CSP has no `unsafe-eval`).
+4. Replace the vendor directory with a copy of `package/dist/web/`, plus the package `LICENSE` and an updated `README-VENDOR.md` (version, tarball URL, integrity, date).
+5. Update the `src` path in `docs/flash/index.html`, the table in `NOTICE.md`, and make sure the Pages step in `.github/workflows/release.yml` copies `docs/flash/flash.js` and `docs/flash/vendor/`.
+
 ## Licensing reminder
 
 The firmware links GPL-3.0 (ESP32-audioI2S) and LGPL-2.1 code. Distributing binaries means offering the corresponding source: releases come from this public repository, and each tag is that source. See `NOTICE.md`.

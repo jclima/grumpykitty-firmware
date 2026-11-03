@@ -4,6 +4,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GrumpyKitty Web Flasher</title>
 <meta name="description" content="Flash GrumpyKitty firmware to an ESP32-S3 MeowKit-S3 device from Chrome or Edge.">
@@ -104,9 +105,7 @@
     Flashing uses <a href="https://github.com/esphome/esp-web-tools">ESP Web Tools</a> (Apache-2.0). Use at your own risk.
   </footer>
 </main>
-<script>
-  if (!("serial" in navigator)) document.getElementById("unsupported").style.display = "block";
-</script>
-<script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module"></script>
+<script src="flash.js"></script>
+<script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
 </body>
 </html>

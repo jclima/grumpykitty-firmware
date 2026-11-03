@@ -52,6 +52,7 @@ Nothing in this fork changes the terms of third-party code. Libraries under `lib
 | `lib/lua-5.4.7` | No license file in the directory; the `lua.h` footer carries a Lua.org, PUC-Rio copyright notice with MIT-style permission text, and `README` points to the license details. Not independently verified further. |
 | `lib/ESP32-BLE-Keyboard` | No license file or license text found in the directory (README, `library.properties`, sources). Terms are unknown here; check the upstream repository. |
 | `lib/ESP32-BLE-Mouse` | Same as above: no license text found. Terms unknown here. |
+| `docs/flash/vendor/esp-web-tools-10.4.0` | Apache-2.0 (`LICENSE` in that directory; ESP Web Tools by ESPHome). Unmodified `dist/web` from the npm package, vendored for the web flasher; see its `README-VENDOR.md`. |
 
 Also bundled inside `src/` and keeping their own terms (check each for its notices): `src/app/app_01/FixedPointsArduino`, `src/app/app_04/ScreenShotReceiver` (includes `tjpgdClass.cpp`), `src/app/app_02/DigitalRainAnimation.hpp`, and any other vendored code. Other sources under `src/` may also contain third-party headers.
 
