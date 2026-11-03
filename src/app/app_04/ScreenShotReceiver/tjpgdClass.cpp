@@ -727,6 +727,14 @@ TJpgD::JRESULT TJpgD::prepare (
 	this->device = dev;		/* I/O device identifier */
 	this->nrst = 0;			/* No restart interval (default) */
 
+	/* The pool is reset per frame but this object is reused: drop table
+	 * pointers left over from the previous frame so a frame without DHT/DQT
+	 * cannot pass the "table loaded" checks with dangling pointers. */
+	memset(huffbits, 0, sizeof(huffbits));
+	memset(huffcode, 0, sizeof(huffcode));
+	memset(huffdata, 0, sizeof(huffdata));
+	memset(qttbl, 0, sizeof(qttbl));
+
 	inbuf = seg = dptr = (uint8_t*)alloc_pool(this, TJPGD_SZBUF);		/* Allocate stream input buffer */
 	if (!seg) return TJpgD::JDR_MEM1;
 

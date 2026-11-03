@@ -34,5 +34,7 @@ namespace MOONCAKE::APPS
         void _drawAll();
         void _startReceiver();
         void _stopReceiver();
+        bool         _bLatched     = false;
+        static bool _pollB(void* self);
     };
 }

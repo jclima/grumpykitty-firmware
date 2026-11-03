@@ -26,6 +26,7 @@
 #include "ui_theme.h"
 #include "../../system/persist.h"
 #include <cmath>
+#include <new>
 #include <WiFi.h>
 
 #ifndef M_PI
@@ -221,24 +222,31 @@ void App04::_drawAll()
 
 // ─── receiver lifecycle ──────────────────────────────────────────────────────
 
+// B-press poll used by the receiver while it waits on frame data. pressed() is
+// edge-triggered, so latch it for onRunning().
+bool App04::_pollB(void* self)
+{
+    App04* a = static_cast<App04*>(self);
+    if (a->_device->button.B.pressed()) a->_bLatched = true;
+    return a->_bLatched;
+}
+
 void App04::_startReceiver()
 {
     if (_recv) return;
-    try {
-        _recv = new TCPReceiver();
-        if (_recv) {
-            if (!_recv->setup(&_device->Lcd)) {
-                delete _recv;
-                _recv = nullptr;
-                return;
-            }
-            Serial.println("[App04] TCP receiver started");
-        }
-    } catch (...) {
-        Serial.println("[App04] TCP receiver start failed");
+    _bLatched = false;
+    _recv = new (std::nothrow) TCPReceiver();
+    if (!_recv) {
+        Serial.println("[App04] TCP receiver alloc failed");
+        return;
+    }
+    _recv->setAbortPoll(_pollB, this);
+    if (!_recv->setup(&_device->Lcd)) {
         delete _recv;
         _recv = nullptr;
+        return;
     }
+    Serial.println("[App04] TCP receiver started");
 }
 
 void App04::_stopReceiver()
@@ -382,7 +390,8 @@ void App04::onRunning()
                 try { _recv->loop(); } catch (...) {}
             }
             // Return to ready screen on B press, or if WiFi drops
-            if (btnB || !ui_wifi_bridge_is_connected()) {
+            if (btnB || _bLatched || !ui_wifi_bridge_is_connected()) {
+                _bLatched = false;
                 _stopReceiver();
                 if (ui_wifi_bridge_is_connected()) {
                     _state = State::READY;

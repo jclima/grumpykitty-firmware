@@ -87,6 +87,10 @@ public:
     return true;
   }
 
+  // Optional poll called while waiting for frame data; return true to abort
+  // the frame (app wants to exit). Keeps B responsive during a stalled frame.
+  void setAbortPoll(bool (*fn)(void*), void* ctx) { _abortFn = fn; _abortCtx = ctx; }
+
   bool loop()
   {
     if (!_ready) return false;
@@ -145,10 +149,13 @@ private:
   static constexpr int SENDER_PREFIX_SIZE = 7;
   static constexpr uint32_t _rowskip = 2;
 
-  static constexpr uint32_t FRAME_TIMEOUT_MS = 5000;
+  static constexpr uint32_t FRAME_TIMEOUT_MS = 5000;   // waiting for a sender header
+  static constexpr uint32_t FRAME_MAX_MS = 1000;       // wall-time cap per frame body
   static constexpr uint32_t READ_TIMEOUT_MS = 1500;
   static constexpr uint32_t MAX_FRAME_BYTES = 1024 * 1024;
   bool _ready = false;
+  bool (*_abortFn)(void*) = nullptr;
+  void* _abortCtx = nullptr;
   uint32_t _requestAt = 0;
   uint32_t _frameAt = 0;
   unsigned _flip = 0;
@@ -191,14 +198,17 @@ private:
         progressAt = millis();
       } else {
         if (!_client.connected() || millis() - progressAt > READ_TIMEOUT_MS
-            || millis() - _frameAt > FRAME_TIMEOUT_MS) {
+            || millis() - _frameAt > FRAME_MAX_MS) {
           Serial.println("[RetroTV] frame read interrupted/timeout");
           return false;
         }
+        // Let the app see B (exit) even while a frame is stalled.
+        if (_abortFn && _abortFn(_abortCtx)) return false;
         delay(1);
         ++_delayCount;
       }
-      if (millis() - _frameAt > FRAME_TIMEOUT_MS) return false;
+      if (millis() - _frameAt > FRAME_MAX_MS) return false;
+      if (_abortFn && _abortFn(_abortCtx)) return false;
     }
     return true;
   }
