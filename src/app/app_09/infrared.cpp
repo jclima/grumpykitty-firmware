@@ -224,6 +224,11 @@ namespace MOONCAKE::APPS
      *  Constructor / Lifecycle
      * ════════════════════════════════════════════════════════════ */
 
+    /* Defined with the .ir file helpers below. Returns the Flipper protocol name
+     * only when flipperEncodeFrame() reproduces value/bits exactly, else nullptr. */
+    static const char* flipperNameFor(decode_type_t proto, uint16_t bits, uint32_t addr,
+                                      uint32_t cmd, uint64_t value, uint32_t* outCmd = nullptr);
+
     App09::App09(DEVICES* device) : _device(device)
     {
         setAppInfo().name = "Infrared";
@@ -263,9 +268,12 @@ namespace MOONCAKE::APPS
         _learnIconLen = 0;
         _learnIconPng = nullptr;
 
-        /* Ensure IR directory exists on SD */
-        if (!SD_MMC.exists(IR_DIR)) {
-            SD_MMC.mkdir(IR_DIR);
+        _learnTruncated = false;
+
+        /* Ensure IR directory exists on SD (only when the card is usable) */
+        _sdStatus = sd_guard::check();
+        if (_sdStatus == sd_guard::Status::Ok && !SD_MMC.exists(IR_DIR)) {
+            if (!SD_MMC.mkdir(IR_DIR)) _sdStatus = sd_guard::Status::Missing;
         }
 
         strncpy(_remoteDir, IR_DIR, sizeof(_remoteDir) - 1);
@@ -439,6 +447,9 @@ namespace MOONCAKE::APPS
                 _device->Lcd.drawFastHLine(1, sepY, hp::W - 3 - hp::SBAR_W, hp::COL_BG);
             }
         }
+        if (_sdStatus != sd_guard::Status::Ok) {
+            hp::drawToast(_device->Lcd, sd_guard::message(_sdStatus), hp::COL_FG);
+        }
     }
 
     void App09::_runMainMenu()
@@ -530,21 +541,29 @@ namespace MOONCAKE::APPS
             _learnedSig.frequency = 38000;
             strncpy(_learnedSig.name, "Signal", sizeof(_learnedSig.name) - 1);
 
+            /* Always keep the raw timings so any signal can be saved raw.
+             * NOTE: raw capture frequency is fixed at 38 kHz (the receiver
+             * demodulates the carrier and cannot measure it). */
+            for (uint16_t i = 1; i < results.rawlen; i++) {
+                uint32_t us = (uint32_t)results.rawbuf[i] * kRawTick;
+                _learnedSig.rawData.push_back(us > 65535 ? 65535 : (uint16_t)us);
+            }
+
+            /* Parsed only when the protocol has a Flipper name AND the frame
+             * round-trips through flipperEncodeFrame(); otherwise save raw. */
+            _learnedSig.isRaw = true;
             if (results.decode_type != UNKNOWN && results.decode_type != (decode_type_t)(-1)) {
-                _learnedSig.isRaw    = false;
-                _learnedSig.protocol = results.decode_type;
-                _learnedSig.value    = results.value;
-                _learnedSig.bits     = results.bits;
-                _learnedSig.address  = results.address;
-                _learnedSig.command  = results.command;
-            } else {
-                _learnedSig.isRaw     = true;
-                _learnedSig.frequency = 38000;
-                _learnedSig.rawData.clear();
-                for (uint16_t i = 1; i < results.rawlen; i++) {
-                    _learnedSig.rawData.push_back(results.rawbuf[i] * kRawTick);
+                uint32_t addr = results.address, cmd = results.command;
+                if (flipperNameFor(results.decode_type, results.bits, addr, cmd, results.value, &cmd)) {
+                    _learnedSig.isRaw    = false;
+                    _learnedSig.protocol = results.decode_type;
+                    _learnedSig.value    = results.value;
+                    _learnedSig.bits     = results.bits;
+                    _learnedSig.address  = addr;
+                    _learnedSig.command  = cmd;
                 }
             }
+            _learnTruncated = _learnedSig.isRaw && results.overflow;
 
             _stopRx();
             _switchScene(IrScene::LearnResult);
@@ -575,6 +594,12 @@ namespace MOONCAKE::APPS
             y += 22;
             Lcd.setCursor(20, y);
             Lcd.printf("Frequency: %luHz", _learnedSig.frequency);
+            if (_learnTruncated) {
+                y += 22;
+                Lcd.setTextColor(COL_ACCENT, COL_BG);
+                Lcd.setCursor(20, y);
+                Lcd.print("TRUNCATED - retry");
+            }
         } else {
             String proto = typeToString(_learnedSig.protocol, false);
             Lcd.setTextColor(COL_ACCENT, COL_BG);
@@ -611,6 +636,19 @@ namespace MOONCAKE::APPS
             _sceneDirty = true;
         }
         if (_device->button.B.pressed()) {
+            if (_learnTruncated) {
+                hp::drawToast(_device->Lcd, "Truncated: retry", hp::COL_FG);
+                delay(800);
+                _sceneDirty = true;
+                return;
+            }
+            _sdStatus = sd_guard::check();
+            if (_sdStatus != sd_guard::Status::Ok) {
+                hp::drawToast(_device->Lcd, sd_guard::message(_sdStatus), hp::COL_FG);
+                delay(800);
+                _sceneDirty = true;
+                return;
+            }
             _switchScene(IrScene::LearnSaveLocation);
         }
     }
@@ -1921,13 +1959,6 @@ namespace MOONCAKE::APPS
         return UNKNOWN;
     }
 
-    static const char* typeToFlipperProto(decode_type_t t) {
-        for (int i = 0; i < kProtoMapSize; i++) {
-            if (kProtoMap[i].type == t) return kProtoMap[i].name;
-        }
-        return "UNKNOWN";
-    }
-
     static void formatHexBytes(uint32_t val, int nbytes, char* out, int outSize) {
         int pos = 0;
         for (int i = 0; i < nbytes && pos < outSize - 3; i++) {
@@ -1996,11 +2027,59 @@ namespace MOONCAKE::APPS
         return false;
     }
 
+    static const char* flipperNameFor(decode_type_t proto, uint16_t bits, uint32_t addr,
+                                      uint32_t cmd, uint64_t value, uint32_t* outCmd)
+    {
+        const char* cand[3] = { nullptr, nullptr, nullptr };
+        uint32_t candCmd[3] = { cmd, cmd, cmd };
+        switch (proto) {
+            case NEC:
+                cand[0] = (addr > 0xFF || cmd > 0xFF) ? "NECext" : "NEC";
+                cand[1] = "NECext";
+                /* The library reports an 8-bit NEC command; Flipper NECext stores
+                 * a 16-bit command = cmd | (~cmd << 8) (see IRsend::encodeNEC). */
+                cand[2] = "NECext";
+                candCmd[2] = (cmd & 0xFF) | (((cmd & 0xFF) ^ 0xFF) << 8);
+                break;
+            case SAMSUNG: cand[0] = "Samsung32"; break;
+            case SONY:
+                if (bits == 12)      cand[0] = "SIRC";
+                else if (bits == 15) cand[0] = "SIRC15";
+                else if (bits == 20) cand[0] = "SIRC20";
+                break;
+            case RC5:
+                cand[0] = (bits == 13) ? "RC5X" : "RC5";
+                break;
+            case RC5X: cand[0] = "RC5X"; break;
+            default: return nullptr;
+        }
+        for (int i = 0; i < 3; ++i) {
+            uint64_t v; uint16_t b;
+            if (cand[i] && flipperEncodeFrame(cand[i], addr, candCmd[i], v, b) && v == value && b == bits) {
+                if (outCmd) *outCmd = candCmd[i];
+                return cand[i];
+            }
+        }
+        return nullptr;
+    }
+
+    static bool signalWritable(const IrSignal& sig)
+    {
+        if (sig.isRaw) return !sig.rawData.empty();
+        return flipperNameFor(sig.protocol, sig.bits, sig.address, sig.command, sig.value) ||
+               !sig.rawData.empty();
+    }
+
     static void writeSignalEntry(File& f, const IrSignal& sig)
     {
         f.printf("name: %s\n", sig.name);
 
-        if (sig.isRaw) {
+        const char* flipperName = sig.isRaw ? nullptr
+            : flipperNameFor(sig.protocol, sig.bits, sig.address, sig.command, sig.value);
+
+        /* Raw is used for undecoded signals and for any protocol that has no
+         * round-trippable Flipper "parsed" form. Raw carrier stays 38 kHz. */
+        if (!flipperName) {
             f.println("type: raw");
             f.printf("frequency: %lu\n", sig.frequency);
             f.println("duty_cycle: 0.330000");
@@ -2011,16 +2090,14 @@ namespace MOONCAKE::APPS
             f.println();
         } else {
             f.println("type: parsed");
-            f.printf("protocol: %s\n", typeToFlipperProto(sig.protocol));
+            f.printf("protocol: %s\n", flipperName);
             f.printf("value: 0x%llX\n", (unsigned long long)sig.value);
             f.printf("bits: %u\n", (unsigned)sig.bits);
 
             char addrBuf[32], cmdBuf[32];
-            int nbytes = (sig.bits + 7) / 8;
-            if (nbytes < 2) nbytes = 2;
-            if (nbytes > 4) nbytes = 4;
-            formatHexBytes(sig.address, nbytes, addrBuf, sizeof(addrBuf));
-            formatHexBytes(sig.command, nbytes, cmdBuf, sizeof(cmdBuf));
+            /* Flipper style: always 4 little-endian bytes ("04 00 00 00") */
+            formatHexBytes(sig.address, 4, addrBuf, sizeof(addrBuf));
+            formatHexBytes(sig.command, 4, cmdBuf, sizeof(cmdBuf));
             f.printf("address: %s\n", addrBuf);
             f.printf("command: %s\n", cmdBuf);
         }
@@ -2176,6 +2253,7 @@ namespace MOONCAKE::APPS
 
     bool App09::_saveSignalToFile(const char* dir, const char* remoteName, const IrSignal& sig)
     {
+        if (!signalWritable(sig)) return false;
         char path[128];
         snprintf(path, sizeof(path), "%s/%s.ir", dir, remoteName);
 
@@ -2192,6 +2270,7 @@ namespace MOONCAKE::APPS
 
     bool App09::_appendSignalToFile(const char* path, const IrSignal& sig)
     {
+        if (!signalWritable(sig)) return false;
         File f = SD_MMC.open(path, FILE_APPEND);
         if (!f) return false;
 

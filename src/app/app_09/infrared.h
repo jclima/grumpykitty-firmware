@@ -18,6 +18,7 @@
 #include <vector>
 #include <algorithm>
 #include "../app_common/hp_ui.h"
+#include "../app_common/sd_guard.h"
 
 using namespace mooncake;
 
@@ -163,6 +164,8 @@ namespace MOONCAKE::APPS
         int  _scrollOffset = 0;
 
         IrSignal  _learnedSig;
+        bool      _learnTruncated = false;   /* raw capture overflowed the RX buffer */
+        sd_guard::Status _sdStatus = sd_guard::Status::Ok;
         IrRemote  _currentRemote;
         std::vector<String> _fileList;
         char      _remoteDir[96];   /* current folder being browsed in Saved Remotes, e.g. "/infrared" or "/infrared/tv" */
