@@ -32,6 +32,20 @@ public:
     /// Release I2C driver.
     bool release(void) const;
 
+    /// Hold the bus across several transactions (recursive; pair with unlock()).
+    /// Use around read-modify-write or write->delay->read sequences.
+    void lock(void) const;
+    void unlock(void) const;
+
+    /// RAII helper for lock()/unlock().
+    struct LockGuard {
+        const I2C_Class* b;
+        explicit LockGuard(const I2C_Class* bus) : b(bus) { b->lock(); }
+        ~LockGuard() { b->unlock(); }
+        LockGuard(const LockGuard&) = delete;
+        LockGuard& operator=(const LockGuard&) = delete;
+    };
+
     // ── Register-level operations (complete START…STOP transaction) ──
 
     /// Write multiple bytes to register.

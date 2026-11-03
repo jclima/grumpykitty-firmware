@@ -1942,6 +1942,7 @@ skip_display:
                 if (sht_found) {
                     /* Send single-shot measurement command: high repeatability, clock stretching disabled
                      * Command 0x2400 — use writeRegister8: reg=0x24, data=0x00 */
+                    In_I2C.lock();  /* hold bus across write -> delay -> raw read */
                     In_I2C.writeRegister8(HAL_I2C_ADDR_SHT30, 0x24, 0x00);
                     delay(20);  /* SHT30 measurement time ~15ms */
 
@@ -1957,6 +1958,7 @@ skip_display:
                     i2c_master_stop(cmd);
                     esp_err_t rd_err = i2c_master_cmd_begin(In_I2C.getPort(), cmd, pdMS_TO_TICKS(100));
                     i2c_cmd_link_delete(cmd);
+                    In_I2C.unlock();
 
                     if (rd_err == ESP_OK) {
                         uint16_t rawTemp = ((uint16_t)data[0] << 8) | data[1];
@@ -2336,6 +2338,9 @@ bbt_end: ;
 /* ════════════════════════════════════════════════════════════
  *  I2C Bus Recovery — 9 clock pulses to release stuck SDA
  * ════════════════════════════════════════════════════════════ */
+/* NOTE: only safe during early init, before any other task touches the I2C
+ * bus: it deletes and re-installs the driver (and bypasses the I2C_Class
+ * mutex). Call sites: begin-time PMU/IO-expander bring-up only. */
 static bool _i2cBusRecovery(gpio_num_t sda, gpio_num_t scl)
 {
     i2c_driver_delete(I2C_NUM_0);

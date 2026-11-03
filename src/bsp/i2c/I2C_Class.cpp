@@ -30,7 +30,7 @@ bool I2C_Class::begin(void)
         return false;
     }
 
-    if (!_mutex) _mutex = xSemaphoreCreateMutex();
+    if (!_mutex) _mutex = xSemaphoreCreateRecursiveMutex();
 
     i2c_config_t conf = {};
     conf.mode = I2C_MODE_MASTER;
@@ -64,6 +64,18 @@ bool I2C_Class::release(void) const
     return i2c_driver_delete(_port_num) == ESP_OK;
 }
 
+// ── Bus lock (recursive: safe to nest around the per-transaction lock) ──
+
+void I2C_Class::lock(void) const
+{
+    if (_mutex) xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
+}
+
+void I2C_Class::unlock(void) const
+{
+    if (_mutex) xSemaphoreGiveRecursive(_mutex);
+}
+
 // ── Register-level operations ──
 
 bool I2C_Class::writeRegister(std::uint8_t address, std::uint8_t reg,
@@ -80,9 +92,9 @@ bool I2C_Class::writeRegister(std::uint8_t address, std::uint8_t reg,
     i2c_master_write(cmd, data, length, true);
     i2c_master_stop(cmd);
 
-    if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
+    if (_mutex) xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
     esp_err_t err = i2c_master_cmd_begin(_port_num, cmd, pdMS_TO_TICKS(100));
-    if (_mutex) xSemaphoreGive(_mutex);
+    if (_mutex) xSemaphoreGiveRecursive(_mutex);
     i2c_cmd_link_delete(cmd);
     return err == ESP_OK;
 }
@@ -108,9 +120,9 @@ bool I2C_Class::readRegister(std::uint8_t address, std::uint8_t reg,
     i2c_master_read_byte(cmd, result + length - 1, I2C_MASTER_NACK);
     i2c_master_stop(cmd);
 
-    if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
+    if (_mutex) xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
     esp_err_t err = i2c_master_cmd_begin(_port_num, cmd, pdMS_TO_TICKS(100));
-    if (_mutex) xSemaphoreGive(_mutex);
+    if (_mutex) xSemaphoreGiveRecursive(_mutex);
     i2c_cmd_link_delete(cmd);
     return err == ESP_OK;
 }
@@ -132,6 +144,7 @@ std::uint8_t I2C_Class::readRegister8(std::uint8_t address, std::uint8_t reg,
 bool I2C_Class::bitOn(std::uint8_t address, std::uint8_t reg,
                       std::uint8_t mask, std::uint32_t freq) const
 {
+    LockGuard g(this);
     std::uint8_t value = 0;
     if (!readRegister(address, reg, &value, 1, freq)) {
         return false;  // Read failed, don't write garbage
@@ -143,6 +156,7 @@ bool I2C_Class::bitOn(std::uint8_t address, std::uint8_t reg,
 bool I2C_Class::bitOff(std::uint8_t address, std::uint8_t reg,
                        std::uint8_t mask, std::uint32_t freq) const
 {
+    LockGuard g(this);
     std::uint8_t value = 0;
     if (!readRegister(address, reg, &value, 1, freq)) {
         return false;  // Read failed, don't write garbage
@@ -161,9 +175,9 @@ bool I2C_Class::scanID(std::uint8_t addr, std::uint32_t freq) const
     i2c_master_write_byte(cmd, (addr << 1) | I2C_MASTER_WRITE, true);
     i2c_master_stop(cmd);
 
-    if (_mutex) xSemaphoreTake(_mutex, portMAX_DELAY);
+    if (_mutex) xSemaphoreTakeRecursive(_mutex, portMAX_DELAY);
     esp_err_t err = i2c_master_cmd_begin(_port_num, cmd, pdMS_TO_TICKS(20));
-    if (_mutex) xSemaphoreGive(_mutex);
+    if (_mutex) xSemaphoreGiveRecursive(_mutex);
     i2c_cmd_link_delete(cmd);
     return err == ESP_OK;
 }

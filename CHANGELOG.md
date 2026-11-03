@@ -20,6 +20,12 @@
 - Air Mouse uses the shared Bluetooth manager lease.
 - Hardening of mic/VU task lifecycle, LVGL filesystem names and BadUSB script limits.
 - Apps menu scrolling no longer overshoots content edges.
+- Battery: a failed AXP173 I2C read no longer yields garbage (invalid samples are ignored); critical shutdown needs 5 consecutive low readings and never happens on USB/charging; idle auto power-off is skipped while USB is connected.
+- Wi-Fi: credentials are no longer stored in plaintext by the Arduino core (IDF config kept in RAM; legacy `nvs.net80211` data wiped on forget network and factory reset).
+- Wi-Fi: clearing the saved password now really clears it; new credentials are saved only after a successful connection (a typo no longer overwrites working ones).
+- Wi-Fi: scans are serialized (one scan task, results freed under a lock) and a connect aborts a running scan first.
+- Retro TV: stale JPEG tables are reset per frame, a stalled frame is capped at 1 s and no longer blocks exiting with B, allocation failure handled without exceptions.
+- I2C: read-modify-write sequences (bit ops, AXP173 setters, SHT30 read) now hold the bus lock for the whole sequence; AXP173 setters never write back after a failed read.
 
 ## [1.0.3] - 2026-10-22
 
