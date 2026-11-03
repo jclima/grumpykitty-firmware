@@ -146,6 +146,7 @@ extern "C" void power_shutdown(void)
     if (!s_pmu) return;
     Serial.println("[Power] Shutting down...");
     Serial.flush();
+    /* pre_shutdown_cb closes a running app first (onClose), flushes settings. */
     if (s_pre_shutdown_cb) s_pre_shutdown_cb();
     s_pmu->powerOFF();
     /* AXP173 cuts all rails — MCU loses power immediately */

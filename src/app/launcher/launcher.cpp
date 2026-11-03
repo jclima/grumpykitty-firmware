@@ -188,9 +188,15 @@ static void _updateLed(DEVICES* dev, int pct, bool charging)
     }
 }
 
-/* Shutdown / auto-off animation: 4 × red blink, then LED off before powerOFF. */
+/* Launcher instance for plain C callbacks (set in onCreate). */
+static Launcher* s_launcher = nullptr;
+
+/* Shutdown / auto-off animation: 4 × red blink, then LED off before powerOFF.
+ * A running app is closed first so its onClose() runs (e.g. the voice
+ * recorder finalises its WAV header); the close is bounded to a few seconds. */
 static void _shutdown_led_anim(void)
 {
+    if (s_launcher) s_launcher->closeRunningApp();
     settings_flush();
     if (!s_shutdown_dev) return;
     s_led_cur = WS2812B_Class::OFF;   /* sync tracker so next boot starts clean */
@@ -210,16 +216,12 @@ static void _bat_toast_dismiss(lv_timer_t * t)
     /* timer is one-shot (repeat_count=1) — auto-deleted by LVGL after this call */
 }
 
-/* Called once when battery first drops to POWER_WARN_BAT_PCT (while discharging).
- * LED blink is already driven by _updateLed(); this adds an on-screen toast banner. */
-static void _low_bat_warn_cb(int pct)
+/* Low-battery toast raised while an app owned the screen: shown on return to the UI. */
+static bool s_toast_pending = false;
+static int  s_toast_pct     = 0;
+
+static void _show_low_bat_toast(int pct)
 {
-    Serial.printf("[Launcher] Low battery: %d%% — please charge soon\n", pct);
-    mk_event_push(MK_EVT_POWER_LOW);  /* notify any app that is listening */
-
-    /* LVGL is paused while an app runs: don't create objects, event only. */
-    if (s_in_app) return;
-
     lv_obj_t * scr = lv_scr_act();
     if (!scr) return;
 
@@ -247,6 +249,20 @@ static void _low_bat_warn_cb(int pct)
     lv_timer_set_repeat_count(t, 1);
 }
 
+/* Called once when battery first drops to POWER_WARN_BAT_PCT (while discharging).
+ * LED blink is already driven by _updateLed(); this adds an on-screen toast banner. */
+static void _low_bat_warn_cb(int pct)
+{
+    Serial.printf("[Launcher] Low battery: %d%% — please charge soon\n", pct);
+    mk_event_push(MK_EVT_POWER_LOW);  /* notify any app that is listening */
+
+    /* LVGL is paused while an app runs: don't create objects now, remember the
+     * warning and show it when the user is back in the launcher UI. */
+    if (s_in_app) { s_toast_pending = true; s_toast_pct = pct; return; }
+
+    _show_low_bat_toast(pct);
+}
+
 Launcher::Launcher(DEVICES* device) : _device(device) {}
 
 /* ── onCreate ──────────────────────────────────────── */
@@ -265,6 +281,7 @@ void Launcher::onCreate()
     /* Power management — sets hardware cutoff voltage + PEK timing */
     power_init(&_device->pmu);
     s_shutdown_dev = _device;
+    s_launcher = this;
     power_set_pre_shutdown_cb(_shutdown_led_anim);
     power_set_warn_cb(_low_bat_warn_cb);
 
@@ -408,24 +425,7 @@ void Launcher::onLoop()
             Serial.printf("[Launcher] Long-press B — closing app %d\n",
                           _running_app_id);
 
-            /* 1. Request close (sets state → StateGoClose) */
-            /* An LVGL app owns its root screen. Its onClose() may delete
-             * it, so make the persistent menu active before cleanup.
-             * Deleting the active LVGL root screen can corrupt LVGL state
-             * and trigger a watchdog reset. */
-            if (ui_apps_menu && lv_scr_act() != ui_apps_menu) {
-                lv_disp_load_scr(ui_apps_menu);
-                lv_obj_invalidate(ui_apps_menu);
-                lv_timer_handler();
-            }
-
-            _mooncake.closeApp(_running_app_id);
-            /* 2. Drive state machine so onClose() actually executes */
-            _mooncake.update();
-
-            _running_app_id = -1;
-            _app_running    = false;
-            s_in_app        = false;
+            closeRunningApp();
 
             /* 3. Return to persistent UI (no rebuild needed) */
             returnToUI();
@@ -523,6 +523,35 @@ void Launcher::buildUI()
     _ui_ready = true;
 }
 
+/* ── Close running app (long-press B and critical shutdown) ── */
+
+void Launcher::closeRunningApp()
+{
+    if (!_app_running) return;
+    const uint32_t t0 = millis();
+
+    /* An LVGL app owns its root screen. Its onClose() may delete
+     * it, so make the persistent menu active before cleanup.
+     * Deleting the active LVGL root screen can corrupt LVGL state
+     * and trigger a watchdog reset. */
+    if (ui_apps_menu && lv_scr_act() != ui_apps_menu) {
+        lv_disp_load_scr(ui_apps_menu);
+        lv_obj_invalidate(ui_apps_menu);
+        lv_timer_handler();
+    }
+
+    /* Request close (StateGoClose), then drive the state machine so
+     * onClose() actually executes. onClose() paths are individually bounded
+     * (capture-task waits <= ~1 s); the elapsed time is logged. */
+    _mooncake.closeApp(_running_app_id);
+    _mooncake.update();
+
+    _running_app_id = -1;
+    _app_running    = false;
+    s_in_app        = false;
+    Serial.printf("[Launcher] App closed in %lu ms\n", (unsigned long)(millis() - t0));
+}
+
 /* ── Return to UI after app exit ───────────────────── */
 
 void Launcher::returnToUI()
@@ -541,6 +570,12 @@ void Launcher::returnToUI()
         lv_obj_invalidate(ui_apps_menu);
     }
     lv_timer_handler();
+
+    /* Low-battery warning that fired while the app was open */
+    if (s_toast_pending) {
+        s_toast_pending = false;
+        if (power_is_low_battery()) _show_low_bat_toast(s_toast_pct);
+    }
 
     Serial.println("[Launcher] Back to apps_menu (no rebuild)");
 }

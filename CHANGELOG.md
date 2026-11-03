@@ -26,6 +26,10 @@
 - Wi-Fi: scans are serialized (one scan task, results freed under a lock) and a connect aborts a running scan first.
 - Retro TV: stale JPEG tables are reset per frame, a stalled frame is capped at 1 s and no longer blocks exiting with B, allocation failure handled without exceptions.
 - I2C: read-modify-write sequences (bit ops, AXP173 setters, SHT30 read) now hold the bus lock for the whole sequence; AXP173 setters never write back after a failed read.
+- BLE remote: keyboard and media reports are tracked separately (a media-only subscription no longer blocks keys) and a bonded host that reconnects without rewriting its CCCDs is treated as subscribed.
+- Voice Recorder / VU Meter: a wedged capture task is no longer force-deleted (no double free); recording start no longer scans the whole FAT for free space; "Capture failed" shown if the capture task dies. USB MSC teardown leaks the card instead of freeing it under in-flight transfers.
+- Infrared: `.ir` files are read in 512-byte chunks (much faster loading).
+- Power: critical-battery shutdown now closes a running app first (its onClose runs, e.g. recording is finalised); a low-battery warning raised inside an app is shown as a toast when returning to the launcher.
 
 ## [1.0.3] - 2026-10-22
 

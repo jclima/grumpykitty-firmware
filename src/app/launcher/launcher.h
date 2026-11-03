@@ -30,6 +30,7 @@ public:
 
     void onCreate();
     void onLoop();
+    void closeRunningApp();   /* run the app's onClose() cleanly; no-op if none */
 
 private:
     DEVICES* _device;
