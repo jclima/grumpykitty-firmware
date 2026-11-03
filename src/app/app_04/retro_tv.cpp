@@ -23,6 +23,7 @@
  */
 #include "retro_tv.h"
 #include "../app_common/mk_tui.h"
+#include "ui_theme.h"
 #include "../../system/persist.h"
 #include <cmath>
 #include <WiFi.h>
@@ -35,7 +36,7 @@ namespace MOONCAKE::APPS {
 
 // ─── palette (RGB888) ────────────────────────────────────────────────────────
 static constexpr uint32_t C_BG    = 0x0C1400;  // very dark green
-static constexpr uint32_t C_FG    = 0xFF9EC7;  // pink accent (system color)
+static constexpr uint32_t C_FG    = THEME_ACCENT;  // amber accent (system color)
 static constexpr uint32_t C_DIM   = 0x384600;  // dim accent
 static constexpr uint32_t C_SCRN  = 0x040800;  // TV screen bg (near-black)
 static constexpr uint32_t C_ERR   = 0xFF3333;  // error red

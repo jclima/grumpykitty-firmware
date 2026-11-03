@@ -43,7 +43,7 @@ void ui_update_screen_init(void)
     lv_obj_set_height(ui_updateing, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_updateing, 20);
     lv_obj_set_y(ui_updateing, 18);
-    lv_label_set_text(ui_updateing, "Updateing");
+    lv_label_set_text(ui_updateing, "Updating");
     lv_obj_set_style_text_color(ui_updateing, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_updateing, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_updateing, &ui_font_name_24, LV_PART_MAIN | LV_STATE_DEFAULT);

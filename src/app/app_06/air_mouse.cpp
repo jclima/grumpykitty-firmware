@@ -1,13 +1,15 @@
 /** Air Mouse: bounded HID session, non-blocking calibration and motion input. */
 #include "air_mouse.h"
+#include "ui_theme.h"
 #include <Preferences.h>
 #include <cmath>
 #include <algorithm>
 
 namespace {
-// RGB565 palette: midnight plum, pink accents and muted lavender surfaces.
-constexpr uint16_t BG=0x18A6, GREEN=0xFCF8, DIM=0x7B55, WHITE=0xFFFF;
-constexpr uint16_t MESH=0x5A51, PANEL=0x2908, PANEL_ACTIVE=0x396B, SCANLINE=0x314A;
+// RGB565 palette from the central theme (src/ui/ui_theme.h): charcoal, amber accents.
+// (GREEN is a historical name for the accent colour.)
+constexpr uint16_t BG=THEME_BG_565, GREEN=THEME_ACCENT_565, DIM=THEME_TEXT_DIM_565, WHITE=0xFFFF;
+constexpr uint16_t MESH=THEME_BORDER_565, PANEL=THEME_BG_ALT_565, PANEL_ACTIVE=THEME_SURFACE_ALT_565, SCANLINE=THEME_SURFACE_565;
 constexpr int SX=174, SY=44, SW=142, SH=146;
 constexpr float GAINS[]={30.f,50.f,75.f};
 const char* SPEEDS[]={"Low","Normal","High"};

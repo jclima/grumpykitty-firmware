@@ -17,15 +17,16 @@
 #include <nvs.h>
 
 // ── Color palette ─────────────────────────────────────────────────────────
-#define TV_BG      0x1B1230
-#define TV_LIME    0xFF9EC7  /* accent: soft pink (name kept) */
-#define TV_INK     0x2A1A40
-#define TV_TEXT    0xE9EFE2
-#define TV_MUTED   0xA89CC0
-#define TV_TRACK   0x3A2D55
-#define TV_DANGER  0xFF5A4D
-#define TV_CARD    0x2A1F45
-#define TV_ORANGE  0xF5A623
+// Mapped onto the central theme (src/ui/ui_theme.h). Names are historical.
+#define TV_BG      THEME_BG
+#define TV_LIME    THEME_ACCENT          /* accent: amber (name kept) */
+#define TV_INK     THEME_TEXT_ON_ACCENT  /* dark text on accent fills */
+#define TV_TEXT    THEME_TEXT
+#define TV_MUTED   THEME_TEXT_DIM
+#define TV_TRACK   THEME_SURFACE_ALT
+#define TV_DANGER  THEME_DANGER
+#define TV_CARD    THEME_SURFACE
+#define TV_ORANGE  0xF5A623                /* warning state (semantic, kept) */
 
 // ── Layout constants ──────────────────────────────────────────────────────
 #define TAB_BAR_W  74
@@ -85,7 +86,7 @@ static void _sys_bat_refresh(lv_timer_t * t)
     lv_obj_set_style_text_color(s_sys_bat_pct_lbl, lv_color_white(), 0);
     lv_label_set_text(s_sys_bat_status, charging ? "charging" : "discharging");
 
-    uint32_t bar_clr = charging                    ? 0x00CC00u
+    uint32_t bar_clr = charging                    ? (uint32_t)THEME_OK
                      : (pct <= POWER_CRIT_BAT_PCT) ? TV_DANGER
                      : (pct <= POWER_WARN_BAT_PCT) ? TV_ORANGE
                      :                               TV_LIME;
@@ -241,7 +242,7 @@ static lv_obj_t * mk_lbl_r_card(lv_obj_t * card, const char * text,
     return lbl;
 }
 
-// Slider: half-height (14px), white knob with lime border (matches first screenshot)
+// Slider: half-height (14px), white knob with amber border (matches first screenshot)
 static lv_obj_t * mk_slider(lv_obj_t * p, lv_coord_t y,
                              int value, lv_obj_t * val_lbl)
 {
@@ -259,12 +260,12 @@ static lv_obj_t * mk_slider(lv_obj_t * p, lv_coord_t y,
     lv_obj_set_style_outline_width(sl, 0,                  LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(sl,  0,                       LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    // Indicator (filled, lime)
+    // Indicator (filled, amber)
     lv_obj_set_style_bg_color(sl, lv_color_hex(TV_LIME),  LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sl,   LV_OPA_COVER,           LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sl,   LV_RADIUS_CIRCLE,       LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-    // Knob: white circle with lime border — matches screenshot 1
+    // Knob: white circle with amber border — matches screenshot 1
     lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF),  LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sl,   LV_OPA_COVER,            LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sl,   LV_RADIUS_CIRCLE,        LV_PART_KNOB | LV_STATE_DEFAULT);
@@ -278,7 +279,7 @@ static lv_obj_t * mk_slider(lv_obj_t * p, lv_coord_t y,
     return sl;
 }
 
-// Switch: matches ui_wifi_scan_switch style (42×22, dark track, white border, lime on)
+// Switch: matches ui_wifi_scan_switch style (42×22, dark track, white border, amber on)
 static lv_obj_t * mk_switch(lv_obj_t * p, lv_coord_t y, bool checked)
 {
     lv_obj_t * sw = lv_switch_create(p);
@@ -286,7 +287,7 @@ static lv_obj_t * mk_switch(lv_obj_t * p, lv_coord_t y, bool checked)
     lv_obj_set_pos(sw, TAB_SW_X, y);
 
     // Track (OFF state)
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x3D414A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(sw, THEME_LV(THEME_BORDER), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sw,   LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sw,   LV_RADIUS_CIRCLE,       LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -299,8 +300,8 @@ static lv_obj_t * mk_switch(lv_obj_t * p, lv_coord_t y, bool checked)
     lv_obj_set_style_border_opa(sw,   LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_CHECKED);
     lv_obj_set_style_outline_width(sw, 0,                      LV_PART_MAIN | LV_STATE_FOCUSED);
 
-    // Indicator (the lime fill, visible when checked)
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0xFF9EC7),     LV_PART_INDICATOR | LV_STATE_CHECKED);
+    // Indicator (the amber fill, visible when checked)
+    lv_obj_set_style_bg_color(sw, THEME_LV(THEME_ACCENT),     LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(sw,   LV_OPA_COVER,               LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_radius(sw,   LV_RADIUS_CIRCLE,           LV_PART_INDICATOR | LV_STATE_CHECKED);
     lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), LV_PART_INDICATOR | LV_STATE_CHECKED);
@@ -324,7 +325,7 @@ static lv_obj_t * mk_card_switch(lv_obj_t * card, lv_coord_t x, lv_coord_t y, bo
     lv_obj_set_size(sw, 42, 22);
     lv_obj_set_pos(sw, x, y);
 
-    lv_obj_set_style_bg_color(sw, lv_color_hex(0x3D414A), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(sw, THEME_LV(THEME_BORDER), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sw,   LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sw,   LV_RADIUS_CIRCLE,       LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(sw, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -353,7 +354,7 @@ static lv_obj_t * mk_card_switch(lv_obj_t * card, lv_coord_t x, lv_coord_t y, bo
 }
 
 // Display tab slider: large glowing knob matching reference screenshot
-// track h=16, knob protrudes 10px per side → knob ⌀ 36px, with lime glow
+// track h=16, knob protrudes 10px per side → knob ⌀ 36px, with amber glow
 static lv_obj_t * mk_display_slider(lv_obj_t * card, lv_coord_t y,
                                      int value, lv_obj_t * val_lbl)
 {
@@ -371,13 +372,13 @@ static lv_obj_t * mk_display_slider(lv_obj_t * card, lv_coord_t y,
     lv_obj_set_style_outline_width(sl, 0,                  LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_pad_all(sl,  0,                       LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    // Indicator (lime fill)
+    // Indicator (amber fill)
     lv_obj_set_style_bg_color(sl, lv_color_hex(TV_LIME),  LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sl,   LV_OPA_COVER,           LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sl,   LV_RADIUS_CIRCLE,       LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_set_style_shadow_width(sl, 0,                    LV_PART_INDICATOR | LV_STATE_DEFAULT);
 
-    // Knob: white circle, lime border
+    // Knob: white circle, amber border
     lv_obj_set_style_bg_color(sl, lv_color_hex(0xFFFFFF),    LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sl,   LV_OPA_COVER,              LV_PART_KNOB | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(sl,   LV_RADIUS_CIRCLE,          LV_PART_KNOB | LV_STATE_DEFAULT);
@@ -412,7 +413,7 @@ static lv_obj_t * mk_bar(lv_obj_t * p,
     return bar;
 }
 
-// Card container (rounded, dark bg, subtle lime border)
+// Card container (rounded, dark bg, subtle amber border)
 static lv_obj_t * mk_card(lv_obj_t * p, lv_coord_t y, lv_coord_t h)
 {
     lv_obj_t * card = lv_obj_create(p);
@@ -746,7 +747,7 @@ static void build_tab_system(lv_obj_t * page)
     lv_obj_t * c_rb = mk_card(sc, y, 66);
     mk_lbl(c_rb, "Reboot", 0, 0, TV_TEXT, &ui_font_name_14);
     mk_lbl(c_rb, "soft restart", 0, 30, TV_MUTED, &ui_font_name_14);
-    mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", 0xFF9EC7, tab_reboot_cb);
+    mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", THEME_ACCENT, tab_reboot_cb);
     y += 66 + 8;
 
     // ── STORAGE ──────────────────────────────────────────────────────────────

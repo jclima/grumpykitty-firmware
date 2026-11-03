@@ -34,6 +34,7 @@
  */
 #pragma once
 #include <LovyanGFX.hpp>
+#include "ui_theme.h"   // central palette (src/ui/ui_theme.h)
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -41,17 +42,18 @@
 namespace hp {
 
 /* ─────────────── Palette ───────────────
- *  Dark-olive / phosphor-lime CRT aesthetic ("old-terminal" look).
- *  COL_BG  : midnight plum background
- *  COL_FG  : soft pink (text, borders, list-selection fill)
- *  COL_DIM : dim lavender (dotted separators, inactive hints)
- *  COL_HL  : same as FG (selected list row is fully filled with pink)
+ *  GrumpyKitty alley theme: charcoal background, amber terminal text
+ *  (values come from src/ui/ui_theme.h).
+ *  COL_BG  : charcoal background
+ *  COL_FG  : amber (text, borders, list-selection fill)
+ *  COL_DIM : dim grey (dotted separators, inactive hints)
+ *  COL_HL  : same as FG (selected list row is fully filled with amber)
  */
-static constexpr uint16_t COL_BG       = 0x18A6;   // midnight plum       (RGB ~30,21,48)
-static constexpr uint16_t COL_FG       = 0xFCF8;   // soft pink          (RGB ~255,158,199)
-static constexpr uint16_t COL_DIM      = 0x7B55;   // dim lavender       (RGB ~124,106,168)
+static constexpr uint16_t COL_BG       = THEME_BG_565;       // charcoal  #14161C
+static constexpr uint16_t COL_FG       = THEME_ACCENT_565;   // amber     #FFB000
+static constexpr uint16_t COL_DIM      = THEME_TEXT_DIM_565; // dim grey  #9AA0AB
 static constexpr uint16_t COL_ACCENT   = 0xFFFF;   // white   (rare strong highlight)
-static constexpr uint16_t COL_HL       = 0xFCF8;   // = COL_FG (full-row selection bar)
+static constexpr uint16_t COL_HL       = THEME_ACCENT_565;   // = COL_FG (full-row selection bar)
 static constexpr uint16_t COL_WARN     = 0xFFE0;   // yellow
 static constexpr uint16_t COL_ERR      = 0xF800;   // red
 static constexpr uint16_t COL_INFO     = 0x07FF;   // cyan
@@ -108,7 +110,7 @@ inline void drawChrome(LCD& lcd)
 }
 
 /* Draw header: "[ TITLE ]" left, optional status badge on the right.
- *  If `badgeColor == COL_FG` (default) the badge is rendered as plain pink
+ *  If `badgeColor == COL_FG` (default) the badge is rendered as plain amber
  *  text (e.g. "2026, EARTH").  If a different color is given, the badge is
  *  drawn as a filled rounded pill (used for status badges like "SD", "RUN"). */
 template<typename LCD>
@@ -176,8 +178,8 @@ inline void clearContent(LCD& lcd)
 /* ─────────────── List rows ─────────────── */
 
 /* Draw one list row at visible index `row` (0..LIST_VIS-1).
- *   selected     → full lime fill across the row, dark text, "> " prefix
- *   non-selected → lime text on dark bg, dotted bottom separator (COL_DIM)
+ *   selected     → full amber fill across the row, dark text, "> " prefix
+ *   non-selected → amber text on dark bg, dotted bottom separator (COL_DIM)
  *   reserves SBAR_W on the right for the scrollbar rail. */
 template<typename LCD>
 inline void drawListItem(LCD& lcd, int row, const char* text, bool selected)
@@ -228,7 +230,7 @@ static constexpr int LIST2_VIS  = CON_H / ITEM2_H;   // 5 visible rows
 
 /* Two-line list row: title (line 1, bright) + sub (line 2, dim).
  *   `row` is the visible slot index (0..LIST2_VIS-1).
- * Selection style matches single-line drawListItem (badusb): full lime fill
+ * Selection style matches single-line drawListItem (badusb): full amber fill
  * with dark text on the selected row. */
 template<typename LCD>
 inline void drawListItemSub(LCD& lcd, int row, const char* title,

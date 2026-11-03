@@ -23,6 +23,7 @@
  */
 #pragma once
 #include <LovyanGFX.hpp>
+#include "ui_theme.h"   // central palette (src/ui/ui_theme.h)
 
 /* ════════════════════════════════════════════════════════════════
  *  MK_PAL — MeowKit product color palette
@@ -30,17 +31,17 @@
 namespace MK_PAL {
     static constexpr uint32_t BLACK       = 0x000000;
     static constexpr uint32_t WHITE       = 0xFFFFFF;
-    static constexpr uint32_t ACCENT      = 0xFF9EC7;  /* GrumpyKitty soft pink */
-    static constexpr uint32_t ACCENT_DIM  = 0x9A6A8C;
-    static constexpr uint32_t ACCENT_DARK = 0x2E1F42;
+    static constexpr uint32_t ACCENT      = THEME_ACCENT;       /* GrumpyKitty alley amber */
+    static constexpr uint32_t ACCENT_DIM  = THEME_TEXT_DIM;
+    static constexpr uint32_t ACCENT_DARK = THEME_SURFACE_ALT;
     static constexpr uint32_t TEXT_PRI    = 0xFFFFFF;
     static constexpr uint32_t TEXT_SEC    = 0x888888;
-    static constexpr uint32_t TEXT_TITLE  = 0xB9A6FF;
-    static constexpr uint32_t ITEM_BG     = 0x241A38;
-    static constexpr uint32_t ITEM_BG_ALT = 0x2E2245;
-    static constexpr uint32_t SEL_BG      = 0xFF9EC7;
-    static constexpr uint32_t SEL_TEXT    = 0x000000;
-    static constexpr uint32_t BORDER      = 0x4A3A6A;
+    static constexpr uint32_t TEXT_TITLE  = THEME_ACCENT;
+    static constexpr uint32_t ITEM_BG     = THEME_BG_ALT;
+    static constexpr uint32_t ITEM_BG_ALT = THEME_SURFACE;
+    static constexpr uint32_t SEL_BG      = THEME_ACCENT;
+    static constexpr uint32_t SEL_TEXT    = THEME_TEXT_ON_ACCENT;
+    static constexpr uint32_t BORDER      = THEME_BORDER;
     static constexpr uint32_t OK          = 0x00DD44;
     static constexpr uint32_t WARN        = 0xFFAA00;
     static constexpr uint32_t ERR         = 0xFF3333;

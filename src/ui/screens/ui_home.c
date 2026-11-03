@@ -130,7 +130,7 @@ void ui_home_screen_init(void)
     lv_obj_set_x(ui_soc, 210);
     lv_obj_set_y(ui_soc, 14);
     lv_label_set_text(ui_soc, "100/100");
-    lv_obj_set_style_text_color(ui_soc, lv_color_hex(0xFF9EC7), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_soc, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_soc, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_soc, &ui_font_number_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 

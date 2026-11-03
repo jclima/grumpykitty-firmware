@@ -25,6 +25,7 @@ extern "C" {
 #endif
 
 #include "ui_helpers.h"
+#include "ui_theme.h"
 #include "ui_events.h"
 
 
