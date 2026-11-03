@@ -415,7 +415,7 @@ bool bu_ble_begin() {
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_INIT_KEY,&mask,1);
     esp_ble_gap_set_security_param(ESP_BLE_SM_SET_RSP_KEY,&mask,1);
     static uint8_t ad[]={2,1,6,3,3,0x12,0x18,3,0x19,0xC1,3};
-    static uint8_t name[]={18,9,'G','r','u','m','p','y','K','i','t','t','y',' ','B','a','d','U','S','B'};
+    static uint8_t name[]={19,9,'G','r','u','m','p','y','K','i','t','t','y',' ','B','a','d','U','S','B'};
     if (esp_ble_gap_config_adv_data_raw(ad,sizeof(ad))!=ESP_OK ||
         esp_ble_gap_config_scan_rsp_data_raw(name,sizeof(name))!=ESP_OK ||
         esp_ble_gatts_app_register(APP_ID)!=ESP_OK) error=true;
