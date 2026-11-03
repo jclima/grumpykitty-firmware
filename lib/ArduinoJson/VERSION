@@ -1,0 +1,3 @@
+7.4.3
+tag v7.4.3 (commit 869d440) of https://github.com/bblanchon/ArduinoJson
+fetched with: gh api repos/bblanchon/ArduinoJson/tarball/v7.4.3 (src/, LICENSE.txt, library.json, library.properties only)

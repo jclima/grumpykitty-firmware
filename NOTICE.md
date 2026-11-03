@@ -44,6 +44,7 @@ Nothing in this fork changes the terms of third-party code. Libraries under `lib
 | `lib/LovyanGFX` | Mixed (`license.txt`): it reproduces the Adafruit ILI9341 header (MIT) and Adafruit_GFX (BSD) notices among others. Read the file for the full list. |
 | `lib/arduinoFFT` | GPL-3.0 (`LICENSE`) |
 | `lib/mooncake` | MIT (`LICENSE`; Copyright (c) 2023 Forairaaaaa) |
+| `lib/ArduinoJson` | MIT (`LICENSE.txt`; Copyright © 2014-2026 Benoit Blanchon), v7.4.3, see `lib/ArduinoJson/VERSION` |
 | `lib/lvgl` | MIT (`LICENCE.txt`; Copyright (c) 2021 LVGL Kft) |
 | `lib/lua-5.4.7` | No license file in the directory; the `lua.h` footer carries a Lua.org, PUC-Rio copyright notice with MIT-style permission text, and `README` points to the license details. Not independently verified further. |
 | `lib/ESP32-BLE-Keyboard` | No license file or license text found in the directory (README, `library.properties`, sources). Terms are unknown here; check the upstream repository. |
