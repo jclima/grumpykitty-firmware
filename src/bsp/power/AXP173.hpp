@@ -102,6 +102,7 @@ class AXP173_Class : public I2C_Device
         uint16_t _getMin(uint16_t a, uint16_t b);
         uint16_t _getMax(uint16_t a, uint16_t b);
         uint16_t _getMid(uint16_t input, uint16_t min, uint16_t max);
+        bool _rmw(uint8_t reg, uint8_t clearMask, uint8_t setBits);
 
     public:
         // Constructor: Initialize with I2C address and default bus

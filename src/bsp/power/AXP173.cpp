@@ -15,6 +15,17 @@ uint16_t AXP173_Class::_getMid(uint16_t input, uint16_t min, uint16_t max) {
     return _getMax(_getMin(input, max), min);
 }
 
+/* Locked, checked read-modify-write: new = (old & ~clearMask) | setBits.
+ * Does nothing (returns false) if the read fails, so a bus error can never
+ * write a garbage value back into a PMU register. */
+bool AXP173_Class::_rmw(uint8_t reg, uint8_t clearMask, uint8_t setBits) {
+    I2C_Class::LockGuard g(_i2c);
+    uint8_t v = 0;
+    if (!readRegister(reg, &v, 1)) return false;
+    v = (uint8_t)((v & ~clearMask) | setBits);
+    return writeRegister8(reg, v);
+}
+
 /* Public functions */
 /**
  * @brief AXP173_Class init
@@ -88,9 +99,7 @@ bool AXP173_Class::isChargeCsmaller() const {
  * @param state true:Enable, false:Disable
  */
 void AXP173_Class::setOutputEnable(OUTPUT_CHANNEL channel, bool state) {
-    uint8_t buff = readRegister8(0x12);
-    buff = state ? (buff | (1U << channel)) : (buff & ~(1U << channel));
-    writeRegister8(0x12, buff);
+    _rmw(0x12, state ? 0 : (uint8_t)(1U << channel), state ? (uint8_t)(1U << channel) : 0);
 }
 
 /**
@@ -100,37 +109,26 @@ void AXP173_Class::setOutputEnable(OUTPUT_CHANNEL channel, bool state) {
  * @param voltage DCDC1 & LDO4: 700~3500(mV), DCDC2: 700~2275(mV), LDO2 & LDO3: 1800~3300{mV}
  */
 void AXP173_Class::setOutputVoltage(OUTPUT_CHANNEL channel, uint16_t voltage) {
-    uint8_t buff = 0;
     switch (channel) {
         case OP_DCDC1:
             voltage = (_getMid(voltage, 700, 3500) - 700) / 25;
-            buff = readRegister8(0x26);
-            buff = (buff & 0B10000000) | (voltage & 0B01111111);
-            writeRegister8(0x26, buff);
+            _rmw(0x26, 0B01111111, voltage & 0B01111111);
             break;
         case OP_DCDC2:
             voltage = (_getMid(voltage, 700, 2275) - 700) / 25;
-            buff = readRegister8(0x23);
-            buff = (buff & 0B11000000) | (voltage & 0B00111111);
-            writeRegister8(0x23, buff);
+            _rmw(0x23, 0B00111111, voltage & 0B00111111);
             break;
         case OP_LDO2:
             voltage = (_getMid(voltage, 1800, 3300) - 1800) / 100;
-            buff = readRegister8(0x28);
-            buff = (buff & 0B00001111) | (voltage << 4);
-            writeRegister8(0x28, buff);
+            _rmw(0x28, 0B11110000, (uint8_t)(voltage << 4));
             break;
         case OP_LDO3:
             voltage = (_getMid(voltage, 1800, 3300) - 1800) / 100;
-            buff = readRegister8(0x28);
-            buff = (buff & 0B11110000) | (voltage);
-            writeRegister8(0x28, buff);
+            _rmw(0x28, 0B00001111, voltage & 0B00001111);
             break;
         case OP_LDO4:
             voltage = (_getMid(voltage, 700, 3500) - 700) / 25;
-            buff = readRegister8(0x27);
-            buff = (buff & 0B10000000) | (voltage & 0B01111111);
-            writeRegister8(0x27, buff);
+            _rmw(0x27, 0B01111111, voltage & 0B01111111);
             break;
         default:
             break;
@@ -138,7 +136,12 @@ void AXP173_Class::setOutputVoltage(OUTPUT_CHANNEL channel, uint16_t voltage) {
 }
 
 void AXP173_Class::powerOFF() {
-    writeRegister8(0x32, (readRegister8(0x32) | 0B10000000));
+    /* Best effort: retry the checked RMW; if the bus keeps failing, still
+     * force the shutdown bit (other REG32 bits are non-critical). */
+    for (int i = 0; i < 3; i++) {
+        if (_rmw(0x32, 0, 0B10000000)) return;
+    }
+    writeRegister8(0x32, 0B10000000);
 }
 
 /**
@@ -148,9 +151,7 @@ void AXP173_Class::powerOFF() {
  */
 void AXP173_Class::setPWROKDelay(uint8_t delay_ms) {
     if (delay_ms > 3) delay_ms = 1;
-    uint8_t reg = readRegister8(0x36);
-    reg = (reg & 0B11111100) | delay_ms;
-    writeRegister8(0x36, reg);
+    _rmw(0x36, 0B00000011, delay_ms);
 }
 
 /**
@@ -161,9 +162,7 @@ void AXP173_Class::setPWROKDelay(uint8_t delay_ms) {
 void AXP173_Class::setVoffVoltage(uint16_t voltage) {
     voltage = _getMid(voltage, 2600, 3300);
     uint8_t value = (voltage - 2600) / 100;
-    uint8_t reg = readRegister8(0x31);
-    reg = (reg & 0B11111000) | (value & 0B00000111);
-    writeRegister8(0x31, reg);
+    _rmw(0x31, 0B00000111, value & 0B00000111);
 }
 
 /**
@@ -172,14 +171,11 @@ void AXP173_Class::setVoffVoltage(uint16_t voltage) {
  * @param state true:Enable, false:Disable
  */
 void AXP173_Class::setChargeEnable(bool state) {
-    if (state)
-        writeRegister8(0x33, ((readRegister8(0x33) | 0B10000000)));
-    else
-        writeRegister8(0x33, ((readRegister8(0x33) & 0B01111111)));
+    _rmw(0x33, state ? 0 : 0B10000000, state ? 0B10000000 : 0);
 }
 
 void AXP173_Class::setChargeCurrent(CHARGE_CURRENT current) {
-    writeRegister8(0x33, ((readRegister8(0x33) & 0B11110000) | current));
+    _rmw(0x33, 0B00001111, (uint8_t)current & 0B00001111);
 }
 
 /**
@@ -189,26 +185,22 @@ void AXP173_Class::setChargeCurrent(CHARGE_CURRENT current) {
  * @param state true:Enable, false:Disable
  */
 void AXP173_Class::setADCEnable(ADC_CHANNEL channel, bool state) {
-    uint8_t buff = readRegister8(0x82);
-    buff = state ? (buff | (1U << channel)) : (buff & ~(1U << channel));
-    writeRegister8(0x82, buff);
+    _rmw(0x82, state ? 0 : (uint8_t)(1U << channel), state ? (uint8_t)(1U << channel) : 0);
 }
 
 void AXP173_Class::setCoulometer(COULOMETER_CTRL option, bool state) {
-    uint8_t buff = readRegister8(0xB8);
-    buff = state ? (buff | (1U << option)) : (buff & ~(1U << option));
-    writeRegister8(0xB8, buff);
+    _rmw(0xB8, state ? 0 : (uint8_t)(1U << option), state ? (uint8_t)(1U << option) : 0);
 }
 
 uint32_t AXP173_Class::getCoulometerChargeData() const {
-    uint8_t data[4];
+    uint8_t data[4] = {0, 0, 0, 0};
     readRegister(0xB0, data, 4);
     return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | 
            ((uint32_t)data[2] << 8) | data[3];
 }
 
 uint32_t AXP173_Class::getCoulometerDischargeData() const {
-    uint8_t data[4];
+    uint8_t data[4] = {0, 0, 0, 0};
     readRegister(0xB4, data, 4);
     return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) | 
            ((uint32_t)data[2] << 8) | data[3];
@@ -235,22 +227,22 @@ float AXP173_Class::getCoulometerData() const {
 
 float AXP173_Class::getBatVoltage() const {
     const float ADCLSB = 1.1 / 1000.0;
-    uint8_t data[2];
-    readRegister(0x78, data, 2);
+    uint8_t data[2] = {0, 0};
+    if (!readRegister(0x78, data, 2)) return NAN;   // I2C failure: invalid sample
     uint16_t value = (data[0] << 4) | (data[1] & 0x0F);
     return value * ADCLSB;
 }
 
 float AXP173_Class::getBatCurrent() const {
     const float ADCLSB = 0.5;
-    uint8_t data[2];
+    uint8_t data[2] = {0, 0};
     
     // Read charging current
-    readRegister(0x7A, data, 2);
+    if (!readRegister(0x7A, data, 2)) return NAN;
     uint16_t CurrentIn = (data[0] << 5) | (data[1] & 0x1F);
     
     // Read discharging current
-    readRegister(0x7C, data, 2);
+    if (!readRegister(0x7C, data, 2)) return NAN;
     uint16_t CurrentOut = (data[0] << 5) | (data[1] & 0x1F);
     
     return (CurrentIn - CurrentOut) * ADCLSB;
@@ -258,6 +250,7 @@ float AXP173_Class::getBatCurrent() const {
 
 float AXP173_Class::getBatLevel() const {
     const float batVoltage = getBatVoltage();
+    if (std::isnan(batVoltage)) return NAN;   // invalid sample: caller must ignore
     // 改进的电池电量计算算法 (基于典型锂电池放电曲线)
     if (batVoltage < 3.2) return 0.0;
     if (batVoltage > 4.2) return 100.0;
@@ -272,24 +265,24 @@ float AXP173_Class::getBatLevel() const {
 float AXP173_Class::getBatPower() const {
     const float VoltageLSB = 1.1;
     const float CurrentLCS = 0.5;
-    uint8_t data[3];
-    readRegister(0x70, data, 3);
+    uint8_t data[3] = {0, 0, 0};
+    if (!readRegister(0x70, data, 3)) return NAN;
     uint32_t ReData = ((uint32_t)data[0] << 16) | ((uint32_t)data[1] << 8) | data[2];
     return VoltageLSB * CurrentLCS * ReData / 1000.0;    
 }
 
 float AXP173_Class::getVBUSVoltage() const {
     const float ADCLSB = 1.7 / 1000.0;
-    uint8_t data[2];
-    readRegister(0x5A, data, 2);
+    uint8_t data[2] = {0, 0};
+    if (!readRegister(0x5A, data, 2)) return NAN;
     uint16_t ReData = (data[0] << 4) | (data[1] & 0x0F);
     return ReData * ADCLSB;
 }
 
 float AXP173_Class::getVBUSCurrent() const {
     const float ADCLSB = 0.375;
-    uint8_t data[2];
-    readRegister(0x5C, data, 2);
+    uint8_t data[2] = {0, 0};
+    if (!readRegister(0x5C, data, 2)) return NAN;
     uint16_t ReData = (data[0] << 4) | (data[1] & 0x0F);
     return ReData * ADCLSB;
 }
@@ -297,8 +290,8 @@ float AXP173_Class::getVBUSCurrent() const {
 float AXP173_Class::getAXP173Temp() const {
     const float ADCLSB = 0.1;
     const float OFFSET_DEG_C = -144.7;
-    uint8_t data[2];
-    readRegister(0x5E, data, 2);
+    uint8_t data[2] = {0, 0};
+    if (!readRegister(0x5E, data, 2)) return NAN;
     uint16_t ReData = (data[0] << 4) | (data[1] & 0x0F);
     return OFFSET_DEG_C + ReData * ADCLSB;
 }
@@ -316,9 +309,7 @@ void AXP173_Class::setTSCurrent(uint8_t chargingUA, uint8_t notChargingUA) {
     if (noChgSel > 3) noChgSel = 3;
     
     // Read current REG84H, preserve other bits
-    uint8_t reg84 = readRegister8(0x84);
-    reg84 = (reg84 & 0xF0) | (chgSel << 2) | noChgSel;
-    writeRegister8(0x84, reg84);
+    _rmw(0x84, 0x0F, (uint8_t)((chgSel << 2) | noChgSel));
 }
 
 float AXP173_Class::getTSTemp() const {
@@ -326,8 +317,8 @@ float AXP173_Class::getTSTemp() const {
     // AXP173_Class TS ADC: 12-bit, 0.8mV per LSB
     const float ADC_LSB_V = 0.0008f;  // 0.8mV = 0.0008V per LSB
     
-    uint8_t data[2];
-    readRegister(0x62, data, 2);
+    uint8_t data[2] = {0, 0};
+    if (!readRegister(0x62, data, 2)) return NAN;
     uint16_t adcValue = (data[0] << 4) | (data[1] & 0x0F);
     
     // Calculate TS pin voltage in volts
@@ -381,9 +372,7 @@ float AXP173_Class::getTSTemp() const {
  *  Chip temperature ADC — REG 0x83 bit[7]
  * ═══════════════════════════════════════════════════════════════ */
 void AXP173_Class::setChipTempEnable(bool state) {
-    uint8_t reg = readRegister8(0x83);
-    reg = state ? (reg | 0x80) : (reg & 0x7F);
-    writeRegister8(0x83, reg);
+    _rmw(0x83, state ? 0 : 0x80, state ? 0x80 : 0);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -397,27 +386,19 @@ void AXP173_Class::setChipTempEnable(bool state) {
  *    [1:0] POWEROFF_TIME  (shutdown hold time)
  * ═══════════════════════════════════════════════════════════════ */
 void AXP173_Class::setPowerOnTime(POWERON_TIME onTime) {
-    uint8_t reg = readRegister8(0x36);
-    reg = (reg & 0x3F) | (uint8_t)onTime;   /* bits [7:6] */
-    writeRegister8(0x36, reg);
+    _rmw(0x36, 0xC0, (uint8_t)onTime & 0xC0);   /* bits [7:6] */
 }
 
 void AXP173_Class::setPowerOffTime(POWEROFF_TIME offTime) {
-    uint8_t reg = readRegister8(0x36);
-    reg = (reg & 0xFC) | ((uint8_t)offTime & 0x03);  /* bits [1:0] */
-    writeRegister8(0x36, reg);
+    _rmw(0x36, 0x03, (uint8_t)offTime & 0x03);  /* bits [1:0] */
 }
 
 void AXP173_Class::setLongPressTime(LONG_PRESS_TIME pressTime) {
-    uint8_t reg = readRegister8(0x36);
-    reg = (reg & 0xCF) | ((uint8_t)pressTime << 4);  /* bits [5:4] */
-    writeRegister8(0x36, reg);
+    _rmw(0x36, 0x30, (uint8_t)(((uint8_t)pressTime << 4) & 0x30));  /* bits [5:4] */
 }
 
 void AXP173_Class::aoToPowerOFFEnabale() {
-    uint8_t reg = readRegister8(0x36);
-    reg |= 0x08;          /* bit [3] = 1 → auto power-off enable */
-    writeRegister8(0x36, reg);
+    _rmw(0x36, 0, 0x08);          /* bit [3] = 1 → auto power-off enable */
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -443,9 +424,7 @@ void AXP173_Class::initIRQState() {
 
 void AXP173_Class::setShortPressEnabale() {
     /* REG 0x31 bit[3] = 1 → PEK short press trigger enable */
-    uint8_t reg = readRegister8(0x31);
-    reg |= 0x08;
-    writeRegister8(0x31, reg);
+    _rmw(0x31, 0, 0x08);
 }
 
 bool AXP173_Class::getShortPressIRQState() {

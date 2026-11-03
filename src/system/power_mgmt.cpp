@@ -5,6 +5,7 @@
 #include "power_mgmt.h"
 #include <Arduino.h>
 #include <esp_sleep.h>
+#include <cmath>
 
 static AXP173_Class* s_pmu             = nullptr;
 static void (*s_pre_shutdown_cb)(void) = nullptr;
@@ -15,6 +16,28 @@ static bool s_warn_shown = false;
 
 /* millis() at power_init — used for boot grace period */
 static uint32_t s_init_ms = 0;
+
+/* Consecutive critical-battery samples seen by power_tick() */
+static uint8_t s_crit_count = 0;
+#define POWER_CRIT_CONSEC_SAMPLES 5
+
+/* Last valid battery percentage (returned when a new sample is invalid) */
+static int s_last_pct = 100;
+
+/* Read one battery sample. Returns false (and leaves *pct untouched) when the
+ * I2C read failed. */
+static bool power_sample_pct(int* pct)
+{
+    if (!s_pmu) return false;
+    float lvl = s_pmu->getBatLevel();
+    if (std::isnan(lvl)) return false;
+    if (lvl < 0)   lvl = 0;
+    if (lvl > 100) lvl = 100;
+    int p = (int)(lvl + 0.5f);
+    s_last_pct = p;
+    *pct = p;
+    return true;
+}
 
 /* Idle timer — reset by power_reset_sleep_timer() on any user activity */
 static uint32_t s_last_activity_ms = 0;
@@ -76,28 +99,43 @@ extern "C" void power_tick(void)
     /* Skip all battery protection during boot grace — AXP173 ADC hasn't settled. */
     if (!power_is_ready()) return;
 
+    /* Invalid (I2C failure) samples are ignored: they neither trigger nor
+     * clear the critical counter. */
+    int pct = 0;
+    if (!power_sample_pct(&pct)) return;
+
     const bool charging = power_is_charging();
-    const int  pct      = power_battery_pct();
+    const bool usb      = s_pmu->isVBUSExist();
 
     /* Reset warn state when charging restores battery above warn threshold */
     if (charging && s_warn_shown && pct > POWER_WARN_BAT_PCT) {
         s_warn_shown = false;
     }
 
-    if (!charging) {
-        /* ① Critical: force shutdown via AXP173 */
-        if (pct <= POWER_CRIT_BAT_PCT) {
-            Serial.printf("[Power] CRITICAL %d%% — shutting down\n", pct);
+    /* Never critical-shutdown while on USB power or charging. */
+    if (charging || usb) {
+        s_crit_count = 0;
+        return;
+    }
+
+    /* ① Critical: require N consecutive critical samples (1 Hz tick) so a
+     * single glitch/transient sag cannot power the device off. */
+    if (pct <= POWER_CRIT_BAT_PCT) {
+        if (++s_crit_count >= POWER_CRIT_CONSEC_SAMPLES) {
+            Serial.printf("[Power] CRITICAL %d%% (%u samples) — shutting down\n",
+                          pct, (unsigned)s_crit_count);
             power_shutdown();
             /* power_shutdown calls powerOFF() — never returns */
         }
+    } else {
+        s_crit_count = 0;
+    }
 
-        /* ② Warning: notify UI once per low-battery episode */
-        if (pct <= POWER_WARN_BAT_PCT && !s_warn_shown) {
-            s_warn_shown = true;
-            Serial.printf("[Power] LOW BATTERY: %d%%\n", pct);
-            if (s_warn_cb) s_warn_cb(pct);
-        }
+    /* ② Warning: notify UI once per low-battery episode */
+    if (pct <= POWER_WARN_BAT_PCT && !s_warn_shown) {
+        s_warn_shown = true;
+        Serial.printf("[Power] LOW BATTERY: %d%%\n", pct);
+        if (s_warn_cb) s_warn_cb(pct);
     }
 }
 
@@ -149,10 +187,8 @@ extern "C" void power_deep_sleep(uint32_t wake_after_sec)
 extern "C" int power_battery_pct(void)
 {
     if (!s_pmu) return 0;
-    float lvl = s_pmu->getBatLevel();
-    if (lvl < 0)   lvl = 0;
-    if (lvl > 100) lvl = 100;
-    int pct = (int)(lvl + 0.5f);
+    int pct = 0;
+    if (!power_sample_pct(&pct)) pct = s_last_pct;   /* I2C failure: last good value */
     /* During boot grace, a 0% reading is likely an unsettled coulometer.
      * Return 100 as a benign placeholder so the UI and warn_cb stay quiet. */
     if (pct == 0 && !power_is_ready()) return 100;

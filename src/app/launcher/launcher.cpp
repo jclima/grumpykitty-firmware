@@ -379,6 +379,7 @@ void Launcher::onLoop()
             if (off_threshold < 300u) off_threshold = 300u;
             if (idle_s >= off_threshold
                 && !power_is_charging()
+                && !power_vbus_present()
                 && !usb_msc_is_active()) {
                 Serial.printf("[Launcher] Idle %lus — auto power-off\n",
                               (unsigned long)idle_s);
