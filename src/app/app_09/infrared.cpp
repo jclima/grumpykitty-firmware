@@ -2146,7 +2146,18 @@ namespace MOONCAKE::APPS
         static constexpr size_t kMaxLineLen = 8192;   /* 1024 raw entries fit */
         static constexpr size_t kMaxRawEntries = 1024;
 
-        while (f.available()) {
+        /* Chunked reader: one f.read() per 512 B instead of per character. */
+        char   chunk[512];
+        size_t chunkPos = 0, chunkLen = 0;
+        auto fillChunk = [&]() -> bool {
+            chunkPos = 0;
+            int n = f.read((uint8_t*)chunk, sizeof(chunk));
+            chunkLen = n > 0 ? (size_t)n : 0;
+            return chunkLen > 0;
+        };
+        line.reserve(256);
+
+        while (chunkPos < chunkLen || f.available()) {
             /* Stop early if signal cap reached (only when no name filter is
              * active — filtered loads are inherently bounded by brand count). */
             if (!filterName && maxSignals > 0 && (int)remote.signals.size() >= maxSignals) break;
@@ -2155,11 +2166,18 @@ namespace MOONCAKE::APPS
              * current signal is marked invalid. */
             line = "";
             bool lineOverflow = false;
-            while (f.available()) {
-                int ch = f.read();
-                if (ch < 0 || ch == '\n') break;
-                if (line.length() < kMaxLineLen) line += (char)ch;
-                else lineOverflow = true;
+            for (;;) {
+                if (chunkPos >= chunkLen && !fillChunk()) break;   /* EOF */
+                const char* sp = chunk + chunkPos;
+                const size_t avail = chunkLen - chunkPos;
+                const char* nl = (const char*)memchr(sp, '\n', avail);
+                const size_t seg = nl ? (size_t)(nl - sp) : avail;
+                const size_t room = kMaxLineLen - line.length();
+                const size_t take = seg < room ? seg : room;
+                if (take) line.concat(sp, (unsigned int)take);
+                if (take < seg) lineOverflow = true;               /* excess discarded */
+                chunkPos += seg + (nl ? 1 : 0);
+                if (nl) break;
             }
             if (lineOverflow) { validSignal = false; continue; }
             line.trim();
