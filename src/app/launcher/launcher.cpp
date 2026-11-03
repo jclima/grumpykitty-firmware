@@ -461,7 +461,7 @@ void Launcher::initSD()
     bool mounted = SD_MMC.begin("/sdcard", true, false, 10000);
 
     if (!mounted || SD_MMC.cardType() == CARD_NONE) {
-        SD_MMC.end();
+        ui_sd_classify_failed_mount();   /* SD_MMC.end() + Missing/Unsupported */
         Serial.println("[Launcher] SD mount failed — running without SD");
         _sd_ready = false;
         return;

@@ -8,6 +8,7 @@
 - Shared BLE remote HID helper, SD guard helper and `tools/gen_app_icon.py` icon generator.
 
 ### Fixed
+- SD: a card that is inserted but cannot be mounted (exFAT, unformatted, non-FAT) is now reported as "unsupported format - use FAT32" instead of "No SD card"; failed remounts are throttled to once per 3 s.
 - Battery monitoring keeps running while an app is open.
 - Race conditions in USB MSC teardown and system sound.
 - Infrared: correct Flipper frame encoding, bounded `.ir` parsing, and learned signals saved with the right Flipper protocol names (including NECext) and an SD guard.

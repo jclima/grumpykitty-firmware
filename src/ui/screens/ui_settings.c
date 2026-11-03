@@ -53,7 +53,9 @@ static void ui_event_msc_button_click(lv_event_t * e)
      * may panic the SD driver when it tries to read the block count. */
     if (!ui_sd_present()) {
         _ui_screen_change(&ui_usb_msc, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_usb_msc_screen_init);
-        if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "no SD card — insert and retry");
+        if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label,
+            ui_sd_state() == UI_SD_UNSUPPORTED ? "unsupported card - use FAT32"
+                                               : "no SD card — insert and retry");
         return;
     }
 

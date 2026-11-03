@@ -23,6 +23,16 @@ typedef void (*ui_sd_visit_cb)(const char* name, int is_dir, void* user);
  * Returns 1 if accessible, 0 otherwise. Safe to call ~1 Hz. */
 int ui_sd_present(void);
 
+/* Slot classification, cached by the last probe (cheap, no bus access). */
+#define UI_SD_MISSING     0   /* no card answering                        */
+#define UI_SD_OK          1   /* FAT volume mounted                       */
+#define UI_SD_UNSUPPORTED 2   /* card answers but FAT mount failed        */
+int ui_sd_state(void);
+
+/* Boot path: call after a failed SD_MMC.begin(). Releases the driver and
+ * records Missing vs Unsupported (logs once if unsupported). */
+void ui_sd_classify_failed_mount(void);
+
 /* Iterate a directory on the SD card.
  *  path : absolute path starting with "/", e.g. "/", "/config".
  * Returns 0 on success, -1 on error (open failed / not a directory). */

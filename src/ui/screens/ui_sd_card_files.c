@@ -149,10 +149,18 @@ static void _build_file_list(void)
 
     if (rc != 0 || ctx.row == 0) {
         lv_obj_t * lbl = lv_label_create(_file_list);
-        lv_label_set_text(lbl, rc != 0 ? "(No SD card)" : "(Empty)");
+        const int unsupported = (rc != 0 && ui_sd_state() == UI_SD_UNSUPPORTED);
+        lv_label_set_text(lbl, unsupported ? "Unsupported card format - use FAT32 (MBR)"
+                                           : (rc != 0 ? "(No SD card)" : "(Empty)"));
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(lbl,  &ui_font_name_14, 0);
-        lv_obj_set_pos(lbl, 60, 50);
+        if (unsupported) {
+            lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+            lv_obj_set_width(lbl, 200);
+            lv_obj_set_pos(lbl, 50, 50);
+        } else {
+            lv_obj_set_pos(lbl, 60, 50);
+        }
     }
 }
 
