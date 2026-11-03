@@ -176,12 +176,13 @@ void usb_msc_disable(void)
         uint32_t t0 = millis();
         while (s_inflight.load() > 0 && (millis() - t0) < 500)
             delay(1);
-        if (s_inflight.load() > 0)
-            Serial.println("[MSC] warn: callbacks still in flight at teardown");
     }
+    const bool busy = s_inflight.load() > 0;
+    if (busy)
+        Serial.println("[MSC] warn: callbacks still in flight; leaking card/host (no deinit)");
 
-    /* Release raw SDMMC resources */
-    if (card) {
+    /* Release raw SDMMC resources (skipped when a callback may still use them) */
+    if (card && !busy) {
         sdmmc_host_deinit();
         free(card);
     }

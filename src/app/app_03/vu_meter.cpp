@@ -242,11 +242,10 @@ void App03::_releaseResources()
         for (int i = 0; i < 100 && _captureTask; ++i)
             vTaskDelay(pdMS_TO_TICKS(10));
         if (_captureTask) {
-            /* Last resort only: the task is wedged. Reclaim its buffer here. */
-            Serial.println("[VU] capture task did not exit; forcing delete");
-            vTaskDelete(_captureTask);
-            _captureTask = nullptr;
-            if (s_capBuf) { heap_caps_free(s_capBuf); s_capBuf = nullptr; }
+            /* Task is wedged. Do NOT vTaskDelete: it races the task's own exit
+             * (double free of its buffer) and could leave the I2S RX mutex held.
+             * Leak the task and its buffer; the I2S uninstall below is skipped. */
+            Serial.println("[VU] capture task did not exit; leaking it (no delete)");
         }
     }
 
@@ -255,7 +254,7 @@ void App03::_releaseResources()
         _codec.end();
         _codecReady = false;
     }
-    if (_i2sReady) {
+    if (_i2sReady && !_captureTask) {   /* a live task may still be inside i2s_read */
         i2s_stop(I2S_NUM_1);
         i2s_driver_uninstall(I2S_NUM_1);
         _i2sReady = false;
