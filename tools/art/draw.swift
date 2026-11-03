@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 JC Lima
 //
-// FancyKitty procedural art (kawaii pastel kitty). CoreGraphics only, no
-// external art. Usage: draw <outdir> [<reference_dir>]
-// Build/run via tools/art/make_preview.sh. Origin is top-left, y grows down.
+// FancyKitty procedural art, shared kit + v1 kawaii sampler. CoreGraphics only,
+// no external art. Compiled together with draw_v2.swift and main.swift by
+// make_preview.sh / make_v2.sh. Origin is top-left, y grows down.
 
 import CoreGraphics
 import Foundation
@@ -483,11 +483,8 @@ func drawSheet(_ out: String, _ ref: String, _ mascots: [CGContext], _ icons: [C
     return c
 }
 
-// MARK: main
-let args = CommandLine.arguments
-guard args.count >= 2 else { print("usage: draw <outdir> [<reference_dir>]"); exit(1) }
-let out = args[1]
-let ref = args.count > 2 ? args[2] : out + "/reference"
+// MARK: v1 main
+func runV1(_ out: String, _ ref: String) {
 try? FileManager.default.createDirectory(atPath: out, withIntermediateDirectories: true)
 let exprs: [(String, Expr)] = [("idle", .idle), ("happy", .happy), ("sleepy", .sleepy), ("surprised", .surprised)]
 var mascots: [CGContext] = []
@@ -497,3 +494,4 @@ for (n, ic) in zip(["air_mouse", "badusb", "infrared", "voicerec"], icons) { sav
 let bg = drawBackground(); save(bg, "\(out)/background.png")
 let msg = drawMessageBox(); save(msg, "\(out)/message_box_bg.png")
 save(drawSheet(out, ref, mascots, icons, bg, msg), "\(out)/contact_sheet.png")
+}
