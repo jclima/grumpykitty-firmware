@@ -8,6 +8,21 @@ Result: GIF bytes land in Flash RODATA with zero C compilation overhead.
 """
 Import("env")  # noqa: F821  (PlatformIO SCons magic)
 import os
+import hashlib
+
+
+def sha256_of(path, length=None):
+    """Hex sha256 of a file (or of its first `length` bytes); '' when missing.
+
+    Embedded in the generated .S as a comment: PlatformIO does not track files
+    pulled in via .incbin, so the hash makes the .S change (and recompile)
+    whenever an asset's content changes.
+    """
+    if not os.path.isfile(path):
+        return ""
+    with open(path, "rb") as f:
+        data = f.read() if length is None else f.read(length)
+    return hashlib.sha256(data).hexdigest()
 
 project_dir = env.subst("$PROJECT_DIR")
 system_asset_dir = os.path.join(project_dir, "src", "system", "assets")
@@ -117,6 +132,7 @@ def mp3_prefix_bytes(path, limit_ms):
 # ── build output ──────────────────────────────────────────────────────────────
 if gif_exists:
     asm_body = (
+        f"/* sha256 {os.path.basename(gif_path)}: {sha256_of(gif_path)} */\n"
         "    .section .rodata\n"
         "    .balign 4\n"
         "    .global splash_gif_data\n"
@@ -180,7 +196,8 @@ boot_size = mp3_prefix_bytes(boot_mp3_path, duration_ms) if boot_exists else 0
 def incbin_symbol(symbol, path, exists, length=0):
     if not exists:
         return f"    .global {symbol}\n{symbol}:\n"
-    return (f"    .global {symbol}\n{symbol}:\n"
+    return (f"/* sha256 {os.path.basename(path)} [0:{length}]: {sha256_of(path, length)} */\n"
+            f"    .global {symbol}\n{symbol}:\n"
             f'    .incbin "{path.replace(chr(92), "/")}", 0, {length}\n'
             "    .balign 4\n")
 
