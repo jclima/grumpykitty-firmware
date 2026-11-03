@@ -22,6 +22,10 @@ constexpr unsigned QUEUE_LEN = 16, HID_ATTRS = 25;
 struct Item { uint8_t kind; uint8_t mods; uint16_t value; };  // kind 0=key, 1=media
 std::atomic<bool> active{false}, linked{false}, secure{false}, subscribed{false}, error{false};
 std::atomic<bool> bootSubscribed{false}, mediaSubscribed{false};
+// Bonded-reconnect assumption: on a re-encrypted link of an already bonded peer
+// the host may not rewrite its CCCDs (they are persisted per bond), so we treat
+// the reports as subscribed until the host explicitly writes 0 to that CCCD.
+std::atomic<bool> assumedKey{false}, assumedMedia{false};
 std::atomic<bool> congested{false}, suspended{false};
 std::atomic<unsigned> epoch{0}, services{0};
 esp_gatt_if_t iface = ESP_GATT_IF_NONE;
@@ -176,6 +180,9 @@ void gap(esp_gap_ble_cb_event_t e, esp_ble_gap_cb_param_t* p) {
     case ESP_GAP_BLE_SEC_REQ_EVT: esp_ble_gap_security_rsp(p->ble_security.ble_req.bd_addr, true); break;
     case ESP_GAP_BLE_AUTH_CMPL_EVT:
         secure = p->ble_security.auth_cmpl.success;
+        // key_present is false when an existing bond is merely re-encrypted
+        // (no new pairing happened): assume the persisted CCC state applies.
+        if (secure && !p->ble_security.auth_cmpl.key_present) { assumedKey = true; assumedMedia = true; }
         if (!secure) esp_ble_gap_disconnect(p->ble_security.auth_cmpl.bd_addr);
         break;
     default: break;
@@ -207,6 +214,7 @@ void gatts(esp_gatts_cb_event_t e, esp_gatt_if_t i, esp_ble_gatts_cb_param_t* p)
     case ESP_GATTS_CONNECT_EVT: {
         conn = p->connect.conn_id; memcpy(peer, p->connect.remote_bda, 6);
         linked = true; secure = false; subscribed = false; bootSubscribed = false; mediaSubscribed = false;
+        assumedKey = false; assumedMedia = false;
         suspended = false; congested = false; ++epoch;
         memset(report, 0, sizeof(report)); memset(ccc, 0, sizeof(ccc)); memset(mediaCcc, 0, sizeof(mediaCcc));
         protocol = 1; protocolMode = 1;
@@ -226,32 +234,40 @@ void gatts(esp_gatts_cb_event_t e, esp_gatt_if_t i, esp_ble_gatts_cb_param_t* p)
     case ESP_GATTS_CONGEST_EVT: congested = p->congest.congested; break;
     case ESP_GATTS_WRITE_EVT:
         if (p->write.is_prep) break;
-        if (p->write.handle == handles[0][11] && p->write.len == 2) subscribed = (p->write.value[0] & 1) != 0;
-        if (p->write.handle == handles[0][15] && p->write.len == 2) bootSubscribed = (p->write.value[0] & 1) != 0;
-        if (p->write.handle == handles[0][21] && p->write.len == 2) mediaSubscribed = (p->write.value[0] & 1) != 0;
+        if (p->write.handle == handles[0][11] && p->write.len == 2) { subscribed = (p->write.value[0] & 1) != 0; assumedKey = false; }
+        if (p->write.handle == handles[0][15] && p->write.len == 2) { bootSubscribed = (p->write.value[0] & 1) != 0; assumedKey = false; }
+        if (p->write.handle == handles[0][21] && p->write.len == 2) { mediaSubscribed = (p->write.value[0] & 1) != 0; assumedMedia = false; }
         if (p->write.handle == handles[0][6] && p->write.len == 1) suspended = p->write.value[0] == 0;
         if (p->write.handle == handles[0][8] && p->write.len == 1) protocolMode = p->write.value[0];
         break;
     default: break;
     }
 }
-bool linkReady() {
-    return active && linked && secure && !suspended && !error &&
-           (protocolMode == 0 ? bootSubscribed.load() : (subscribed.load() && mediaSubscribed.load()));
+bool baseReady() { return active && linked && secure && !suspended && !error; }
+// Per report kind: keyboard needs its protocol-mode report subscribed, media
+// (Consumer Control, report protocol only) needs the media CCCD.
+bool keyReady() {
+    return baseReady() && (protocolMode == 0 ? (bootSubscribed.load() || assumedKey.load())
+                                             : (subscribed.load() || assumedKey.load()));
 }
+bool mediaReady() {
+    return baseReady() && protocolMode != 0 && (mediaSubscribed.load() || assumedMedia.load());
+}
+bool linkReady() { return keyReady(); }  // UI "CONNECTED" = keyboard reports usable
 bool send(const Item& it, bool force = false) {
-    if (!linkReady() || (congested && !force)) return false;
+    if (!baseReady() || (congested && !force)) return false;
     if (it.kind == 0) {
+        if (!keyReady()) return true;  // Not subscribed: drop rather than stall the queue.
         uint8_t data[8] = {it.mods, 0, static_cast<uint8_t>(it.value), 0, 0, 0, 0, 0};
         const uint16_t handle = handles[0][protocolMode == 0 ? 14 : 10];
         return esp_ble_gatts_send_indicate(iface, conn, handle, 8, data, false) == ESP_OK;
     }
-    if (protocolMode == 0) return true;  // Boot protocol has no consumer control; drop.
+    if (!mediaReady()) return true;  // Boot protocol / unsubscribed media: drop.
     uint8_t data[2] = {static_cast<uint8_t>(it.value), static_cast<uint8_t>(it.value >> 8)};
     return esp_ble_gatts_send_indicate(iface, conn, handles[0][20], 2, data, false) == ESP_OK;
 }
 bool enqueueTap(uint8_t kind, uint8_t mods, uint16_t value) {
-    if (!linkReady() || !value) return false;
+    if (!value || !(kind == 0 ? keyReady() : mediaReady())) return false;
     const unsigned used = (tail + QUEUE_LEN - head) % QUEUE_LEN;
     if (used + 2 >= QUEUE_LEN) return false;  // Keep one slot free; never split a tap.
     queue[tail] = {kind, mods, value}; tail = (tail + 1) % QUEUE_LEN;
@@ -273,7 +289,7 @@ bool begin() {
     lease = bluetooth_manager::acquire(bluetooth_manager::Owner::HidRemote, "GrumpyKitty Remote", gap, gatts, stopped);
     if (!lease) { active = false; error = true; return false; }
     active = true; linked = false; secure = false; subscribed = false; bootSubscribed = false;
-    mediaSubscribed = false; suspended = false; congested = false; error = false;
+    mediaSubscribed = false; assumedKey = false; assumedMedia = false; suspended = false; congested = false; error = false;
     services = 0; advReady = 0; iface = ESP_GATT_IF_NONE; head = tail = 0;
     startedAt = millis(); lastSend = startedAt; seenEpoch = epoch.load();
     databases();
@@ -320,7 +336,7 @@ bool tapKey(uint8_t usage, uint8_t mods) { return enqueueTap(0, mods, usage); }
 bool tapMedia(uint16_t bits) { return enqueueTap(1, 0, bits); }
 void tick() {
     if (seenEpoch != epoch.load()) { seenEpoch = epoch.load(); head = tail = 0; }
-    if (!linkReady()) { head = tail = 0; return; }
+    if (!baseReady()) { head = tail = 0; return; }
     if (head != tail && millis() - lastSend >= 10 && send(queue[head])) {
         head = (head + 1) % QUEUE_LEN; lastSend = millis();
     }
