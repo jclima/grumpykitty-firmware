@@ -23,7 +23,7 @@ The firmware gets the same version at build time: `tools/gk_version.py` (a Platf
    git tag vX.Y.Z
    git push origin main vX.Y.Z
    ```
-4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
+4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, runs `tools/release/check_release.py` on the assembled site (manifest offsets, checksums, no part overlapping NVS, merged image NVS blank, version string in the firmware), and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
 
 ## Local dry run
 

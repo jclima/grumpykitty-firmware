@@ -68,6 +68,10 @@ jobs:
           </html>
           HTML
           touch _site/.nojekyll
+      - name: Verify flasher images
+        run: |
+          python3 -I tools/release/check_release.py --self-test
+          python3 -I tools/release/check_release.py --site _site --version-file VERSION --sums dist/SHA256SUMS
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

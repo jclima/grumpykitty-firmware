@@ -8,6 +8,7 @@
 
 ### Changed
 - Firmware version shown in Settings now comes from the `VERSION` file at build time (`tools/gk_version.py`).
+- The release workflow verifies the assembled flasher site (`tools/release/check_release.py`) before publishing.
 
 ## [0.1.0-grumpy] - 2026-11-02
 
