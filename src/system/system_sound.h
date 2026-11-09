@@ -10,5 +10,9 @@ void system_sound_play_button(void);
 /* Like play_button but ignores the key-click setting (volume 0 still mutes). For alarms. */
 void system_sound_play_alert(void);
 void system_sound_stop(void);
-void system_sound_suspend(void);
+/* Cancels the current sound and clears the queue, then releases the speaker
+ * bus.  Returns true only when the bus was released (or audio was never
+ * initialized).  If the playback task does not release the play lock within
+ * 1 s it returns false and the speaker stays up until that task finishes. */
+bool system_sound_suspend(void);
 bool system_sound_resume(void);

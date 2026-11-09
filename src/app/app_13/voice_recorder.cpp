@@ -30,8 +30,8 @@ constexpr int kDmaCount = 6;
 constexpr size_t kCapFrames = 512;
 const char* const kDir = "/recordings";
 
-// Capture buffer is tracked here so a force-deleted task's buffer can be reclaimed.
-int16_t* s_capBuf = nullptr;
+// Mooncake retains app instances; this pointer lets Launcher service a timed close.
+MOONCAKE::APPS::AppVoiceRecorder* s_voice_recorder = nullptr;
 
 void say(lgfx::LGFXBase& lcd, int x, int y, const char* s, uint16_t fg) {
     lcd.setFont(&fonts::efontCN_16); lcd.setTextDatum(textdatum_t::top_left);
@@ -43,6 +43,21 @@ namespace MOONCAKE::APPS {
 
 AppVoiceRecorder::AppVoiceRecorder(DEVICES* device) : _device(device) {
     setAppInfo().name = "Voice Recorder";
+    s_voice_recorder = this;
+}
+
+bool AppVoiceRecorder::closePending() {
+    return s_voice_recorder && s_voice_recorder->_closePending;
+}
+
+void AppVoiceRecorder::serviceDeferredClose(DEVICES*) {
+    if (!s_voice_recorder || !s_voice_recorder->_draining) return;
+    if (s_voice_recorder->_recording) return;
+    if (s_voice_recorder->_capActive.load(std::memory_order_acquire)) return;
+    s_voice_recorder->_micStop();
+    s_voice_recorder->_releaseRecordBuffers();
+    s_voice_recorder->_draining = false;
+    if (s_voice_recorder->_closePending) s_voice_recorder->_finishClose();
 }
 
 // ───────────────────────── lifecycle ─────────────────────────
@@ -59,7 +74,8 @@ void AppVoiceRecorder::onOpen() {
     _lastUi = 0; _shownSec = -1; _shownLevel = -1; _shownDropped = 0xFFFFFFFFu; _shownRec = false;
     _level = 0;
     _recording = false; _codecReady = false; _i2sReady = false;
-    _capTask = nullptr; _taskRun = false;
+    _capActive.store(false, std::memory_order_release); _taskRun.store(false, std::memory_order_release);
+    _closePending = false; _closing = false; _draining = false;
     _ring = nullptr; _stage = nullptr;
     _head = 0; _tail = 0; _dropped = 0; _peak = 0;
     _file = File();
@@ -77,10 +93,20 @@ void AppVoiceRecorder::onOpen() {
 }
 
 void AppVoiceRecorder::onClose() {
+    _closing = true;
     if (_recording) _stopRecording("", hp::COL_FG);
+    if (_draining && _capActive.load(std::memory_order_acquire)) {
+        _closePending = true;
+        return;
+    }
+    if (_closePending) return;
+    _finishClose();
+}
+
+void AppVoiceRecorder::_finishClose() {
     _playStop("", hp::COL_FG);
     if (_list) { heap_caps_free(_list); _list = nullptr; }
-    _taskRun = false;
+    _taskRun.store(false, std::memory_order_release);
     _micStop();                                  // defensive, idempotent
     _releaseRecordBuffers();
     if (!_busy && _device->speaker.isEnabled()) {
@@ -88,9 +114,9 @@ void AppVoiceRecorder::onClose() {
         _device->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
         _device->speaker.end();                  // resume() calls begin() without end()
     }
-    _device->Lcd.fillScreen(TFT_BLACK);
     if (!system_sound_resume())
         Serial.println("[VoiceRec] failed to restore system audio");
+    _closePending = false; _closing = false; _draining = false;
 }
 
 // ───────────────────────── UI ─────────────────────────
@@ -191,8 +217,9 @@ bool AppVoiceRecorder::_micStart() {
 }
 
 void AppVoiceRecorder::_micStop() {
+    if (_capActive.load(std::memory_order_acquire)) return;
     if (_codecReady) { _codec.stop(); _codec.end(); _codecReady = false; }
-    if (_i2sReady && !_capTask) {      // a live capture task may still be inside i2s_read
+    if (_i2sReady) {
         i2s_stop(I2S_NUM_1);
         i2s_driver_uninstall(I2S_NUM_1);
         _i2sReady = false;
@@ -202,19 +229,18 @@ void AppVoiceRecorder::_micStop() {
 void AppVoiceRecorder::_capEntry(void* arg) {
     auto* self = static_cast<AppVoiceRecorder*>(arg);
     self->_capLoop();
-    self->_capTask = nullptr;
     vTaskDelete(nullptr);
 }
 
 void AppVoiceRecorder::_capLoop() {
     constexpr size_t kBytes = kCapFrames * 2 * sizeof(int16_t);
     int16_t* buf = (int16_t*)heap_caps_malloc(kBytes, MALLOC_CAP_INTERNAL);
-    if (!buf) { _taskRun = false; return; }
-    s_capBuf = buf;
+    if (!buf) { _taskRun.store(false, std::memory_order_release); _capActive.store(false, std::memory_order_release); return; }
     int32_t dcAcc = 0;
-    while (_taskRun) {
+    while (_taskRun.load(std::memory_order_acquire)) {
         size_t got = 0;
         if (i2s_read(I2S_NUM_1, buf, kBytes, &got, pdMS_TO_TICKS(60)) != ESP_OK || got < 4) continue;
+        if (!_taskRun.load(std::memory_order_acquire)) break;
         const size_t n = got / (2 * sizeof(int16_t));
         uint16_t peak = 0;
         for (size_t i = 0; i < n; ++i) {
@@ -236,8 +262,8 @@ void AppVoiceRecorder::_capLoop() {
         for (size_t i = 0; i < n; ++i) _ring[(head + i) & kRingMask] = buf[i];
         _head.store(head + (uint32_t)n, std::memory_order_release);
     }
-    s_capBuf = nullptr;
     heap_caps_free(buf);
+    _capActive.store(false, std::memory_order_release);
 }
 
 // ───────────────────────── recording ─────────────────────────
@@ -270,7 +296,7 @@ bool AppVoiceRecorder::_startRecording() {
     // No up-front free-space check: SD_MMC.usedBytes() may scan the whole FAT
     // (seconds) and would freeze the UI/long-press-B. A full card is handled by
     // the write-error stop path in onRunning, and the file is capped at kMaxBytes.
-    if (_capTask) { _say("Mic busy", hp::COL_ERR); return false; }  // stuck capture task from a prior stop
+    if (_capActive.load(std::memory_order_acquire) || _closePending || _draining) { _say("Mic busy", hp::COL_ERR); return false; }
     if (!SD_MMC.exists(kDir) && !SD_MMC.mkdir(kDir)) { _say("Cannot create /recordings", hp::COL_ERR); return false; }
 
     _ring = (int16_t*)heap_caps_malloc(kRingSamples * sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -293,9 +319,10 @@ bool AppVoiceRecorder::_startRecording() {
 
     _head = 0; _tail = 0; _dropped = 0; _peak = 0; _level = 0;
     _dataBytes = 0; _wroteErr = false; _shownSec = -1;
-    _taskRun = true;
-    if (xTaskCreatePinnedToCore(_capEntry, "voice_cap", 4096, this, 2, &_capTask, 0) != pdPASS) {
-        _taskRun = false; _capTask = nullptr;
+    _taskRun.store(true, std::memory_order_release);
+    _capActive.store(true, std::memory_order_release);
+    if (xTaskCreatePinnedToCore(_capEntry, "voice_cap", 4096, this, 2, nullptr, 0) != pdPASS) {
+        _taskRun.store(false, std::memory_order_release); _capActive.store(false, std::memory_order_release);
         _file.close(); SD_MMC.remove(_path);
         _micStop(); _releaseRecordBuffers();
         _say("Capture task failed", hp::COL_ERR);
@@ -341,46 +368,54 @@ void AppVoiceRecorder::_pump(bool all) {
 
 void AppVoiceRecorder::_stopRecording(const char* why, uint16_t color, bool touchCard) {
     if (!_recording) return;
-    _taskRun = false;                                   // cooperative stop (i2s_read times out in 60 ms)
-    for (int i = 0; i < 100 && _capTask; ++i) vTaskDelay(pdMS_TO_TICKS(10));
-    if (_capTask) {
-        // Never vTaskDelete: it races the task's own exit (double free of s_capBuf)
-        // and could leave the I2S RX mutex held. Leak the task instead; _micStop()
-        // skips the I2S uninstall and the ring/stage buffers are kept while it lives.
-        Serial.println("[VoiceRec] capture task did not exit; leaking it (no delete)");
+    _taskRun.store(false, std::memory_order_release);  // cooperative stop (i2s_read times out in 60 ms)
+    for (int i = 0; i < 100 && _capActive.load(std::memory_order_acquire); ++i) vTaskDelay(pdMS_TO_TICKS(10));
+    const bool draining = _capActive.load(std::memory_order_acquire);
+    if (draining) {
+        Serial.println("[VoiceRec] capture task is still draining; deferring cleanup");
+        _draining = true;
+        if (_closing) _closePending = true;
     }
-    _micStop();
+
+    /* The worker only appends to the SPSC ring; it never touches the file.
+       Finalize the WAV once, then retain mic/I2S and buffers if it is still
+       draining so the worker can finish without use-after-free. */
     if (!touchCard) {
         /* Card is owned by USB MSC (usb_msc_enable already ended SD_MMC): no
            write/patch/remove. Dropping the File handle still runs fclose, which is
            harmless here because the VFS mount is gone and nothing is flushed to the card. */
         _file = File();
-        if (!_capTask) _releaseRecordBuffers();
-        _recording = false;
         if (why && why[0]) _say(why, color);
-        return;
+    } else {
+        _pump(true);                                    // drain what the task captured
+        bool ok = !_wroteErr;
+        if (_file) {
+            ok = _patchHeader() && ok;
+            _file.close();
+        }
+        const bool empty = (_dataBytes == 0);
+        if (empty) SD_MMC.remove(_path);
+        if (why && why[0]) _say(why, color);
+        else if (!ok) _say("SD write error", hp::COL_ERR);
+        else if (!empty) {
+            const char* slash = strrchr(_path, '/');
+            _say(slash ? slash + 1 : _path, hp::COL_FG);
+        }
     }
-    _pump(true);                                        // drain what the task captured
-    bool ok = !_wroteErr;
-    if (_file) {
-        ok = _patchHeader() && ok;
-        _file.close();
-    }
-    const bool empty = (_dataBytes == 0);
-    if (empty) SD_MMC.remove(_path);
-    if (!_capTask) _releaseRecordBuffers();
     _recording = false;
-    if (why && why[0]) _say(why, color);
-    else if (!ok) _say("SD write error", hp::COL_ERR);
-    else if (!empty) {
-        const char* slash = strrchr(_path, '/');
-        _say(slash ? slash + 1 : _path, hp::COL_FG);
+    if (!draining) {
+        _micStop();
+        _releaseRecordBuffers();
     }
 }
 
 // ───────────────────────── playback ─────────────────────────
 
 bool AppVoiceRecorder::_playStart() {
+    if (_capActive.load(std::memory_order_acquire) || _closePending || _draining) {
+        _drawListMsg("Mic busy", hp::COL_ERR);
+        return false;
+    }
     if (_sel < 0 || _sel >= _count) return false;
     char path[48];
     snprintf(path, sizeof(path), "%s/%s", kDir, _list[_sel].name);
@@ -715,7 +750,7 @@ void AppVoiceRecorder::onRunning() {
             _stopRecording("SD in USB mode", hp::COL_ERR, false);
         } else {
             _pump(false);
-            if (!_capTask) _stopRecording("Capture failed", hp::COL_ERR);  // task ended on its own (e.g. buffer alloc failed)
+            if (!_capActive.load(std::memory_order_acquire)) _stopRecording("Capture failed", hp::COL_ERR);  // task ended on its own (e.g. buffer alloc failed)
             else if (_wroteErr) _stopRecording("SD write error", hp::COL_ERR);
             else if (_dataBytes >= kMaxBytes) _stopRecording("30 min limit reached", hp::COL_WARN);
             else if (now - _lastPatch >= kPatchMs) {

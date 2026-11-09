@@ -157,8 +157,9 @@ void system_sound_play_button(void) { enqueue(SoundId::Button, 0); }
 void system_sound_play_alert(void) { enqueue(SoundId::Alert, 0); }
 void system_sound_stop(void) { enqueue(SoundId::Stop, 0); }
 
-void system_sound_suspend(void) {
-    if (!s_ready || s_suspended) return;
+bool system_sound_suspend(void) {
+    if (!s_ready) return true;
+    if (s_suspended) return s_sem_held;
     s_suspended = true;
     s_stop = true;
     if (s_queue) xQueueReset(s_queue);
@@ -166,10 +167,16 @@ void system_sound_suspend(void) {
     /* Take the play lock: waits for an in-flight play_mp3() (which sees s_stop)
      * to finish, and blocks any new one until resume(). Nothing playing -> immediate. */
     s_sem_held = (xSemaphoreTake(s_play_sem, pdMS_TO_TICKS(1000)) == pdTRUE);
+    if (!s_sem_held) {
+        /* Leave the speaker running until its playback task releases it. */
+        s_suspended = false;
+        return false;
+    }
 
     s_dev->speaker.setMute(true);
     s_dev->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
-    if (s_sem_held) s_dev->speaker.end();
+    s_dev->speaker.end();
+    return true;
 }
 
 bool system_sound_resume(void) {

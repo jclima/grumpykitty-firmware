@@ -28,6 +28,11 @@ public:
     void onRunning() override;
     void onClose() override;
 
+    /* Called from Launcher while the persistent app instance drains a timed
+       capture close after Mooncake has returned to the GUI. */
+    static void serviceDeferredClose(DEVICES* device);
+    static bool closePending();
+
 private:
     enum Idx { I_UP, I_DOWN, I_LEFT, I_RIGHT, I_A, I_B };
 
@@ -50,8 +55,11 @@ private:
     bool _recording = false;
     ES7210_Class _codec;
     bool _codecReady = false, _i2sReady = false;
-    TaskHandle_t _capTask = nullptr;
-    volatile bool _taskRun = false;
+    std::atomic<bool> _capActive{false};
+    std::atomic<bool> _taskRun{false};
+    bool _closePending = false;
+    bool _closing = false;
+    bool _draining = false;
     int16_t* _ring = nullptr;           // PSRAM, kRingSamples int16
     int16_t* _stage = nullptr;          // internal, kStageSamples int16
     std::atomic<uint32_t> _head{0}, _tail{0}, _dropped{0};
@@ -103,6 +111,7 @@ private:
     bool _patchHeader();
     bool _makePath();
     void _releaseRecordBuffers();
+    void _finishClose();
     static void _capEntry(void* arg);
     void _capLoop();
 };

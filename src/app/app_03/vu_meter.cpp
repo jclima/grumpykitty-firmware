@@ -85,7 +85,17 @@ void App03::onOpen()
 {
     /* ES7210 RX and ES8311 TX share MCLK/BCLK/WS pins. Give app03 exclusive
      * ownership before I2S1 changes the GPIO matrix. */
-    system_sound_suspend();
+    if (!system_sound_suspend()) {
+        /* Audio ownership is still held by the system sound task.  Do not
+         * touch I2S or the codec; onClose can safely call resume() and a
+         * later open will retry the handoff. */
+        _device->Lcd.fillScreen(TFT_BLACK);
+        _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
+        _device->Lcd.setTextFont(2);
+        _device->Lcd.drawCentreString("Audio busy", 160, 110);
+        _initState = InitState::Failed;
+        return;
+    }
 
     // If a previous crash left the I2S driver installed, uninstall it now.
     // esp_err_t is ignored — the call is a no-op when the driver is absent.
