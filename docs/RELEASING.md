@@ -23,7 +23,7 @@ The firmware gets the same version at build time: `tools/gk_version.py` (a Platf
    git tag vX.Y.Z
    git push origin main vX.Y.Z
    ```
-4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, runs `tools/release/check_release.py` on the assembled site (manifest offsets, checksums, no part overlapping NVS, merged image NVS blank, version string in the firmware), and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
+4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, runs `tools/release/check_release.py` on the assembled site (manifest offsets, checksums, the shipped partition table is exactly app0 `ota_0` at 0x10000 and app1 `ota_1` at 0x790000 with NVS at 0x9000 and otadata at 0xe000, firmware fits the smallest OTA slot, no part overlapping NVS, merged image NVS blank, version string in the firmware), and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
 
 ## Local dry run
 
@@ -32,6 +32,12 @@ make dist     # builds first (make build), then writes dist/ (git-ignored)
 ```
 
 `dist/` contains the merged image (flash at 0x0), versioned split images and `manifest.json`. The merged CLI image is for esptool clean installs only: it contains 0xFF over the settings/NVS area, so flashing it wipes saved settings. The browser manifest writes the split regions at their existing offsets, preserving the settings/NVS partition unless the user explicitly selects erase; schema migrations may still require an erase or a firmware-provided migration. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-merged.bin`.
+
+### Partition layout and size guard
+
+`partitions_16mb.csv` defines two OTA slots: `app0` (0x10000) and `app1` (0x790000), 0x780000 (7.5 MB) each, plus an unused `spiffs` reserve and `coredump`. NVS (0x9000) and otadata (0xe000) never move, so saved settings survive. PlatformIO's size check compares against the largest app partition only, so `tools/release/merge_bin.py` parses the built `partitions.bin`, fails if `firmware.bin` exceeds the smallest OTA slot, warns at 90% of it, and fails if NVS or otadata have moved; `check_release.py` repeats the table and size checks on the shipped files.
+
+A device cannot change its own partition table over the air. The first release with this table must be installed once through the browser flasher (Erase unticked, settings kept) or wired esptool; after that, the table is stable. If a flash is interrupted, re-enter Download Mode and flash again (the merged image is the recovery path if settings are expendable).
 
 ## Updating the vendored flasher library
 

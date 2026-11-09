@@ -6,18 +6,79 @@
 Usage: merge_bin.py [--build-dir .pio/build/esp32s3box] [--version X.Y.Z] [--out-dir dist]
 
 Offsets match the PlatformIO espressif32 upload layout and partitions_16mb.csv
-(nvs 0x9000, otadata 0xe000, app0 0x10000):
+(nvs 0x9000, otadata 0xe000, app0 0x10000, app1 0x790000):
   0x0 bootloader.bin, 0x8000 partitions.bin, 0xe000 boot_app0.bin, 0x10000 firmware.bin.
+Real slot, NVS and otadata bounds are read from the built partitions.bin, and
+firmware.bin must fit the smallest OTA app slot (PlatformIO's checkprogsize only
+compares against the largest app partition, so this is the real guard).
+
+partitions.bin binary format (ESP-IDF): consecutive 32-byte little-endian entries
+  magic u16 = 0x50AA, type u8, subtype u8, offset u32, size u32, label char[16], flags u32
+terminated by an MD5 entry (magic 0xEBEB) or an erased entry (0xFFFF).
+type 0 = app (subtype 0x10 ota_0, 0x11 ota_1, ...), type 1 = data (subtype 0 ota, 2 nvs).
 The merged image is for esptool clean installs only (it covers the NVS region
 with 0xFF, so flashing it wipes saved settings); it is not listed in the manifest.
 The split images update only these regions and preserve the settings/NVS partition.
 """
-import argparse, glob, hashlib, json, os, shutil, subprocess, sys
+import argparse, glob, hashlib, json, os, shutil, struct, subprocess, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HOME = os.path.expanduser("~")
 SECTOR = 0x1000
-NVS_START, NVS_END = 0x9000, 0xE000
+PART_MAGIC, MD5_MAGIC = 0x50AA, 0xEBEB
+TYPE_APP, TYPE_DATA = 0, 1
+SUB_OTA_0, SUB_OTA_1 = 0x10, 0x11
+SUB_DATA_OTA, SUB_DATA_NVS = 0, 2
+WARN_FRACTION = 0.90
+EXPECT_NVS = (0x9000, 0x5000)
+EXPECT_OTADATA_OFFSET = 0xE000
+
+
+def parse_partitions(path):
+    """Return a list of (label, type, subtype, offset, size) from partitions.bin."""
+    with open(path, "rb") as f:
+        data = f.read()
+    out = []
+    for i in range(0, len(data) - 31, 32):
+        entry = data[i:i + 32]
+        magic = struct.unpack("<H", entry[:2])[0]
+        if magic == MD5_MAGIC or magic == 0xFFFF:
+            break
+        if magic != PART_MAGIC:
+            sys.exit(f"{path}: bad partition entry magic {magic:#x} at {i:#x}")
+        ptype, subtype, offset, size = struct.unpack("<BBII", entry[2:12])
+        label = entry[12:28].split(b"\0")[0].decode("ascii", "replace")
+        out.append((label, ptype, subtype, offset, size))
+    return out
+
+
+def layout_bounds(parts):
+    """Validate NVS/otadata/OTA slots; return (nvs_start, nvs_end, smallest_slot_size)."""
+    def find(ptype, subtype):
+        return [p for p in parts if p[1] == ptype and p[2] == subtype]
+    nvs = find(TYPE_DATA, SUB_DATA_NVS)
+    if len(nvs) != 1 or (nvs[0][3], nvs[0][4]) != EXPECT_NVS:
+        sys.exit(f"partition table: NVS must be at {EXPECT_NVS[0]:#x} size {EXPECT_NVS[1]:#x}, got "
+                 f"{[(hex(p[3]), hex(p[4])) for p in nvs]}")
+    otadata = find(TYPE_DATA, SUB_DATA_OTA)
+    if len(otadata) != 1 or otadata[0][3] != EXPECT_OTADATA_OFFSET:
+        sys.exit(f"partition table: otadata must be at {EXPECT_OTADATA_OFFSET:#x}, got "
+                 f"{[hex(p[3]) for p in otadata]}")
+    slots = [p for p in parts if p[1] == TYPE_APP and p[2] in (SUB_OTA_0, SUB_OTA_1)]
+    if sorted(p[2] for p in slots) != [SUB_OTA_0, SUB_OTA_1]:
+        sys.exit("partition table: expected exactly one ota_0 and one ota_1 app slot")
+    return nvs[0][3], nvs[0][3] + nvs[0][4], min(p[4] for p in slots)
+
+
+def check_firmware_fits(fw_path, slot_size):
+    size = os.path.getsize(fw_path)
+    pct = 100.0 * size / slot_size
+    if size > slot_size:
+        sys.exit(f"firmware.bin {size} bytes exceeds smallest OTA slot {slot_size} bytes ({pct:.1f}%)")
+    if size >= WARN_FRACTION * slot_size:
+        print(f"WARNING: firmware.bin is {pct:.1f}% of the smallest OTA slot ({size}/{slot_size} bytes)",
+              file=sys.stderr)
+    return size, pct
 
 
 def find_boot_app0():
@@ -52,12 +113,12 @@ def rounded_range(offset, path):
     return offset, ((end + SECTOR - 1) // SECTOR) * SECTOR
 
 
-def validate_ranges(files):
+def validate_ranges(files, nvs_start, nvs_end):
     ranges = []
     for offset, path in sorted(files.items()):
         start, end = rounded_range(offset, path)
-        if start < NVS_END and end > NVS_START:
-            sys.exit(f"{os.path.basename(path)} write range {start:#x}-{end:#x} overlaps NVS {NVS_START:#x}-{NVS_END:#x}")
+        if start < nvs_end and end > nvs_start:
+            sys.exit(f"{os.path.basename(path)} write range {start:#x}-{end:#x} overlaps NVS {nvs_start:#x}-{nvs_end:#x}")
         ranges.append((start, end, path))
     for (_, left_end, left_path), (right_start, _, right_path) in zip(ranges, ranges[1:]):
         if left_end > right_start:
@@ -85,7 +146,10 @@ def main():
             sys.exit(f"missing {p}; build first (make build)")
         files[off] = p
     files[0xE000] = a.boot_app0 or find_boot_app0()
-    validate_ranges(files)
+    nvs_start, nvs_end, slot = layout_bounds(parse_partitions(files[0x8000]))
+    size, pct = check_firmware_fits(files[0x10000], slot)
+    print(f"firmware.bin {size} bytes = {pct:.1f}% of smallest OTA slot ({slot:#x})")
+    validate_ranges(files, nvs_start, nvs_end)
 
     os.makedirs(a.out_dir, exist_ok=True)
     merged_name = f"grumpykitty-{version}-merged.bin"

@@ -12,6 +12,11 @@ Checks (all must pass):
     0xe000 boot_app0, 0x10000 firmware, and new_install_prompt_erase is true
   * every manifest path exists in <site>/flash, is a plain same-origin file name,
     and its sha256 matches SHA256SUMS where listed
+  * the shipped partitions.bin (32-byte entries: magic 0xAA50 as bytes AA 50,
+    type, subtype, offset, size, label; ends at an 0xEBEB md5 or 0xFFFF entry)
+    has exactly app0 ota_0 at 0x10000 and app1 ota_1 at 0x790000 (both app
+    partitions, non-overlapping), NVS at 0x9000 size 0x5000 and otadata at 0xe000
+  * firmware.bin fits the smallest OTA app slot (warns at >=90%)
   * no part's sector-rounded write range overlaps the NVS partition, as parsed
     from the shipped partitions.bin (parts must also not overlap each other)
   * the merged image is all 0xFF across 0x9000-0xE000 (NVS region)
@@ -21,7 +26,9 @@ import argparse, hashlib, json, os, struct, subprocess, sys, tempfile
 
 SECTOR = 0x1000
 EXPECTED = {0x0: "bootloader", 0x8000: "partitions", 0xE000: "boot_app0", 0x10000: "firmware"}
-NVS_FALLBACK = (0x9000, 0xE000)
+APP0_OFFSET, APP1_OFFSET = 0x10000, 0x790000
+NVS_EXPECT = (0x9000, 0x5000)
+OTADATA_OFFSET = 0xE000
 
 
 class CheckError(Exception):
@@ -48,20 +55,49 @@ def read_sums(path):
     return sums
 
 
-def parse_nvs(partitions_bin):
-    """Return (start, end) of the first data/nvs entry in an ESP32 partition table."""
+def parse_table(partitions_bin):
+    """Return [(label, type, subtype, offset, size)] from an ESP32 partition table binary."""
     with open(partitions_bin, "rb") as f:
         data = f.read()
+    out = []
     for i in range(0, len(data) - 31, 32):
         entry = data[i:i + 32]
+        if entry[:2] in (b"\xeb\xeb", b"\xff\xff"):  # md5 / end marker
+            break
         if entry[:2] != b"\xaa\x50":
-            if entry == b"\xff" * 32 or entry[:2] == b"\xeb\xeb":  # end / md5 marker
-                break
-            continue
+            raise CheckError(f"{os.path.basename(partitions_bin)}: bad entry magic at {i:#x}")
         ptype, subtype, offset, size = struct.unpack("<BBII", entry[2:12])
-        if ptype == 1 and subtype == 2:  # data, nvs
-            return offset, offset + size
-    raise CheckError(f"{os.path.basename(partitions_bin)}: no nvs partition found")
+        label = entry[12:28].split(b"\0")[0].decode("ascii", "replace")
+        out.append((label, ptype, subtype, offset, size))
+    return out
+
+
+def check_table(partitions_bin):
+    """Validate the dual-slot layout; return (nvs_start, nvs_end, smallest_slot_size)."""
+    parts = parse_table(partitions_bin)
+    name = os.path.basename(partitions_bin)
+    nvs = [p for p in parts if p[1] == 1 and p[2] == 2]
+    if len(nvs) != 1:
+        raise CheckError(f"{name}: expected exactly one nvs partition, found {len(nvs)}")
+    if (nvs[0][3], nvs[0][4]) != NVS_EXPECT:
+        raise CheckError(f"{name}: nvs at {nvs[0][3]:#x} size {nvs[0][4]:#x}, "
+                         f"expected {NVS_EXPECT[0]:#x} size {NVS_EXPECT[1]:#x}")
+    otadata = [p for p in parts if p[1] == 1 and p[2] == 0]
+    if len(otadata) != 1 or otadata[0][3] != OTADATA_OFFSET:
+        raise CheckError(f"{name}: otadata must be a single partition at {OTADATA_OFFSET:#x}")
+    apps = [p for p in parts if p[1] == 0]
+    want = {"app0": (0x10, APP0_OFFSET), "app1": (0x11, APP1_OFFSET)}
+    if sorted(p[0] for p in apps) != sorted(want):
+        raise CheckError(f"{name}: expected exactly app partitions app0 and app1, "
+                         f"found {sorted(p[0] for p in apps)}")
+    for label, subtype, offset, size in [(p[0], p[2], p[3], p[4]) for p in apps]:
+        if (subtype, offset) != want[label]:
+            raise CheckError(f"{name}: {label} must be ota_{want[label][0] - 0x10} at {want[label][1]:#x}, "
+                             f"found subtype {subtype:#x} at {offset:#x}")
+    app0, app1 = sorted(apps, key=lambda p: p[3])
+    if app0[3] + app0[4] > app1[3]:
+        raise CheckError(f"{name}: app0 overlaps app1")
+    return nvs[0][3], nvs[0][3] + nvs[0][4], min(app0[4], app1[4])
 
 
 def check(site, version, sums_path=None):
@@ -106,7 +142,13 @@ def check(site, version, sums_path=None):
             if os.path.isfile(path) and sums[name] != sha256(path):
                 raise CheckError(f"{name}: sha256 differs from SHA256SUMS")
 
-    nvs_start, nvs_end = parse_nvs(files[0x8000])
+    nvs_start, nvs_end, slot = check_table(files[0x8000])
+    fw_size = os.path.getsize(files[0x10000])
+    if fw_size > slot:
+        raise CheckError(f"firmware.bin {fw_size} bytes exceeds smallest OTA slot {slot} bytes")
+    if fw_size >= 0.9 * slot:
+        print(f"check_release: WARNING: firmware.bin is {100.0 * fw_size / slot:.1f}% of the OTA slot",
+              file=sys.stderr)
     ranges = []
     for off, path in sorted(files.items()):
         end = off + os.path.getsize(path)
@@ -139,11 +181,14 @@ def _entry(ptype, subtype, offset, size, name):
     return b"\xaa\x50" + struct.pack("<BBII", ptype, subtype, offset, size) + name.ljust(16, b"\0") + b"\0" * 4
 
 
-def _make_site(root, version, fw_size=0x2000, boot_size=0x5000, nvs_clean=True):
+def _make_site(root, version, fw_size=0x2000, boot_size=0x5000, nvs_clean=True,
+               slot_size=0x780000, nvs_offset=0x9000, with_app1=True):
     flash = os.path.join(root, "flash")
     os.makedirs(flash)
-    table = _entry(1, 2, 0x9000, 0x5000, b"nvs") + _entry(1, 0, 0xE000, 0x2000, b"otadata") \
-        + _entry(0, 0x10, 0x10000, 0xC80000, b"app0")
+    table = _entry(1, 2, nvs_offset, 0x5000, b"nvs") + _entry(1, 0, 0xE000, 0x2000, b"otadata") \
+        + _entry(0, 0x10, APP0_OFFSET, slot_size, b"app0")
+    if with_app1:
+        table += _entry(0, 0x11, APP1_OFFSET, slot_size, b"app1")
     blobs = {
         "bootloader": b"\x11" * boot_size,
         "partitions": table.ljust(0xC00, b"\xff"),
@@ -173,6 +218,9 @@ def self_test():
         ("pass", {}, None),
         ("nvs-overlap (bootloader reaches 0x9000)", {"boot_size": 0x9100}, "overlaps NVS"),
         ("merged image NVS not blank", {"nvs_clean": False}, "not all 0xFF"),
+        ("firmware larger than OTA slot", {"slot_size": 0x1000, "fw_size": 0x2000}, "exceeds smallest OTA slot"),
+        ("missing app1", {"with_app1": False}, "app0 and app1"),
+        ("altered NVS offset", {"nvs_offset": 0xA000}, "nvs at 0xa000"),
     ]
     failures = 0
     for label, kwargs, expect in cases:

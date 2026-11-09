@@ -27,6 +27,8 @@ Always power the device **off** first and enter Download Mode (below). Flashing 
 
 The browser flasher writes only the bootloader, partition table, `boot_app0` and firmware regions, so saved settings are kept as long as you leave **Erase device** unticked. A future settings-format change may still need an erase or a migration. The merged image in (b) wipes saved settings, because it also overwrites the settings area with blank data.
 
+**Partition table change (dual OTA slots).** This release replaces the single 12.5 MB app partition with two 7.5 MB slots (`app0` and `app1`), preparing for over-the-air updates in a later release. The firmware is about 5.8 MB, so it fits a slot with room to spare. Moving a device from the old table needs this one release flashed once more by the browser flasher or wired (esptool); no full erase is needed, and saved settings stay because the settings (NVS) partition does not move, so leave **Erase device** unticked. A device cannot change its own partition table over the air, so this step can never be done remotely.
+
 **b) With esptool (clean install; wipes settings).** Download `grumpykitty-X.Y.Z-merged.bin` from [Releases](https://github.com/jclima/grumpykitty-firmware/releases):
 
 ```
