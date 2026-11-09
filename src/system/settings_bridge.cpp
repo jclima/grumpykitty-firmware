@@ -108,19 +108,23 @@ void settings_flush(void)
 {
     if (!s_dirty) return;
 
-    if (s_dirty & D_BRIGHT)     persist_set_int(PKEY_BRIGHTNESS,   s_brightness);
-    if (s_dirty & D_DISP_TO)    persist_set_int(PKEY_DISP_TIMEOUT, s_disp_timeout);
-    if (s_dirty & D_VOL)        persist_set_int(PKEY_VOLUME,       s_volume);
-    if (s_dirty & D_KEY_SND)    persist_set_int(PKEY_KEY_SOUND,    s_key_sound ? 1 : 0);
-    if (s_dirty & D_LED_BRIGHT) persist_set_int(PKEY_LED_BRIGHT,   s_led);
-    if (s_dirty & D_LED_COLOR)  persist_set_u32(PKEY_LED_COLOR,    s_led_color);
-    if (s_dirty & D_LED_FX)     persist_set_int(PKEY_LED_EFFECT,   s_led_effect);
-    if (s_dirty & D_WIFI_EN)    persist_set_int(PKEY_WIFI_EN,      s_wifi_en ? 1 : 0);
-    if (s_dirty & D_BLE_NAME)   persist_set_str(PKEY_BLE_NAME,     s_ble_name);
-    if (s_dirty & D_BLE_EN)     persist_set_int(PKEY_BLE_EN,       s_ble_en ? 1 : 0);
+    const uint32_t attempted = s_dirty;
+#define FLUSH_ONE(bit, ok) do { if ((attempted & (bit)) && (ok)) s_dirty &= ~(bit); } while (0)
+    FLUSH_ONE(D_BRIGHT,     persist_set_int(PKEY_BRIGHTNESS,   s_brightness));
+    FLUSH_ONE(D_DISP_TO,    persist_set_int(PKEY_DISP_TIMEOUT, s_disp_timeout));
+    FLUSH_ONE(D_VOL,        persist_set_int(PKEY_VOLUME,       s_volume));
+    FLUSH_ONE(D_KEY_SND,    persist_set_int(PKEY_KEY_SOUND,    s_key_sound ? 1 : 0));
+    FLUSH_ONE(D_LED_BRIGHT, persist_set_int(PKEY_LED_BRIGHT,   s_led));
+    FLUSH_ONE(D_LED_COLOR,  persist_set_u32(PKEY_LED_COLOR,    s_led_color));
+    FLUSH_ONE(D_LED_FX,     persist_set_int(PKEY_LED_EFFECT,   s_led_effect));
+    FLUSH_ONE(D_WIFI_EN,    persist_set_int(PKEY_WIFI_EN,      s_wifi_en ? 1 : 0));
+    FLUSH_ONE(D_BLE_NAME,   persist_set_str(PKEY_BLE_NAME,     s_ble_name));
+    FLUSH_ONE(D_BLE_EN,     persist_set_int(PKEY_BLE_EN,       s_ble_en ? 1 : 0));
+#undef FLUSH_ONE
 
-    Serial.printf("[settings] Flushed dirty=0x%03lX\n", (unsigned long)s_dirty);
-    s_dirty = 0;
+    Serial.printf("[settings] Flushed dirty=0x%03lX remaining=0x%03lX\n",
+                  (unsigned long)attempted, (unsigned long)s_dirty);
+    if (s_dirty) s_last_change = millis();
 }
 
 void settings_tick(void)
