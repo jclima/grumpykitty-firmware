@@ -56,7 +56,13 @@ void SDMMC_Class::end()
 uint64_t SDMMC_Class::cardSize()   const { return _mounted ? SD_MMC.cardSize()   : 0; }
 uint64_t SDMMC_Class::totalBytes() const { return _mounted ? SD_MMC.totalBytes() : 0; }
 uint64_t SDMMC_Class::usedBytes()  const { return _mounted ? SD_MMC.usedBytes()  : 0; }
-uint64_t SDMMC_Class::freeBytes()  const { return _mounted ? (totalBytes() - usedBytes()) : 0; }
+uint64_t SDMMC_Class::freeBytes()  const
+{
+    if (!_mounted) return 0;
+    const uint64_t total = totalBytes();
+    const uint64_t used = usedBytes();
+    return used <= total ? total - used : 0;
+}
 
 /* ── Active hot-plug probe ────────────────────────────────────── */
 
@@ -67,9 +73,8 @@ bool SDMMC_Class::isPresent()
     bool ok = (bool)f;
     if (f) f.close();
     if (!ok) {
-        /* Card was removed; update internal state */
-        _mounted = false;
-        _type    = CardType::NONE;
+        /* Card was removed; release the stale mount and reset state. */
+        end();
     }
     return ok;
 }
@@ -91,8 +96,8 @@ const char* SDMMC_Class::cardTypeStr() const
 
 bool SDMMC_Class::_tryMount(uint32_t freq_khz, bool mode4bit)
 {
-    /* SD_MMC.begin(path, mode1bit, format_if_fail, max_freq_hz) */
-    bool ok = SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz * 1000UL);
+    /* Arduino-ESP32 2.0.6 takes the SDMMC frequency in kHz. */
+    bool ok = SD_MMC.begin("/sdcard", !mode4bit, false, freq_khz);
     if (!ok) return false;
 
     uint8_t ct = SD_MMC.cardType();

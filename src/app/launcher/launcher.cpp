@@ -220,7 +220,7 @@ static void _bat_toast_dismiss(lv_timer_t * t)
 static bool s_toast_pending = false;
 static int  s_toast_pct     = 0;
 
-static void _show_low_bat_toast(int pct)
+static void _show_toast(const char * msg, uint32_t bg)
 {
     lv_obj_t * scr = lv_scr_act();
     if (!scr) return;
@@ -230,15 +230,13 @@ static void _show_low_bat_toast(int pct)
     lv_obj_set_size(toast, 286, 36);
     lv_obj_set_pos(toast, 17, 6);
     lv_obj_clear_flag(toast, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(toast,     lv_color_hex(0xCC3300), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(toast,     lv_color_hex(bg),       LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(toast,       LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(toast, 0,                      LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(toast,       8,                      LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_shadow_width(toast, 0,                      LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t * lbl = lv_label_create(toast);
-    char msg[48];
-    lv_snprintf(msg, sizeof(msg), "Low battery: %d%%  — please charge", pct);
     lv_label_set_text(lbl, msg);
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(lbl,  &ui_font_name_14,       0);
@@ -247,6 +245,13 @@ static void _show_low_bat_toast(int pct)
     lv_timer_t * t = lv_timer_create(_bat_toast_dismiss, 4000, toast);
     if (!t) { lv_obj_del(toast); return; }
     lv_timer_set_repeat_count(t, 1);
+}
+
+static void _show_low_bat_toast(int pct)
+{
+    char msg[48];
+    lv_snprintf(msg, sizeof(msg), "Low battery: %d%%  — please charge", pct);
+    _show_toast(msg, 0xCC3300);
 }
 
 /* Called once when battery first drops to POWER_WARN_BAT_PCT (while discharging).
@@ -332,6 +337,11 @@ void Launcher::onCreate()
 
 void Launcher::onLoop()
 {
+    /* A timed voice-recorder close can outlive Mooncake's app state.  Service
+       the persistent recorder instance before allowing any new app to claim
+       the shared audio pins. */
+    MOONCAKE::APPS::AppVoiceRecorder::serviceDeferredClose(_device);
+
     /* Flush dirty settings to NVS after debounce — ~0 cost when clean */
     settings_tick();
 
@@ -658,6 +668,17 @@ void Launcher::updateStatusBar()
 void Launcher::handleAppSelection()
 {
     const char* selId = ui_apps_menu_get_selected_id();
+    if (MOONCAKE::APPS::AppVoiceRecorder::closePending()) {
+        /* Selection is kept so the launch proceeds once the close finishes;
+         * tell the user why nothing happens (at most every 3 s). */
+        static uint32_t s_last_closing_toast = 0;
+        const uint32_t now = millis();
+        if (selId && selId[0] != '\0' && (s_last_closing_toast == 0 || now - s_last_closing_toast > 3000)) {
+            s_last_closing_toast = now;
+            _show_toast("Previous app still closing", 0x555555);
+        }
+        return;
+    }
     if (!selId || selId[0] == '\0') return;
 
     Serial.printf("[Launcher] Selected: %s\n", selId);
@@ -843,17 +864,25 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     if (cur == ui_usb_msc) {
         if (a) {
             if (usb_msc_is_active()) {
-                usb_manager_release(USB_MODE_MSC);
-                if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "Ejected - safe to unplug");
-                Serial.println("[Launcher] MSC ejected via A");
+                int ok = usb_manager_release(USB_MODE_MSC);
+                if (ok) {
+                    if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "USB storage detached - eject host first");
+                    Serial.println("[Launcher] MSC ejected via A");
+                } else if (ui_usb_msc_label) {
+                    lv_label_set_text(ui_usb_msc_label, "disconnecting - press A/B to retry");
+                }
             } else {
                 if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "Already ejected");
             }
             return;
         }
         if (b) {
-            usb_manager_release(USB_MODE_MSC);
-            _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init);
+            int ok = usb_manager_release(USB_MODE_MSC);
+            if (ok) {
+                _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init);
+            } else if (ui_usb_msc_label) {
+                lv_label_set_text(ui_usb_msc_label, "disconnecting - press A/B to retry");
+            }
             return;
         }
     }

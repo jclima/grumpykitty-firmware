@@ -127,7 +127,7 @@ static lv_fs_res_t fs_write(lv_fs_drv_t * drv, void * file_p, const void * buf, 
     if (!file || !(*file)) return LV_FS_RES_UNKNOWN;
     
     *bw = file->write((const uint8_t*)buf, btw);
-    return LV_FS_RES_OK;
+    return *bw == btw ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
 }
 
 /**
@@ -143,8 +143,7 @@ static lv_fs_res_t fs_seek(lv_fs_drv_t * drv, void * file_p, uint32_t pos, lv_fs
     if (whence == LV_FS_SEEK_CUR) mode = SeekCur;
     else if (whence == LV_FS_SEEK_END) mode = SeekEnd;
     
-    file->seek(pos, mode);
-    return LV_FS_RES_OK;
+    return file->seek(pos, mode) ? LV_FS_RES_OK : LV_FS_RES_FS_ERR;
 }
 
 /**

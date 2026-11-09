@@ -34,6 +34,12 @@ void PCA9557_Class::begin(int address, I2C_Class *bus) {
 }
 
 bool PCA9557_Class::pinMode(int pin, int mode) {
+    if (!_wire) {
+        DEBUG_PRINTELN("PCA9557_Class I2C bus not initialized");
+        return false;
+    }
+    I2C_Class::LockGuard guard(_wire);
+
     uint8_t mode_reg_value = 0;
     CHECK_FAIL_AND_RETURN(this->read_register(CONFIGURATION_REGISTER, &mode_reg_value));
     if (mode == INPUT) {
@@ -51,6 +57,12 @@ bool PCA9557_Class::pinMode(int pin, int mode) {
 }
 
 bool PCA9557_Class::digitalWrite(int pin, int value) {
+    if (!_wire) {
+        DEBUG_PRINTELN("PCA9557_Class I2C bus not initialized");
+        return false;
+    }
+    I2C_Class::LockGuard guard(_wire);
+
     uint8_t output_reg_value = 0;
     CHECK_FAIL_AND_RETURN(this->read_register(OUTPUT_PORT_REGISTER, &output_reg_value));
     bitWrite(output_reg_value, pin, value == HIGH ? 1 : 0);
@@ -74,8 +86,7 @@ bool PCA9557_Class::read_register(uint8_t reg, uint8_t *value) {
         return false;
     }
     
-    *value = _wire->readRegister8(this->_addr, reg, 400000);
-    return true;
+    return _wire->readRegister(this->_addr, reg, value, 1, 400000);
 }
 
 bool PCA9557_Class::write_register(uint8_t reg, uint8_t value) {

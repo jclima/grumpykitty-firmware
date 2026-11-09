@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- VU Meter now enters only after system audio releases the shared bus; the handoff cancels the current system sound, and if the bus cannot be released in time the app is refused with an actionable error.
+- USB storage teardown keeps SD ownership until pending callbacks finish; Voice Recorder drains capture safely.
+- Wi-Fi scan cancellation and selection are serialized; saved settings retries and credential migration are robust.
+- BSP/LVGL filesystem errors are surfaced safely instead of corrupting state; the SD mount frequency was passed to the driver 1000x too high (kHz scaled to Hz for a kHz API) and is corrected.
+
 ## [0.1.1-grumpy] - 2026-11-08
 
 ### Fixed
