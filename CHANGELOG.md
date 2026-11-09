@@ -6,6 +6,9 @@
 - Release packaging now publishes split web-flasher images that preserve NVS/settings during normal updates.
 - The web flasher no longer claims settings survive an update from stock MeowKit firmware (untested); the merged image is documented as a settings-wiping clean install.
 
+### Changed
+- Firmware version shown in Settings now comes from the `VERSION` file at build time (`tools/gk_version.py`).
+
 ## [0.1.0-grumpy] - 2026-11-02
 
 ### Added

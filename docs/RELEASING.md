@@ -12,7 +12,7 @@
 
 The single source of truth is the `VERSION` file at the repo root (plain `X.Y.Z` or `X.Y.Z-suffix`, for example `0.1.0-grumpy`; no leading `v`). The release workflow takes the version from the tag (`vX.Y.Z` -> `X.Y.Z`) and fails early if it differs from `VERSION`, so keep the two equal.
 
-Follow-up (not done yet): the version string compiled into the firmware (`platformio.ini` header, About dialog, serial banner) is still hand-written. Feed it from `VERSION` at build time, for example in `tools/embed_gif.py` or a new pre-script emitting `-DGK_VERSION`.
+The firmware gets the same version at build time: `tools/gk_version.py` (a PlatformIO pre-script) reads `VERSION` and defines `GK_VERSION`, and `src/bsp/config.h` derives `FIRMWARE_VERSION` (`"v" GK_VERSION`, shown in Settings) from it. Do not hand-edit version strings elsewhere.
 
 ## Steps
 

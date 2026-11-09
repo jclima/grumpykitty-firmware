@@ -14,7 +14,10 @@
  *  Project Meta
  * ═══════════════════════════════════════════════════════════════ */
 #define PROJECT_NAME                "GrumpyKitty"
-#define FIRMWARE_VERSION            "v1.0.3"
+#ifndef GK_VERSION
+#error "GK_VERSION is defined from the VERSION file by tools/gk_version.py (build with PlatformIO)"
+#endif
+#define FIRMWARE_VERSION            "v" GK_VERSION   /* string literal, e.g. "v0.1.0-grumpy" */
 
 /* ═══════════════════════════════════════════════════════════════
  *  Hardware Board Test (BBT) — set 1 to enable, 0 to disable
