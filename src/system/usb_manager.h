@@ -29,7 +29,7 @@ int  usb_manager_request(usb_mode_t mode);
 
 /** Release ownership of a mode (no-op if mode is not the active one).
  *  Equivalent to usb_manager_request(USB_MODE_NONE). */
-void usb_manager_release(usb_mode_t mode);
+int  usb_manager_release(usb_mode_t mode);
 
 /** Return the currently active mode. */
 usb_mode_t usb_manager_get_active(void);

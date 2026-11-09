@@ -42,34 +42,49 @@ extern "C" {
  * time, before USB.begin() — so MSC is included in the composite descriptor. */
 static USBMSC                 s_msc;
 static std::atomic<sdmmc_card_t *> s_card{nullptr};
+/* Only the firmware/main loop accesses this after s_card is exchanged. */
+static sdmmc_card_t *         s_detached_card = nullptr;
 static std::atomic<int>       s_inflight{0};   /* callbacks currently using s_card */
-static volatile int           s_running = 0;
-static volatile unsigned long s_bytes   = 0;
+static std::atomic<int>       s_running{0};
+static std::atomic<int>       s_draining{0};
+static std::atomic<unsigned long> s_bytes{0};
 
 /* ── Sector callbacks — prefixed to avoid USBMSC.h typedef-name clash ── */
 
-static int32_t _msc_read_cb(uint32_t lba, uint32_t /*offset*/,
+static bool _msc_range_ok(const sdmmc_card_t * card, uint32_t lba,
+                          uint32_t offset, uint32_t bufsize)
+{
+    const uint32_t sector = card->csd.sector_size;
+    const uint32_t count = card->csd.capacity;
+    if (!sector || offset != 0 || !bufsize || (bufsize % sector) != 0 || lba >= count)
+        return false;
+    return (bufsize / sector) <= (count - lba);
+}
+
+static int32_t _msc_read_cb(uint32_t lba, uint32_t offset,
                               void * buf, uint32_t bufsize)
 {
     s_inflight.fetch_add(1);
     sdmmc_card_t * card = s_card.load();
     int32_t ret = -1;
-    if (card && sdmmc_read_sectors(card, buf, lba, bufsize / 512) == ESP_OK) {
-        s_bytes += bufsize;
+    if (card && _msc_range_ok(card, lba, offset, bufsize) &&
+        sdmmc_read_sectors(card, buf, lba, bufsize / card->csd.sector_size) == ESP_OK) {
+        s_bytes.fetch_add(bufsize);
         ret = (int32_t)bufsize;
     }
     s_inflight.fetch_sub(1);
     return ret;
 }
 
-static int32_t _msc_write_cb(uint32_t lba, uint32_t /*offset*/,
+static int32_t _msc_write_cb(uint32_t lba, uint32_t offset,
                                uint8_t * buf, uint32_t bufsize)
 {
     s_inflight.fetch_add(1);
     sdmmc_card_t * card = s_card.load();
     int32_t ret = -1;
-    if (card && sdmmc_write_sectors(card, buf, lba, bufsize / 512) == ESP_OK) {
-        s_bytes += bufsize;
+    if (card && _msc_range_ok(card, lba, offset, bufsize) &&
+        sdmmc_write_sectors(card, buf, lba, bufsize / card->csd.sector_size) == ESP_OK) {
+        s_bytes.fetch_add(bufsize);
         ret = (int32_t)bufsize;
     }
     s_inflight.fetch_sub(1);
@@ -86,10 +101,11 @@ static bool _msc_startstop_cb(uint8_t /*pwr*/, bool /*start*/, bool load_eject)
 
 int usb_msc_enable(void)
 {
-    if (s_running) return 1;
+    if (s_draining.load()) return 0;
+    if (s_running.load()) return 1;
 
     sdmmc_card_t * card = nullptr;
-    s_bytes = 0;
+    s_bytes.store(0);
 
     /* 1. Dismount FAT-FS — release exclusive SDMMC bus ownership */
     SD_MMC.end();
@@ -128,6 +144,11 @@ int usb_msc_enable(void)
         sdmmc_host_deinit();
         goto fail_remount;
     }
+    if (!card->csd.sector_size || card->csd.sector_size > UINT16_MAX) {
+        free(card);
+        sdmmc_host_deinit();
+        goto fail_remount;
+    }
     s_card.store(card);
 
     /* 3. Wire callbacks, set LUN geometry, expose media to host.
@@ -139,7 +160,6 @@ int usb_msc_enable(void)
     s_msc.onRead(_msc_read_cb);
     s_msc.onWrite(_msc_write_cb);
     s_msc.onStartStop(_msc_startstop_cb);
-    s_msc.mediaPresent(true);
     if (!s_msc.begin((uint32_t)card->csd.capacity,
                      (uint16_t)card->csd.sector_size)) {
         Serial.println("[MSC] USBMSC.begin() failed");
@@ -148,8 +168,9 @@ int usb_msc_enable(void)
         sdmmc_host_deinit();
         goto fail_remount;
     }
+    s_msc.mediaPresent(true);
 
-    s_running = 1;
+    s_running.store(1);
     Serial.printf("[MSC] enabled — %lu sectors × %u B\n",
                   (unsigned long)card->csd.capacity,
                   (unsigned)card->csd.sector_size);
@@ -161,32 +182,32 @@ fail_remount:
     return 0;
 }
 
-void usb_msc_disable(void)
+int usb_msc_disable(void)
 {
-    if (!s_running) return;
+    if (!s_running.load() && !s_draining.load()) return 1;
 
-    /* Signal host: media removed (host unmounts the drive) */
-    s_msc.mediaPresent(false);
-    s_msc.end();            /* clear callbacks + block info */
+    if (!s_draining.exchange(1)) {
+        /* Signal host: media removed (host unmounts the drive). */
+        s_msc.mediaPresent(false);
+        s_msc.end();            /* clear callbacks + block info */
 
-    /* Stop new callbacks from touching the card, then wait (bounded) for any
-     * in-flight TinyUSB read/write to finish before tearing it down. */
-    sdmmc_card_t * card = s_card.exchange(nullptr);
-    {
-        uint32_t t0 = millis();
-        while (s_inflight.load() > 0 && (millis() - t0) < 500)
-            delay(1);
+        /* Stop new callbacks from touching the card. Keep the detached pointer
+         * until every callback has left, even if this bounded wait expires. */
+        s_detached_card = s_card.exchange(nullptr);
     }
-    const bool busy = s_inflight.load() > 0;
-    if (busy)
-        Serial.println("[MSC] warn: callbacks still in flight; leaking card/host (no deinit)");
-
-    /* Release raw SDMMC resources (skipped when a callback may still use them) */
-    if (card && !busy) {
-        sdmmc_host_deinit();
-        free(card);
+    uint32_t t0 = millis();
+    while (s_inflight.load() > 0 && (millis() - t0) < 500) delay(1);
+    if (s_inflight.load() > 0) {
+        Serial.println("[MSC] callbacks still draining; retry eject (MSC remains owned)");
+        return 0;
     }
-    s_running = 0;
+
+    sdmmc_card_t * card = s_detached_card;
+    s_detached_card = nullptr;
+    sdmmc_host_deinit();
+    if (card) free(card);
+    s_draining.store(0);
+    s_running.store(0);
 
     /* Remount FAT-FS for the rest of the firmware */
     SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
@@ -195,14 +216,17 @@ void usb_msc_disable(void)
     } else {
         Serial.println("[MSC] FS remounted");
     }
+    return 1;
 }
 
 int usb_msc_is_active(void)
 {
-    return s_running;
+    return s_running.load();
 }
+
+int usb_msc_is_draining(void) { return s_draining.load(); }
 
 unsigned long usb_msc_bytes_transferred(void)
 {
-    return s_bytes;
+    return s_bytes.load();
 }

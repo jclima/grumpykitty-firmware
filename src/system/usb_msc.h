@@ -18,11 +18,15 @@ extern "C" {
  *  Returns 1 on success, 0 on failure (FAT-FS is remounted on failure). */
 int  usb_msc_enable(void);
 
-/** Stop USB MSC — detach from host and remount SD FAT-FS. */
-void usb_msc_disable(void);
+/** Stop USB MSC — detach from host and remount SD FAT-FS.
+ * Returns 1 when teardown completed, 0 while callbacks are still draining. */
+int  usb_msc_disable(void);
 
 /** Returns 1 while MSC session is active (between enable and disable). */
 int  usb_msc_is_active(void);
+
+/** Returns 1 while teardown is waiting for a detached callback to finish. */
+int  usb_msc_is_draining(void);
 
 /** Cumulative bytes transferred (read + write) since last enable(). */
 unsigned long usb_msc_bytes_transferred(void);

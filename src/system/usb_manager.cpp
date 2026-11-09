@@ -9,12 +9,12 @@
 
 static usb_mode_t s_active = USB_MODE_NONE;
 
-static void _teardown(usb_mode_t mode)
+static int _teardown(usb_mode_t mode)
 {
     switch (mode) {
-        case USB_MODE_MSC: usb_msc_disable(); break;
-        case USB_MODE_HID: usb_hid_disable(); break;
-        default: break;
+        case USB_MODE_MSC: return usb_msc_disable();
+        case USB_MODE_HID: usb_hid_disable(); return 1;
+        default: return 1;
     }
 }
 
@@ -38,7 +38,10 @@ int usb_manager_request(usb_mode_t mode)
     delay(20);
 
     usb_mode_t prev = s_active;
-    _teardown(prev);
+    if (!_teardown(prev)) {
+        Serial.println("[USB_MGR] teardown pending; retaining current mode");
+        return 0;
+    }
     s_active = USB_MODE_NONE;
 
     int ok = _bring_up(mode);
@@ -48,10 +51,10 @@ int usb_manager_request(usb_mode_t mode)
     return ok;
 }
 
-void usb_manager_release(usb_mode_t mode)
+int usb_manager_release(usb_mode_t mode)
 {
-    if (s_active != mode) return;
-    usb_manager_request(USB_MODE_NONE);
+    if (s_active != mode) return 1;
+    return usb_manager_request(USB_MODE_NONE);
 }
 
 usb_mode_t usb_manager_get_active(void)

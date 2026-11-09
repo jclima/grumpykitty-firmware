@@ -24,6 +24,10 @@ static void _msc_status_cb(lv_timer_t * t)
     (void)t;
     if(!ui_usb_msc_label) return;
 
+    if(usb_msc_is_draining()) {
+        lv_label_set_text(ui_usb_msc_label, "disconnecting — press A/B to retry");
+        return;
+    }
     if(!usb_msc_is_active()) {
         lv_label_set_text(ui_usb_msc_label, "ready — eject before removing");
         return;
