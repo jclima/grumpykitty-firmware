@@ -79,6 +79,9 @@ bool ui_wifi_bridge_is_scanning(void);
  *  before a scan is triggered (-2). */
 bool ui_wifi_bridge_scan_complete(void);
 
+/** True while the bridge owns the WiFi radio for a scan or queued action. */
+bool ui_wifi_bridge_radio_busy(void);
+
 /**
  * Get details for AP at scan index i.
  * Returns false if i is out of range.

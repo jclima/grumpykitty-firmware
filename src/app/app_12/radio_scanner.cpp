@@ -6,6 +6,7 @@
 #include "../app_09/infrared_file_utils.h"
 #include "../../system/bluetooth_manager.h"
 #include "../../system/settings_bridge.h"
+#include "../../ui/ui_wifi_bridge.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
@@ -139,7 +140,14 @@ void AppRadioScanner::onOpen() {
 }
 
 void AppRadioScanner::_stopWifiScan() {
-    if (_wifi_scanning) esp_wifi_scan_stop();
+    if (ui_wifi_bridge_radio_busy()) {
+        /* The bridge may have taken ownership since our last tick. Never stop
+         * or delete a scan whose result buffer is not ours. */
+        _wifi_scanning = false;
+        return;
+    }
+    if (!_wifi_scanning) return;
+    esp_wifi_scan_stop();
     _wifi_scanning = false;
     WiFi.scanDelete();
 }
@@ -183,6 +191,13 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
     }
     if (_state == ST_WIFI_OFF) { _state = ST_SCAN; _next_scan = 0; _dirty = true; }
     if (_wifi_scanning) {
+        if (ui_wifi_bridge_radio_busy()) {
+            _wifi_scanning = false;
+            _state = ST_BUSY;
+            _next_scan = now + WIFI_BUSY_RETRY_MS;
+            _dirty = true;
+            return;
+        }
         const int n = WiFi.scanComplete();
         if (n == WIFI_SCAN_RUNNING) return;
         _wifi_scanning = false;
@@ -213,6 +228,14 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
         return;
     }
     if (_paused || static_cast<int32_t>(now - _next_scan) < 0) return;
+    /* The UI bridge owns scan buffers and radio actions while active. Wait for
+     * it to finish rather than starting an unrelated Arduino scan. */
+    if (ui_wifi_bridge_radio_busy()) {
+        _state = ST_BUSY;
+        _next_scan = now + WIFI_BUSY_RETRY_MS;
+        _dirty = true;
+        return;
+    }
     // Async, show hidden, passive, 120 ms per channel.
     const int r = WiFi.scanNetworks(true, true, true, 120);
     if (r == WIFI_SCAN_RUNNING) {
