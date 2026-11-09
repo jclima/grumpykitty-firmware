@@ -2,14 +2,18 @@
 
 ## [Unreleased]
 
+## [0.1.2-grumpy] - 2026-11-09
+
 ### Changed
-- Partition table now has two 7.5 MB OTA slots (`app0`, `app1`) in preparation for over-the-air updates; NVS and otadata offsets are unchanged. Installing this release needs one more browser or wired flash (Erase unticked, settings are kept); a device cannot change its partition table over the air. Release tooling fails the build if the firmware exceeds the smallest slot.
+- Partition table now has two 7.5 MB OTA slots (`app0`, `app1`) in preparation for over-the-air updates; NVS and otadata offsets are unchanged. Installing this release needs one more browser or wired flash (Erase unticked, settings are kept); a device cannot change its partition table over the air. Release tooling fails the build if the firmware exceeds the smallest slot. No OTA update feature exists yet: this release only lays out the slots. Devices move to the new layout by a browser flash with Erase unticked, which keeps settings.
 
 ### Fixed
 - Settings written by a newer firmware (schema version above this build's) are no longer erased when an older build runs, e.g. after a rollback.
 - VU Meter now enters only after system audio releases the shared bus; the handoff cancels the current system sound, and if the bus cannot be released in time the app is refused with an actionable error.
 - USB storage teardown keeps SD ownership until pending callbacks finish; Voice Recorder drains capture safely.
-- Wi-Fi scan cancellation and selection are serialized; saved settings retries and credential migration are robust.
+- Wi-Fi scan/connect handoff is serialized: a cancelled scan and a new selection can no longer overlap, the UI reports a queued connect, and the radio-busy case is guarded.
+- Settings flush is retryable if a save fails, and the Wi-Fi password is stored without a plaintext copy; leftover plaintext credentials are scrubbed.
+- Closing an app now shows a "closing" toast in the launcher while the app shuts down.
 - BSP/LVGL filesystem errors are surfaced safely instead of corrupting state; the SD mount frequency was passed to the driver 1000x too high (kHz scaled to Hz for a kHz API) and is corrected.
 
 ## [0.1.1-grumpy] - 2026-11-08
