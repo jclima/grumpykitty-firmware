@@ -60,8 +60,10 @@ extern "C" {
 
 /* ── Lifecycle ───────────────────────────────────────────────────
  * Initialise NVS flash and open the "mk_cfg" namespace.
- * Erases the namespace when the stored schema version ≠ PERSIST_SCHEMA_VERSION
- * so stale keys from older firmware do not interfere with new ones.       */
+ * Older/unknown stored schema versions are migrated (v2) or erased so stale
+ * keys do not interfere.  A stored version NEWER than PERSIST_SCHEMA_VERSION
+ * (firmware rollback) is left intact and used as-is: nothing is erased and
+ * the version is not rewritten.                                           */
 bool persist_init(void);
 
 /* ── Integer KV ──────────────────────────────────────────────── */

@@ -3,8 +3,10 @@
  * @brief NVS Key-Value storage — Arduino Preferences wrapper (uses ESP-IDF nvs_flash).
  *
  * Schema versioning: persist_init() compares the stored PKEY_NVS_VER against
- * PERSIST_SCHEMA_VERSION and wipes the namespace on mismatch, ensuring clean
- * migration when keys are added or renamed between firmware releases.
+ * PERSIST_SCHEMA_VERSION.  The v2 schema is migrated in place; any other older
+ * or unknown version wipes the namespace.  A stored version NEWER than this
+ * firmware (e.g. after a rollback across a schema bump) is never wiped or
+ * rewritten: the namespace is opened as-is and unknown keys are ignored.
  */
 #include "persist.h"
 #include <Preferences.h>
@@ -175,6 +177,19 @@ bool persist_init(void)
             Serial.println("[persist] WARNING: wifi_pass scrub failed; will retry next boot");
         } else if (s_prefs.isKey(kWifiMigrationStage) && !s_prefs.remove(kWifiMigrationStage)) {
             Serial.println("[persist] WARNING: migration stage cleanup failed");
+        }
+        return true;
+    }
+
+    if (stored_ver > PERSIST_SCHEMA_VERSION) {
+        /* Written by newer firmware (rollback).  Non-destructive: keep every key,
+         * leave the stored version untouched, and use the namespace as-is.
+         * Unknown keys are harmless; a future schema bump owns compatibility. */
+        static bool s_warned = false;
+        if (!s_warned) {
+            s_warned = true;
+            Serial.printf("[persist] Stored schema v%d is newer than v%d; keeping settings untouched\n",
+                          stored_ver, PERSIST_SCHEMA_VERSION);
         }
         return true;
     }
