@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.1-grumpy] - 2026-11-08
+
 ### Fixed
 - Release packaging now publishes split web-flasher images that preserve NVS/settings during normal updates.
 - The web flasher no longer claims settings survive an update from stock MeowKit firmware (untested); the merged image is documented as a settings-wiping clean install.
