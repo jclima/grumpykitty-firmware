@@ -25,7 +25,9 @@ Always power the device **off** first and enter Download Mode (below). Flashing 
 
 **a) From the browser (easiest).** Desktop Chrome or Edge: <https://jclima.github.io/grumpykitty-firmware/flash/> (available once GitHub Pages is enabled for the repository).
 
-**b) With esptool.** Download `grumpykitty-X.Y.Z-merged.bin` from [Releases](https://github.com/jclima/grumpykitty-firmware/releases):
+The browser flasher writes only the bootloader, partition table, `boot_app0` and firmware regions, so saved settings are kept as long as you leave **Erase device** unticked. A future settings-format change may still need an erase or a migration. The merged image in (b) wipes saved settings, because it also overwrites the settings area with blank data.
+
+**b) With esptool (clean install; wipes settings).** Download `grumpykitty-X.Y.Z-merged.bin` from [Releases](https://github.com/jclima/grumpykitty-firmware/releases):
 
 ```
 python -m esptool --chip esp32s3 write_flash 0x0 grumpykitty-X.Y.Z-merged.bin
@@ -46,7 +48,7 @@ make bootstrap-check && make upload
 
 ### After flashing
 
-Hold Power for 4-5 s to power off, then press Power to boot (or briefly short RESET to GND). A full-chip erase wipes saved settings such as Wi-Fi; a normal update from MeowKit or GrumpyKitty keeps them.
+Hold Power for 4-5 s to power off, then press Power to boot (or briefly short RESET to GND). Saved settings such as Wi-Fi are wiped by a full-chip erase and by flashing the merged image; updating from GrumpyKitty builds with the browser flasher (Erase unticked) keeps them.
 
 ## SD card
 

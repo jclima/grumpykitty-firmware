@@ -43,6 +43,6 @@ devices: bootstrap-check
 	$(PIO) device list
 
 # Builds the firmware (runs `make build`), then writes dist/grumpykitty-<VERSION>-merged.bin,
-# dist/grumpykitty-<VERSION>-firmware.bin and dist/manifest.json. See docs/RELEASING.md.
+# dist/grumpykitty-<VERSION>-{bootloader,partitions,boot_app0,firmware}.bin and dist/manifest.json. See docs/RELEASING.md.
 dist: build
 	python3 tools/release/merge_bin.py --build-dir .pio/build/$(ENV)

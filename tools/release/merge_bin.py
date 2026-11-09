@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 JC Lima
-"""Merge a PlatformIO build into one flashable image plus an ESP Web Tools manifest.
+"""Package a PlatformIO build as merged and split flash images.
 
 Usage: merge_bin.py [--build-dir .pio/build/esp32s3box] [--version X.Y.Z] [--out-dir dist]
 
 Offsets match the PlatformIO espressif32 upload layout and partitions_16mb.csv
 (nvs 0x9000, otadata 0xe000, app0 0x10000):
-  0x0 bootloader.bin, 0x8000 partitions.bin, 0xe000 boot_app0.bin, 0x10000 firmware.bin
+  0x0 bootloader.bin, 0x8000 partitions.bin, 0xe000 boot_app0.bin, 0x10000 firmware.bin.
+The merged image is for esptool clean installs only (it covers the NVS region
+with 0xFF, so flashing it wipes saved settings); it is not listed in the manifest.
+The split images update only these regions and preserve the settings/NVS partition.
 """
 import argparse, glob, hashlib, json, os, shutil, subprocess, sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 HOME = os.path.expanduser("~")
+SECTOR = 0x1000
+NVS_START, NVS_END = 0x9000, 0xE000
 
 
 def find_boot_app0():
@@ -42,6 +47,23 @@ def esptool_cmd():
     sys.exit("esptool not found (set ESPTOOL='python -m esptool' or install PlatformIO)")
 
 
+def rounded_range(offset, path):
+    end = offset + os.path.getsize(path)
+    return offset, ((end + SECTOR - 1) // SECTOR) * SECTOR
+
+
+def validate_ranges(files):
+    ranges = []
+    for offset, path in sorted(files.items()):
+        start, end = rounded_range(offset, path)
+        if start < NVS_END and end > NVS_START:
+            sys.exit(f"{os.path.basename(path)} write range {start:#x}-{end:#x} overlaps NVS {NVS_START:#x}-{NVS_END:#x}")
+        ranges.append((start, end, path))
+    for (_, left_end, left_path), (right_start, _, right_path) in zip(ranges, ranges[1:]):
+        if left_end > right_start:
+            sys.exit(f"split write ranges overlap: {left_path} and {right_path}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build-dir", default=os.path.join(ROOT, ".pio/build/esp32s3box"))
@@ -63,24 +85,33 @@ def main():
             sys.exit(f"missing {p}; build first (make build)")
         files[off] = p
     files[0xE000] = a.boot_app0 or find_boot_app0()
+    validate_ranges(files)
 
     os.makedirs(a.out_dir, exist_ok=True)
     merged_name = f"grumpykitty-{version}-merged.bin"
     merged = os.path.join(a.out_dir, merged_name)
     cmd = esptool_cmd() + ["--chip", "esp32s3", "merge_bin", "-o", merged,
-                           "--flash_mode", "qio", "--flash_freq", "80m", "--flash_size", "16MB"]
+                           "--flash_mode", "keep", "--flash_freq", "keep", "--flash_size", "keep"]
     for off in sorted(files):
         cmd += [hex(off), files[off]]
     print("+", " ".join(cmd))
     subprocess.check_call(cmd)
 
-    shutil.copyfile(files[0x10000], os.path.join(a.out_dir, f"grumpykitty-{version}-firmware.bin"))
+    split_names = {
+        0x0: f"grumpykitty-{version}-bootloader.bin",
+        0x8000: f"grumpykitty-{version}-partitions.bin",
+        0xE000: f"grumpykitty-{version}-boot_app0.bin",
+        0x10000: f"grumpykitty-{version}-firmware.bin",
+    }
+    for offset, name in split_names.items():
+        shutil.copyfile(files[offset], os.path.join(a.out_dir, name))
     manifest = {
         "name": "GrumpyKitty",
         "version": version,
         "new_install_prompt_erase": True,
         "builds": [{"chipFamily": "ESP32-S3",
-                    "parts": [{"path": merged_name, "offset": 0}]}],
+                    "parts": [{"path": split_names[offset], "offset": offset}
+                              for offset in sorted(split_names)]}],
     }
     with open(os.path.join(a.out_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)

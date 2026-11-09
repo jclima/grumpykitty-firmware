@@ -23,7 +23,7 @@ Follow-up (not done yet): the version string compiled into the firmware (`platfo
    git tag vX.Y.Z
    git push origin main vX.Y.Z
    ```
-4. The `Release` workflow builds, runs host tests, creates `grumpykitty-X.Y.Z-merged.bin`, `-firmware.bin`, `SHA256SUMS` and `manifest.json`, publishes a GitHub Release, and deploys the whole `docs/flash` folder plus the merged image and manifest to Pages (`/flash/`, with a root page redirecting there).
+4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
 
 ## Local dry run
 
@@ -31,7 +31,7 @@ Follow-up (not done yet): the version string compiled into the firmware (`platfo
 make dist     # builds first (make build), then writes dist/ (git-ignored)
 ```
 
-`dist/` contains the merged image (flash at 0x0), the app-only image and `manifest.json`. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-merged.bin`.
+`dist/` contains the merged image (flash at 0x0), versioned split images and `manifest.json`. The merged CLI image is for esptool clean installs only: it contains 0xFF over the settings/NVS area, so flashing it wipes saved settings. The browser manifest writes the split regions at their existing offsets, preserving the settings/NVS partition unless the user explicitly selects erase; schema migrations may still require an erase or a firmware-provided migration. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-merged.bin`.
 
 ## Updating the vendored flasher library
 
