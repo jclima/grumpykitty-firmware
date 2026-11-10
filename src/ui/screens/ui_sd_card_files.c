@@ -13,6 +13,7 @@
 #include "../ui.h"
 #include "../ui_sd_bridge.h"
 #include <string.h>
+#include <strings.h>
 #include <stdio.h>
 #include <stdlib.h>
 
