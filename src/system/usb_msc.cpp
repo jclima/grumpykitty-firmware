@@ -48,6 +48,7 @@ static std::atomic<int>       s_inflight{0};   /* callbacks currently using s_ca
 static std::atomic<int>       s_running{0};
 static std::atomic<int>       s_draining{0};
 static std::atomic<unsigned long> s_bytes{0};
+static std::atomic<int> s_state{USB_MSC_EJECTED};
 
 /* ── Sector callbacks — prefixed to avoid USBMSC.h typedef-name clash ── */
 
@@ -101,8 +102,8 @@ static bool _msc_startstop_cb(uint8_t /*pwr*/, bool /*start*/, bool load_eject)
 
 int usb_msc_enable(void)
 {
-    if (s_draining.load()) return 0;
-    if (s_running.load()) return 1;
+    if (s_draining.load()) { s_state.store(USB_MSC_DRAINING); return 0; }
+    if (s_running.load()) { s_state.store(USB_MSC_ACTIVE); return 1; }
 
     sdmmc_card_t * card = nullptr;
     s_bytes.store(0);
@@ -171,6 +172,7 @@ int usb_msc_enable(void)
     s_msc.mediaPresent(true);
 
     s_running.store(1);
+    s_state.store(USB_MSC_ACTIVE);
     Serial.printf("[MSC] enabled — %lu sectors × %u B\n",
                   (unsigned long)card->csd.capacity,
                   (unsigned)card->csd.sector_size);
@@ -179,6 +181,7 @@ int usb_msc_enable(void)
 fail_remount:
     SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
     SD_MMC.begin("/sdcard", true, false, 10000);
+    s_state.store(USB_MSC_INIT_FAILED);
     return 0;
 }
 
@@ -187,6 +190,7 @@ int usb_msc_disable(void)
     if (!s_running.load() && !s_draining.load()) return 1;
 
     if (!s_draining.exchange(1)) {
+        s_state.store(USB_MSC_DRAINING);
         /* Signal host: media removed (host unmounts the drive). */
         s_msc.mediaPresent(false);
         s_msc.end();            /* clear callbacks + block info */
@@ -208,6 +212,7 @@ int usb_msc_disable(void)
     if (card) free(card);
     s_draining.store(0);
     s_running.store(0);
+    s_state.store(USB_MSC_EJECTED);
 
     /* Remount FAT-FS for the rest of the firmware */
     SD_MMC.setPins(HAL_PIN_SD_CLK, HAL_PIN_SD_CMD, HAL_PIN_SD_D0);
@@ -230,3 +235,16 @@ unsigned long usb_msc_bytes_transferred(void)
 {
     return s_bytes.load();
 }
+
+usb_msc_state_t usb_msc_state(void)
+{
+    if (s_draining.load()) return USB_MSC_DRAINING;
+    if (s_running.load()) return USB_MSC_ACTIVE;
+    return (usb_msc_state_t)s_state.load();
+}
+void usb_msc_set_error(usb_msc_state_t state)
+{
+    if (state == USB_MSC_MISSING || state == USB_MSC_UNSUPPORTED ||
+        state == USB_MSC_INIT_FAILED) s_state.store(state);
+}
+void usb_msc_set_ejected(void) { s_state.store(USB_MSC_EJECTED); }

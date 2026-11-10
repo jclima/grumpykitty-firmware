@@ -181,8 +181,7 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
     static int x_pos = 0;
     static int y_pos = 0;
-    if(_ctp->isTouched()) {
-        _ctp->getPos(x_pos, y_pos);
+    if(_ctp && _ctp->isTouched() && _ctp->getPos(x_pos, y_pos)) {
         // Serial0.printf("X:%d Y:%d\n", x_pos, y_pos);
         data->point.x = x_pos;
         data->point.y = y_pos;

@@ -1,4 +1,5 @@
 #include "PCF8563.hpp"
+#include "calendar.h"
 
 bool PCF8563_Class::begin() {
     // Use scanID to check device presence
@@ -102,11 +103,14 @@ bool PCF8563_Class::isTimeValid(const RTC_Time &time) const {
     if (time.sec > 59) return false;
     if (time.min > 59) return false;
     if (time.hour > 23) return false;
-    if (time.day < 1 || time.day > 31) return false;
-    if (time.month < 1 || time.month > 12) return false;
+    if (!isDateValid(time.year, time.month, time.day)) return false;
     if (time.year < 2000 || time.year > 2099) return false;
     if (time.weekday > 6) return false;
     return true;
+}
+
+bool PCF8563_Class::isDateValid(uint16_t year, uint8_t month, uint8_t day) {
+    return pcf8563_date_valid(year, month, day);
 }
 
 bool PCF8563_Class::reset() {

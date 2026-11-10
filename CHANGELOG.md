@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.1.5-grumpy] - 2026-11-10
+
+### Fixed
+- Wi-Fi setup keeps the selected network when a password attempt fails, supports more password characters, and stops delayed navigation when you leave the screen.
+- SD browsing refreshes when media changes, pages through large directories, and shows clearer USB storage status.
+- Infrared imports have size limits, and saving checks that the complete file reached the card before reporting success.
+- Air Mouse initialization reports sensor failures, and VU Meter retains the audio hardware until its capture task exits.
+- BLE scanning and remote controls recover more clearly from startup errors. BLE HID scripts reject unsupported commands before sending reports.
+- Clock and Settings use the same RTC, invalid dates are rejected, and Signal K reports authentication failures during discovery.
+
 ## [0.1.4-grumpy] - 2026-11-10
 
 ### Added

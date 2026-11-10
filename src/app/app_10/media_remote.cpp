@@ -16,7 +16,7 @@ constexpr uint32_t REPEAT_DELAY = 400, REPEAT_EVERY = 120, MSG_MS = 900;
 
 int statusNow() {
     if (ble_remote_hid::failed()) return S_ERROR;
-    if (ble_remote_hid::ready()) return S_CONNECTED;
+    if (ble_remote_hid::mediaReady()) return S_CONNECTED;
     if (ble_remote_hid::connected()) return S_PAIRING;
     return S_WAITING;
 }

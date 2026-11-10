@@ -9,6 +9,7 @@
 #include <string.h>
 #include <driver/sdmmc_host.h>
 #include <sdmmc_cmd.h>
+#include <new>
 #include "../bsp/config.h"
 
 /* Cached classification of the slot: 0 missing, 1 ok, 2 unsupported.
@@ -119,4 +120,43 @@ extern "C" int ui_sd_list_dir(const char* path, ui_sd_visit_cb cb, void* user)
     }
     dir.close();
     return 0;
+}
+
+struct ui_sd_dir_cursor { File dir; File next; bool failed; };
+
+extern "C" ui_sd_dir_cursor_t * ui_sd_dir_open(const char *path)
+{
+    if (!path) return nullptr;
+    ui_sd_dir_cursor_t *c = new (std::nothrow) ui_sd_dir_cursor_t();
+    if (!c) return nullptr;
+    c->dir = SD_MMC.open(path);
+    if (!c->dir || !c->dir.isDirectory()) { c->failed = true; delete c; return nullptr; }
+    c->next = c->dir.openNextFile();
+    return c;
+}
+
+extern "C" int ui_sd_dir_next(ui_sd_dir_cursor_t *c, char *name,
+                                uint32_t name_size, int *is_dir)
+{
+    if (!c || c->failed || !name || name_size == 0 || !is_dir) return -1;
+    if (!c->next) return 0;
+    const char *full = c->next.name();
+    const char *slash = strrchr(full, '/');
+    const char *base = slash ? slash + 1 : full;
+    size_t len = strlen(base);
+    if (len >= name_size) { c->next.close(); return -2; }
+    memcpy(name, base, len + 1);
+    name[name_size - 1] = '\0';
+    *is_dir = c->next.isDirectory() ? 1 : 0;
+    c->next.close();
+    c->next = c->dir.openNextFile();
+    return 1;
+}
+
+extern "C" void ui_sd_dir_close(ui_sd_dir_cursor_t *c)
+{
+    if (!c) return;
+    c->next.close();
+    c->dir.close();
+    delete c;
 }

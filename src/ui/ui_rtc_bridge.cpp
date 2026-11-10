@@ -43,7 +43,7 @@ extern "C" bool ui_rtc_bridge_get(uint16_t * year, uint8_t * month, uint8_t * da
 
 extern "C" bool ui_rtc_bridge_set_date(uint16_t year, uint8_t month, uint8_t day)
 {
-    if (!s_rtc) return false;
+    if (!s_rtc || !PCF8563_Class::isDateValid(year, month, day)) return false;
     RTC_Time t;
     if (!s_rtc->getTime(t)) {
         t.hour = 0; t.min = 0; t.sec = 0;
@@ -53,6 +53,11 @@ extern "C" bool ui_rtc_bridge_set_date(uint16_t year, uint8_t month, uint8_t day
     t.day     = day;
     t.weekday = compute_weekday(year, month, day);
     return s_rtc->setTime(t);
+}
+
+extern "C" bool ui_rtc_bridge_date_valid(uint16_t year, uint8_t month, uint8_t day)
+{
+    return PCF8563_Class::isDateValid(year, month, day);
 }
 
 extern "C" bool ui_rtc_bridge_set_weekday(uint8_t weekday)

@@ -26,3 +26,20 @@ $CXX -std=c++17 -Wall -Wextra \
 $CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
   tools/host_tests/test_ota_manifest.cpp -o "$OUT/ota_manifest"
 "$OUT/ota_manifest"
+
+$CXX -std=c++17 -Wall -Wextra \
+  tools/host_tests/test_infrared_limits.cpp -o "$OUT/infrared_limits"
+"$OUT/infrared_limits"
+
+for suite in calendar hardware_protocol ir_loader ir_transaction; do
+  $CXX -std=c++17 -Wall -Wextra \
+    "tools/host_tests/test_${suite}.cpp" -o "$OUT/$suite"
+  "$OUT/$suite"
+  echo "$suite: PASS"
+done
+
+python3 tools/host_tests/test_ir_parser.py
+echo "ir_parser: PASS"
+
+tools/host_tests/ui/run_ui.sh
+echo "host tests: PASS"

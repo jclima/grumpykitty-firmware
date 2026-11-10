@@ -87,6 +87,9 @@ public:
      */
     bool isTimeValid(const RTC_Time &time) const;
 
+    /** Calendar-aware date validation, including leap years. */
+    static bool isDateValid(uint16_t year, uint8_t month, uint8_t day);
+
     /**
      * @brief Reset RTC to default state
      * @return true if successful

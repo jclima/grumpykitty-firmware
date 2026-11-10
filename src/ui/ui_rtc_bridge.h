@@ -29,6 +29,7 @@ bool ui_rtc_bridge_set_time(uint8_t hour, uint8_t minute, uint8_t second);
 
 /** Write weekday only (0=Sun..6=Sat). Keeps current date and H:M:S. */
 bool ui_rtc_bridge_set_weekday(uint8_t weekday);
+bool ui_rtc_bridge_date_valid(uint16_t year, uint8_t month, uint8_t day);
 
 #ifdef __cplusplus
 }

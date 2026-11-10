@@ -111,6 +111,7 @@ private:
     unsigned long _lastDrawTime      = 0;
     unsigned long _lastMacChangeTime = 0;
     uint32_t      _packetCount       = 0;
+    bool          _gapError         = false;
 
     /* ── Packet generation ── */
     void _makePacketAppleCrash(uint8_t* buf, uint8_t& len);
@@ -128,7 +129,7 @@ private:
     /* ── BLE helpers ── */
     void _initBLE();
     void _deinitBLE();
-    void _sendPacket(const uint8_t* data, uint8_t len);
+    bool _sendPacket(const uint8_t* data, uint8_t len);
     void _startSpam();
     void _stopSpam();
 };

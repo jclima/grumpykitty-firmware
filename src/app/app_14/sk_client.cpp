@@ -118,6 +118,9 @@ struct Client::Shared {
   SemaphoreHandle_t done = nullptr;
   std::atomic<bool> stop{false};
   std::atomic<bool> kick{false};
+  bool authSeen = false;
+  char authDetail[56] = "";
+  char authHost[40] = "";
   std::atomic<int> refs{2};  // UI side + worker side
   TaskHandle_t task = nullptr;
 
@@ -240,6 +243,12 @@ bool validate(Shared& sh, const Endpoint& ep) {
                                                  DeserializationOption::NestingLimit(kNestingLimit))) return false;
                              return !doc["endpoints"]["v1"].isNull();
                            });
+  if (r == Fetch1::Auth) {
+    Lock l(sh);
+    sh.authSeen = true;
+    snprintf(sh.authDetail, sizeof sh.authDetail, "%s", err);
+    snprintf(sh.authHost, sizeof sh.authHost, "%s", hostPort(ep).c_str());
+  }
   return r == Fetch1::Ok;
 }
 
@@ -260,7 +269,7 @@ void cacheEndpoint(const Endpoint& ep) {
   if (now.size() < sizeof have && now != have) persist_set_str(kCacheKey, now.c_str());
 }
 
-enum class Found : uint8_t { Yes, No, Stopped };
+enum class Found : uint8_t { Yes, No, Auth, Stopped };
 
 // Step (c)+(d): mDNS. Returns after at most ~2x kMdnsQueryMs plus validation.
 Found discoverMdns(Shared& sh, Endpoint& out) {
@@ -296,12 +305,14 @@ Found discoverMdns(Shared& sh, Endpoint& out) {
     }
   }
   MDNS.end();
+  if (res == Found::No) { Lock l(sh); if (sh.authSeen) res = Found::Auth; }
   return res;
 }
 
 // Discovery order: (a) config host, (b) cached ip:port, (c) _signalk-http._tcp, (d) vesselstack.local.
 // An explicit host is authoritative: if it does not answer we do not wander to another server.
 Found resolve(Shared& sh, Endpoint& out) {
+  { Lock l(sh); sh.authSeen = false; sh.authDetail[0] = 0; sh.authHost[0] = 0; }
   const Server& sv = sh.cfg.server;
   if (!sv.host.empty()) {
     Endpoint ep;
@@ -310,7 +321,12 @@ Found resolve(Shared& sh, Endpoint& out) {
     ep.configured = true;  // the only place an endpoint becomes configured
     setStatus(sh, LinkState::Discovering, "", hostPort(ep).c_str());
     if (validate(sh, ep)) { out = ep; return Found::Yes; }
-    return sh.stop.load() ? Found::Stopped : Found::No;
+    const LinkState auth = (!sv.token.empty() && isMdnsHost(ep.host)) ? LinkState::AuthNeedsIp : LinkState::AuthRequired;
+    char detail[56] = "";
+    bool authSeen = false;
+    { Lock l(sh); authSeen = sh.authSeen; snprintf(detail, sizeof detail, "%s", sh.authDetail); }
+    if (authSeen) setStatus(sh, auth, detail, hostPort(ep).c_str());
+    return sh.stop.load() ? Found::Stopped : (authSeen ? Found::Auth : Found::No);
   }
   setStatus(sh, LinkState::Discovering, "", "");
   char cached[40] = "";
@@ -324,6 +340,13 @@ Found resolve(Shared& sh, Endpoint& out) {
   if (sh.stop.load()) return Found::Stopped;
   const Found f = discoverMdns(sh, out);
   if (f == Found::Yes) cacheEndpoint(out);
+  else {
+    char detail[56] = "";
+    char authHost[40] = "";
+    bool authSeen = false;
+    { Lock l(sh); authSeen = sh.authSeen; snprintf(detail, sizeof detail, "%s", sh.authDetail); snprintf(authHost, sizeof authHost, "%s", sh.authHost); }
+    if (authSeen) setStatus(sh, LinkState::AuthNeedsHost, detail, authHost);
+  }
   return f;
 }
 
@@ -433,9 +456,14 @@ void run(Shared& sh) {
     if (!resolved) {
       const Found f = resolve(sh, ep);
       if (f == Found::Stopped) break;
+      if (f == Found::Auth) { sleepSlices(sh, kRediscoverMs); continue; }
       if (f == Found::No) {
-        if (sh.cfg.server.host.empty()) setStatus(sh, LinkState::NoHost, "no server found");
-        else setStatus(sh, LinkState::Unreachable, "host did not answer /signalk");
+        LinkState current;
+        { Lock l(sh); current = sh.st.link; }
+        if (current != LinkState::AuthNeedsHost && current != LinkState::AuthNeedsIp && current != LinkState::AuthRequired) {
+          if (sh.cfg.server.host.empty()) setStatus(sh, LinkState::NoHost, "no server found");
+          else setStatus(sh, LinkState::Unreachable, "host did not answer /signalk");
+        }
         sleepSlices(sh, kRediscoverMs);
         continue;
       }

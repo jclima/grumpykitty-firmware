@@ -24,13 +24,13 @@ static void _msc_status_cb(lv_timer_t * t)
     (void)t;
     if(!ui_usb_msc_label) return;
 
-    if(usb_msc_is_draining()) {
-        lv_label_set_text(ui_usb_msc_label, "disconnecting — press A/B to retry");
-        return;
-    }
-    if(!usb_msc_is_active()) {
-        lv_label_set_text(ui_usb_msc_label, "ready — eject before removing");
-        return;
+    switch (usb_msc_state()) {
+    case USB_MSC_MISSING: lv_label_set_text(ui_usb_msc_label, "No SD card - Back, insert, retry"); return;
+    case USB_MSC_UNSUPPORTED: lv_label_set_text(ui_usb_msc_label, "Unsupported card - FAT32, retry"); return;
+    case USB_MSC_INIT_FAILED: lv_label_set_text(ui_usb_msc_label, "USB start failed - Back and retry"); return;
+    case USB_MSC_DRAINING: lv_label_set_text(ui_usb_msc_label, "Disconnecting - press A/B to retry"); return;
+    case USB_MSC_EJECTED: lv_label_set_text(ui_usb_msc_label, "Ejected - Back, then retry"); return;
+    case USB_MSC_ACTIVE: break;
     }
 
     unsigned long bytes = usb_msc_bytes_transferred();
@@ -71,6 +71,8 @@ void ui_usb_msc_screen_init(void)
 
     ui_usb_msc_label = lv_label_create(ui_usb_msc);
     lv_obj_set_width(ui_usb_msc_label, LV_SIZE_CONTENT);
+    lv_obj_set_width(ui_usb_msc_label, 282);
+    lv_label_set_long_mode(ui_usb_msc_label, LV_LABEL_LONG_WRAP);
     lv_obj_set_height(ui_usb_msc_label, LV_SIZE_CONTENT);
     lv_obj_set_x(ui_usb_msc_label, 19);
     lv_obj_set_y(ui_usb_msc_label, 15);

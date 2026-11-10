@@ -9,6 +9,7 @@
 #include <freertos/task.h>
 
 #include "BMI270_config.inl"
+#include "BMI270_protocol.hpp"
 
   BMI270_Class::~BMI270_Class() {}
   BMI270_Class::BMI270_Class(std::uint8_t i2c_addr, std::uint32_t freq, I2C_Class* i2c)
@@ -17,22 +18,19 @@
 
   bool BMI270_Class::_upload_file(const uint8_t *config_data, size_t index, size_t write_len)
   {
-    uint8_t addr_array[2] = {
-      (uint8_t)((index >> 1) & 0x0F),
-      (uint8_t)(index >> 5)
-    };
-
-    if (config_data != nullptr
-      && writeRegister( INIT_ADDR_0, addr_array, 2 )
-      && writeRegister( INIT_DATA_ADDR, (uint8_t *)config_data, write_len))
-    {
-      return true;
-    }
-    return true;
+    return bmi270_protocol::upload(
+      config_data, index, write_len,
+      [this](const std::uint8_t address[2]) {
+        return writeRegister(INIT_ADDR_0, address, 2);
+      },
+      [this](const std::uint8_t* data, std::size_t length) {
+        return writeRegister(INIT_DATA_ADDR, data, length);
+      });
   }
 
   IMU_Base::imu_spec_t BMI270_Class::begin(I2C_Class* i2c)
   {
+    _init = false;
     if (i2c)
     {
       _i2c = i2c;
@@ -43,7 +41,7 @@
     
     // Perform soft reset first to ensure clean state
     Serial.println("  Performing BMI270 soft reset...");
-    writeRegister8(CMD_REG_ADDR, SOFT_RESET_CMD);
+    if (!writeRegister8(CMD_REG_ADDR, SOFT_RESET_CMD)) return imu_spec_none;
     vTaskDelay(2);  // BMI270 datasheet: startup time after reset is 2ms
     
     // Wait for chip to be ready
@@ -67,7 +65,8 @@
     Serial.println();
     
     // Now read chip ID
-    uint8_t chip_id = WhoAmI();
+    uint8_t chip_id = 0;
+    if (!readRegister(CHIP_ID_ADDR, &chip_id, 1)) return imu_spec_none;
     Serial.printf("  BMI270 Chip ID: 0x%02X (expected 0x24 for BMI270)\n", chip_id);
     
     if (chip_id != 0x24) 
@@ -81,65 +80,88 @@
     }
 
     // Continue with initialization
-    writeRegister8(PWR_CONF_ADDR, 0x00); // Power save disabled.
+    if (!writeRegister8(PWR_CONF_ADDR, 0x00)) return imu_spec_none; // Power save disabled.
     vTaskDelay(1);
-    bool res = _upload_file(bmi270_config_file, 0, sizeof(bmi270_config_file));
-    writeRegister8(INIT_CTRL_ADDR, 0x01);
-    writeRegister8(INT_MAP_DATA_ADDR, 0xFF);
-
-    _init = res;
-    if (!res)
-    {
-      return imu_spec_none;
-    }
+    if (!writeRegister8(INIT_CTRL_ADDR, 0x00)
+        || !_upload_file(bmi270_config_file, 0, sizeof(bmi270_config_file))
+        || !writeRegister8(INIT_CTRL_ADDR, 0x01)) return imu_spec_none;
 
     imu_spec_t spec = (imu_spec_t)(imu_spec_accel | imu_spec_gyro);
-    retry = 16;
-    do { vTaskDelay(1);}
-    while (0 == readRegister8(INTERNAL_STATUS_ADDR) && --retry);
-    res = retry > 0;
+    retry = 25;
+    uint8_t status = 0;
+    do {
+      vTaskDelay(1);
+      if (!readRegister(INTERNAL_STATUS_ADDR, &status, 1)) return imu_spec_none;
+      if (bmi270_protocol::initReady(status)) break;
+    } while (--retry);
+    if (!bmi270_protocol::initReady(status)) return imu_spec_none;
 
 // 以下は AUXセンサとしてBMM150が接続されている想定の設定
-    auxSetupMode(0x10); // 0x10 = BMM150 I2C Addr
-    auxWriteRegister8(0x4B, 0x83); // software reset + power on
-    auxReadRegister8(0x40); // 0x40 = WhoAmI
-    auto who_am_i = auxReadRegister8(0x40); // 0x40 = WhoAmI
-    if (who_am_i == 0x32)
+    bool mag_ready = auxSetupMode(0x10); // 0x10 = BMM150 I2C Addr
+    mag_ready = mag_ready && auxWriteRegister8(0x4B, 0x83); // software reset + power on
+    std::uint8_t who_am_i = 0;
+    mag_ready = mag_ready && auxReadRegister8(0x40, who_am_i); // 0x40 = WhoAmI
+    if (mag_ready && who_am_i == 0x32)
     {
-      auxWriteRegister8(0x4C, 0x38); // normal mode / ODR 30Hz
-      spec = (imu_spec_t)(imu_spec_accel | imu_spec_gyro | imu_spec_mag);
-      writeRegister8(AUX_IF_CONF_ADDR, 0x4F); // FCU_WRITE_EN + Manual BurstLength 8 + BurstLength 8
-      writeRegister8(AUX_RD_ADDR     , 0x42);  // 0x42 = BMM150 I2C Data X LSB reg
-      writeRegister8(PWR_CTRL_ADDR, 0x0F); // temp en | ACC en | GYR en | AUX en
+      mag_ready = auxWriteRegister8(0x4C, 0x38)
+        && writeRegister8(AUX_IF_CONF_ADDR, 0x4F)
+        && writeRegister8(AUX_RD_ADDR, 0x42);
     }
+    else mag_ready = false;
+
+    if (!writeRegister8(PWR_CTRL_ADDR, mag_ready ? 0x0F : 0x0E)) return imu_spec_none;
+    uint8_t power = 0;
+    if (!readRegister(PWR_CTRL_ADDR, &power, 1) || (power & 0x06) != 0x06)
+      return imu_spec_none;
+    if (!writeRegister8(INT_MAP_DATA_ADDR, 0xFF)) return imu_spec_none;
+    _init = true;
+    if (mag_ready && (power & 0x01)) spec = (imu_spec_t)(spec | imu_spec_mag);
     return spec;
   }
 
   bool BMI270_Class::auxSetupMode(std::uint8_t i2c_addr)
   {
-    writeRegister8(IF_CONF_ADDR, 0x20);  // AUX I2C enable.
-    writeRegister8(PWR_CONF_ADDR, 0x00); // Power save disabled.
-    writeRegister8(PWR_CTRL_ADDR, 0x0E); // AUX sensor disable.
-    writeRegister8(AUX_IF_CONF_ADDR, 0x80);
-    return writeRegister8(AUX_DEV_ID_ADDR , i2c_addr << 1);
+    return writeRegister8(IF_CONF_ADDR, 0x20)  // AUX I2C enable.
+        && writeRegister8(PWR_CONF_ADDR, 0x00) // Power save disabled.
+        && writeRegister8(PWR_CTRL_ADDR, 0x0E) // AUX sensor disable.
+        && writeRegister8(AUX_IF_CONF_ADDR, 0x80)
+        && writeRegister8(AUX_DEV_ID_ADDR , i2c_addr << 1);
   }
 
   bool BMI270_Class::auxWriteRegister8(std::uint8_t reg, std::uint8_t data)
   {
-    writeRegister8(AUX_WR_DATA_ADDR, data); // AUXセンサに書き込む値
-    writeRegister8(AUX_WR_ADDR, reg);       // AUXセンサに書き込むレジスタ番号
+    if (!writeRegister8(AUX_WR_DATA_ADDR, data) // AUXセンサに書き込む値
+        || !writeRegister8(AUX_WR_ADDR, reg)) return false;
     int retry = 3;
-    while ((readRegister8(STATUS_ADDR) & 0b100) && --retry) { vTaskDelay(1); }
-    return retry;
+    while (retry--) {
+      std::uint8_t status = 0;
+      if (!readRegister(STATUS_ADDR, &status, 1)) return false;
+      if (!(status & 0b100)) return true;
+      vTaskDelay(1);
+    }
+    return false;
+  }
+
+  bool BMI270_Class::auxReadRegister8(std::uint8_t reg, std::uint8_t& result)
+  {
+    if (!writeRegister8(AUX_IF_CONF_ADDR, 0x80) // enable read write. Burst length 1
+        || !writeRegister8(AUX_RD_ADDR, reg)) return false; // AUXセンサから読み取るレジスタ番号
+    int retry = 3;
+    while (retry--) {
+      std::uint8_t status = 0;
+      if (!readRegister(STATUS_ADDR, &status, 1)) return false;
+      if (!(status & 0b100))
+        return readRegister(AUX_X_LSB_ADDR, &result, 1);
+      vTaskDelay(1);
+    }
+    return false;
   }
 
   std::uint8_t BMI270_Class::auxReadRegister8(std::uint8_t reg)
   {
-    writeRegister8(AUX_IF_CONF_ADDR, 0x80); // enable read write. Burst length 1
-    writeRegister8(AUX_RD_ADDR, reg);       // AUXセンサから読み取るレジスタ番号
-    int retry = 3;
-    while ((readRegister8(STATUS_ADDR) & 0b100) && --retry) { vTaskDelay(1); }
-    return readRegister8(AUX_X_LSB_ADDR);
+    std::uint8_t result = 0;
+    auxReadRegister8(reg, result);
+    return result;
   }
 
   std::uint8_t BMI270_Class::WhoAmI(void)

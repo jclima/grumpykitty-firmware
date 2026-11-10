@@ -94,6 +94,7 @@
 
     bool auxSetupMode(std::uint8_t i2c_addr);
     bool auxWriteRegister8(std::uint8_t reg, std::uint8_t data);
+    bool auxReadRegister8(std::uint8_t reg, std::uint8_t& data);
     std::uint8_t auxReadRegister8(std::uint8_t reg);
   };
 

@@ -498,6 +498,7 @@ static void _nav_to_t9_cb(lv_timer_t * t)
 {
     (void)t;
     s_conn_timer = NULL;   /* repeat_count=1 — auto-deleted after this call */
+    if(lv_scr_act() != ui_wifi || !ui_wifi) return;
     _ui_screen_change(&ui_t9_keyboard, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0,
                       &ui_t9_keyboard_screen_init);
 }
@@ -505,6 +506,10 @@ static void _nav_to_t9_cb(lv_timer_t * t)
 static void _conn_poll_cb(lv_timer_t * t)
 {
     (void)t;
+    if(lv_scr_act() != ui_wifi || !ui_wifi) {
+        if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+        return;
+    }
     wifi_bridge_status_t st = ui_wifi_bridge_get_status();
 
     if(st == WIFI_BRIDGE_CONNECTED) {
@@ -527,7 +532,7 @@ static void _conn_poll_cb(lv_timer_t * t)
         if(s_was_saved) {
             /* Saved-network password may have changed → T9 for re-entry */
             s_was_saved = false;
-            _wifi_show_toast("Password may have changed", lv_color_hex(0xFF5555));
+            _wifi_show_toast("Connection failed; check settings", lv_color_hex(0xFF5555));
             char saved_pass[65] = {};
             ui_wifi_bridge_get_saved_pass(saved_pass, sizeof(saved_pass));
             ui_wifi_bridge_set_pending_ssid(s_focused.ssid);
@@ -604,7 +609,23 @@ static void _key_b_cb(lv_event_t * e)
 // ── Gesture swipe-right → Settings ──
 void ui_event_wifi(lv_event_t * e)
 {
-    if(lv_event_get_code(e) == LV_EVENT_GESTURE &&
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_SCREEN_UNLOAD_START || code == LV_EVENT_SCREEN_UNLOADED) {
+        if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
+        if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+        s_scan_active = false;
+        return;
+    }
+    if(code == LV_EVENT_SCREEN_LOADED) {
+        if(lv_scr_act() == ui_wifi) {
+            wifi_bridge_status_t st = ui_wifi_bridge_get_status();
+            if(st == WIFI_BRIDGE_CONNECTING && !s_conn_timer) s_conn_timer = lv_timer_create(_conn_poll_cb, 400, NULL);
+            if(st != WIFI_BRIDGE_CONNECTING && !s_scan_active) _wifi_start_scan();
+            _wifi_build_list();
+        }
+        return;
+    }
+    if(code == LV_EVENT_GESTURE &&
        lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_get_act());
         _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0,

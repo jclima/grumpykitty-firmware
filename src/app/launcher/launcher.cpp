@@ -44,6 +44,7 @@
  */
 #include "launcher.h"
 #include "../app.h"
+#include "../app_03/vu_meter.h"
 #include "../../bsp/porting/lv_port_disp.h"
 #include "../../bsp/porting/lv_port_indev.h"
 #include "../../bsp/porting/lv_port_fs.h"
@@ -342,6 +343,7 @@ void Launcher::onLoop()
        the persistent recorder instance before allowing any new app to claim
        the shared audio pins. */
     MOONCAKE::APPS::AppVoiceRecorder::serviceDeferredClose(_device);
+    MOONCAKE::APPS::App03::serviceDeferredClose(_device);
 
     /* Flush dirty settings to NVS after debounce — ~0 cost when clean */
     settings_tick();
@@ -682,7 +684,7 @@ void Launcher::updateStatusBar()
 void Launcher::handleAppSelection()
 {
     const char* selId = ui_apps_menu_get_selected_id();
-    if (MOONCAKE::APPS::AppVoiceRecorder::closePending()) {
+    if (MOONCAKE::APPS::AppVoiceRecorder::closePending() || MOONCAKE::APPS::App03::closePending()) {
         /* Selection is kept so the launch proceeds once the close finishes;
          * tell the user why nothing happens (at most every 3 s). */
         static uint32_t s_last_closing_toast = 0;
@@ -852,6 +854,9 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     } else if (cur == ui_sd_card_files) {
         if (up)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, &ui_home_screen_init); return; }
         if (b)     { ui_sd_card_files_action_back(); return; }
+        if (a)     { ui_sd_card_files_action_refresh(); return; }
+        if (left)  { ui_sd_card_files_action_previous_page(); return; }
+        if (right) { ui_sd_card_files_action_next_page(); return; }
     } else if (cur == ui_clock) {
         if (down)  { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_TOP,    500, 0, &ui_home_screen_init); return; }
     } else if (cur == ui_manual) {
@@ -912,6 +917,7 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         return;
     }
     if (cur == ui_t9_keyboard) {
+        if (a) { ui_t9_keyboard_send(); return; }
         if (b) {
             if (ui_t9_keyboard_is_connecting()) {
                 ui_t9_keyboard_cancel_connect();

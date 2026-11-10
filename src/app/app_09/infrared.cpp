@@ -11,8 +11,11 @@
  */
 #include "infrared.h"
 #include "infrared_file_utils.h"
+#include "infrared_stream.h"
 #include "../../bsp/config.h"
 #include "../app_common/hp_ui.h"
+#include <string>
+#include <cstdarg>
 
 /* ── Layout constants (bound to hp_ui shared chrome) ── */
 static constexpr int SCR_W         = hp::W;
@@ -310,6 +313,7 @@ namespace MOONCAKE::APPS
                 case IrScene::RemoteView:    _enterRemoteView();    break;
                 case IrScene::UniversalMenu: _enterUniversalMenu(); break;
                 case IrScene::UniversalTV:   _enterUniversalTV();   break;
+                case IrScene::Loading:       hp::clearContent(_device->Lcd); _drawHeader(_loadPurpose[0] ? _loadPurpose : "Loading"); _drawFooter3(nullptr, nullptr, "[B]Cancel"); break;
                 case IrScene::TVBGone:       _enterTVBGone();       break;
                 case IrScene::Sending:       _enterSending();       break;
             }
@@ -329,6 +333,7 @@ namespace MOONCAKE::APPS
             case IrScene::RemoteView:    _runRemoteView();    break;
             case IrScene::UniversalMenu: _runUniversalMenu(); break;
             case IrScene::UniversalTV:   _runUniversalTV();   break;
+            case IrScene::Loading:       _stepLoad();          break;
             case IrScene::TVBGone:       _runTVBGone();       break;
             case IrScene::Sending:       _runSending();       break;
         }
@@ -336,6 +341,7 @@ namespace MOONCAKE::APPS
 
     void App09::onClose()
     {
+        _cancelLoad();
         _device->led.off();
         _stopRx();
         if (_irSend) { delete _irSend; _irSend = nullptr; }
@@ -630,8 +636,9 @@ namespace MOONCAKE::APPS
             return;
         }
         if (_device->button.A.pressed()) {
-            _txSignal(_learnedSig);
-            hp::drawToast(_device->Lcd, "SENT", hp::COL_FG);
+            const bool sent = _txSignal(_learnedSig);
+            hp::drawToast(_device->Lcd, sent ? "SENT" : "SIGNAL REJECTED",
+                          sent ? hp::COL_FG : hp::COL_ERR);
             delay(300);
             _sceneDirty = true;
         }
@@ -911,9 +918,10 @@ namespace MOONCAKE::APPS
         bool ok = _saveSignalToFile(_saveDir, _editBuf, _learnedSig);
         if (!ok && createdDir) SD_MMC.rmdir(_saveDir);
         if (ok) _saveFolderPending = false;
-        _drawMsgBox(ok ? "Signal saved!" : "Save FAILED!", ok ? path : "Check SD card");
+        _drawMsgBox(ok ? "Signal saved!" : "Save FAILED!", ok ? path : "Recovery needed; inspect files");
         delay(1500);
-        _switchScene(IrScene::MainMenu);
+        if (ok) _switchScene(IrScene::MainMenu);
+        else { _preserveSignalName = true; _sceneDirty = true; }
     }
 
     void App09::_enterLearnSaveExistingConfirm()
@@ -941,9 +949,10 @@ namespace MOONCAKE::APPS
 
         if (_menuSel == 0) {
             bool ok = _appendSignalToFile(_savePath, _learnedSig);
-            _drawMsgBox(ok ? "Signal saved!" : "Save FAILED!", ok ? _savePath : "Check SD card");
+            _drawMsgBox(ok ? "Signal saved!" : "Save FAILED!", ok ? _savePath : "Recovery needed; inspect files");
             delay(1500);
-            _switchScene(IrScene::MainMenu);
+            if (ok) _switchScene(IrScene::MainMenu);
+            else { _preserveSignalName = true; _sceneDirty = true; }
         } else if (_menuSel == 1) {
             _preserveSignalName = true;
             _switchScene(IrScene::LearnSaveName);
@@ -1168,13 +1177,7 @@ namespace MOONCAKE::APPS
                     return;
                 }
 
-                if (_loadRemote(path, _currentRemote)) {
-                    _switchScene(IrScene::RemoteView);
-                } else {
-                    _drawMsgBox("Failed to load!", path);
-                    delay(1500);
-                    _sceneDirty = true;
-                }
+                _beginLoad(path, _currentRemote, 0, nullptr, IrScene::RemoteView, "Loading remote");
             }
         }
         if (_device->button.B.pressed()) {
@@ -1336,8 +1339,9 @@ namespace MOONCAKE::APPS
 
         if (_device->button.A.pressed()) {
             int idx = _menuSel + _scrollOffset;
-            _txSignal(_currentRemote.signals[idx]);
-            hp::drawToast(_device->Lcd, "SENT", hp::COL_FG);
+            const bool sent = _txSignal(_currentRemote.signals[idx]);
+            hp::drawToast(_device->Lcd, sent ? "SENT" : "SIGNAL REJECTED",
+                          sent ? hp::COL_FG : hp::COL_ERR);
             delay(200);
             _sceneDirty = true;
         }
@@ -1448,21 +1452,15 @@ namespace MOONCAKE::APPS
 
             if (catIdx >= 0) {
                 /* Known category: button panel is hardcoded — no preload needed.
-                 * Filtered load happens per-button in _runUniversalTV so every
-                 * brand's signal is available without any signal-count cap. */
+                 * Filtered load happens per-button in _runUniversalTV. */
                 _currentRemote.signals.clear();
                 strncpy(_currentRemote.path, path, sizeof(_currentRemote.path) - 1);
                 _currentRemote.path[sizeof(_currentRemote.path) - 1] = '\0';
             } else {
                 /* Unknown category: load all signals (capped) to use as buttons. */
                 hp::drawHeader(_device->Lcd, _univCatTitle, "Reading...", hp::COL_WARN);
-                bool loaded = _loadRemote(path, _currentRemote, 100);
-                if (!loaded) {
-                    hp::drawDialog(_device->Lcd, "File not found!", path, hp::COL_ERR);
-                    delay(1500);
-                    _sceneDirty = true;
-                    return;
-                }
+                _beginLoad(path, _currentRemote, infrared_file::kMaxRetainedSignals, nullptr, IrScene::UniversalTV, "Loading remote");
+                return;
             }
             _switchScene(IrScene::UniversalTV);
         }
@@ -1576,20 +1574,11 @@ namespace MOONCAKE::APPS
 
             if (knownCat) {
                 /* Known category: load the .ir file filtered to only signals
-                 * matching this button's sigName.  No maxSignals cap — the
-                 * filter itself bounds memory to (brands × 1 signal). */
+                 * matching this button's sigName, with the same aggregate cap
+                 * as every other import. */
                 hp::drawHeader(_device->Lcd, _univCatTitle, "Loading...", hp::COL_WARN);
-                bool loaded = _loadRemote(_currentRemote.path, _currentRemote, 0, sigName);
-                if (!loaded || _currentRemote.signals.empty()) {
-                    hp::drawDialog(_device->Lcd, "No signals for:", sigName, hp::COL_ERR);
-                    delay(1500);
-                    _sceneDirty = true;
-                    return;
-                }
-                /* Every loaded signal is already the target action → queue = all */
-                _univBlastQ.clear();
-                for (int i = 0; i < (int)_currentRemote.signals.size(); i++)
-                    _univBlastQ.push_back(i);
+                _beginLoad(_currentRemote.path, _currentRemote, infrared_file::kMaxRetainedSignals, sigName, IrScene::TVBGone, "Loading signals");
+                return;
             } else {
                 /* Unknown category: filter from already-loaded signals */
                 _univBlastQ.clear();
@@ -1627,7 +1616,7 @@ namespace MOONCAKE::APPS
             float pct = (float)i / (float)total;
             hp::drawExecPopup(Lcd, "UNIVERSAL TX", action, sigName, pct, i, total, hp::COL_WARN);
 
-            _txSignal(sig);
+            if (!_txSignal(sig)) { _device->led.off(); continue; }
             delay(120);
         }
 
@@ -1826,7 +1815,11 @@ namespace MOONCAKE::APPS
                     /* Send 1 — transmit currently displayed signal once */
                     if (_tvbgIdx >= 0 && _tvbgIdx < _tvbgTotal) {
                         int rawIdx = _univBlastQ.empty() ? _tvbgIdx : _univBlastQ[_tvbgIdx];
-                        _txSignal(_currentRemote.signals[rawIdx]);
+                        if (!_txSignal(_currentRemote.signals[rawIdx])) {
+                            _device->led.setColor(WS2812B_Class::YELLOW);
+                            _drawMsgBox("Signal unsupported", "B: Back / choose another");
+                            return;
+                        }
                         _device->led.setColor(WS2812B_Class::GREEN);
                         delay(80);
                         _device->led.setColor(WS2812B_Class::YELLOW);
@@ -1854,7 +1847,14 @@ namespace MOONCAKE::APPS
         _tvbgLastSend = now;
 
         int rawIdx = _univBlastQ.empty() ? _tvbgIdx : _univBlastQ[_tvbgIdx];
-        _txSignal(_currentRemote.signals[rawIdx]);
+        if (!_txSignal(_currentRemote.signals[rawIdx])) {
+            _tvbgState = TvbgState::Idle;
+            _tvbgPaused = false;
+            _device->led.off();
+            _drawTVBGoneFooter();
+            _drawMsgBox("Signal unsupported", "B: Back / choose another");
+            return;
+        }
         _tvbgIdx++;
         _drawTVBGoneFrame();
     }
@@ -1896,18 +1896,18 @@ namespace MOONCAKE::APPS
         }
     }
 
-    void App09::_txSignal(const IrSignal& sig)
+    bool App09::_txSignal(const IrSignal& sig)
     {
-        if (!_irSend) return;
+        if (!_irSend) return false;
 
         if (sig.isRaw) {
-            if (!sig.rawData.empty()) {
-                _irSend->sendRaw(sig.rawData.data(), sig.rawData.size(),
-                                 sig.frequency / 1000);
-            }
+            if (!infrared_file::validRaw(sig.rawData)) return false;
+            _irSend->sendRaw(sig.rawData.data(), sig.rawData.size(), sig.frequency / 1000);
         } else {
+            if (sig.protocol == UNKNOWN || sig.bits == 0 || sig.bits > 64) return false;
             _irSend->send(sig.protocol, sig.value, sig.bits);
         }
+        return true;
     }
 
     /* ════════════════════════════════════════════════════════════
@@ -2065,14 +2065,34 @@ namespace MOONCAKE::APPS
 
     static bool signalWritable(const IrSignal& sig)
     {
-        if (sig.isRaw) return !sig.rawData.empty();
+        if (sig.isRaw) return infrared_file::validRaw(sig.rawData);
+        if (sig.protocol == UNKNOWN || sig.bits == 0 || sig.bits > 64) return false;
         return flipperNameFor(sig.protocol, sig.bits, sig.address, sig.command, sig.value) ||
-               !sig.rawData.empty();
+               infrared_file::validRaw(sig.rawData);
     }
 
-    static void writeSignalEntry(File& f, const IrSignal& sig)
+    static bool signalImportValid(const IrSignal& sig)
     {
-        f.printf("name: %s\n", sig.name);
+        if (sig.isRaw) return infrared_file::validRaw(sig.rawData);
+        return sig.protocol != UNKNOWN && sig.bits > 0 && sig.bits <= 64;
+    }
+
+    static bool appendSerialized(std::string& out, const char* fmt, ...)
+    {
+        static constexpr size_t kMaxSerialized = 64 * 1024;
+        char buf[512];
+        va_list ap;
+        va_start(ap, fmt);
+        const int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+        va_end(ap);
+        if (n < 0 || static_cast<size_t>(n) >= sizeof(buf) || out.size() > kMaxSerialized - static_cast<size_t>(n)) return false;
+        out.append(buf, static_cast<size_t>(n));
+        return true;
+    }
+
+    static bool serializeSignalEntry(std::string& out, const IrSignal& sig)
+    {
+        if (!appendSerialized(out, "name: %s\n", sig.name)) return false;
 
         const char* flipperName = sig.isRaw ? nullptr
             : flipperNameFor(sig.protocol, sig.bits, sig.address, sig.command, sig.value);
@@ -2080,222 +2100,186 @@ namespace MOONCAKE::APPS
         /* Raw is used for undecoded signals and for any protocol that has no
          * round-trippable Flipper "parsed" form. Raw carrier stays 38 kHz. */
         if (!flipperName) {
-            f.println("type: raw");
-            f.printf("frequency: %lu\n", sig.frequency);
-            f.println("duty_cycle: 0.330000");
-            f.print("data:");
+            if (!appendSerialized(out, "type: raw\nfrequency: %lu\nduty_cycle: 0.330000\ndata:", (unsigned long)sig.frequency)) return false;
             for (size_t i = 0; i < sig.rawData.size(); i++) {
-                f.printf(" %u", sig.rawData[i]);
+                if (!appendSerialized(out, " %u", sig.rawData[i])) return false;
             }
-            f.println();
+            if (!appendSerialized(out, "\n")) return false;
         } else {
-            f.println("type: parsed");
-            f.printf("protocol: %s\n", flipperName);
-            f.printf("value: 0x%llX\n", (unsigned long long)sig.value);
-            f.printf("bits: %u\n", (unsigned)sig.bits);
+            if (!appendSerialized(out, "type: parsed\nprotocol: %s\nvalue: 0x%llX\nbits: %u\n", flipperName, (unsigned long long)sig.value, (unsigned)sig.bits)) return false;
 
             char addrBuf[32], cmdBuf[32];
             /* Flipper style: always 4 little-endian bytes ("04 00 00 00") */
             formatHexBytes(sig.address, 4, addrBuf, sizeof(addrBuf));
             formatHexBytes(sig.command, 4, cmdBuf, sizeof(cmdBuf));
-            f.printf("address: %s\n", addrBuf);
-            f.printf("command: %s\n", cmdBuf);
+            if (!appendSerialized(out, "address: %s\ncommand: %s\n", addrBuf, cmdBuf)) return false;
+        }
+        return true;
+    }
+
+    void App09::_resetLoadSignal(IrSignal& s)
+    {
+        s.name[0] = '\0';
+        s.isRaw = false;
+        s.protocol = UNKNOWN;
+        s.value = 0;
+        s.bits = 0;
+        s.address = 0;
+        s.command = 0;
+        s.frequency = 38000;
+        s.rawData.clear();
+    }
+
+    void App09::_commitLoadSignal()
+    {
+        if (_loadFailed || !_loadInSignal) return;
+        const bool wanted = !_loadFilter[0] || strcasecmp(_loadSignal.name, _loadFilter) == 0;
+        if (_loadValidSignal && signalImportValid(_loadSignal) && wanted) {
+            const size_t cap = _loadMaxSignals > 0 ? (size_t)_loadMaxSignals : infrared_file::kMaxRetainedSignals;
+            if (_loadResult.signals.size() >= cap) {
+                _loadError = (_loadMaxSignals > 0 && _loadMaxSignals < 256) ? "Too many signals for this remote" : "Too many signals (limit 256)";
+                _loadFailed = true;
+                return;
+            }
+            if (_loadRawBytes + _loadSignal.rawData.size() * sizeof(uint16_t) > infrared_file::kMaxRetainedRawBytes) {
+                _loadError = "Raw data limit exceeded";
+                _loadFailed = true;
+                return;
+            }
+            _loadRawBytes += _loadSignal.rawData.size() * sizeof(uint16_t);
+            _loadResult.signals.push_back(std::move(_loadSignal));
+            _resetLoadSignal(_loadSignal);
         }
     }
 
-    bool App09::_loadRemote(const char* path, IrRemote& remote, int maxSignals, const char* filterName)
+    void App09::_parseLoadLine(const char* raw)
     {
-        File f = SD_MMC.open(path, FILE_READ);
-        if (!f) return false;
+        if (_loadFailed || !raw) return;
+        std::string line(raw); size_t n = line.size(); while (n && (line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = 0;
+        const char* p = line.c_str(); while (*p == ' ' || *p == '\t') ++p;
+        if (!*p || *p == '#') return;
+        if (!strncmp(p, "name: ", 6)) {
+            _commitLoadSignal();
+            if (_loadFailed) return;
+            _resetLoadSignal(_loadSignal); _loadRawUsec = 0; _loadProto[0] = 0; _loadSawValue = false; _loadSawBits = false; _loadValidSignal = true; _loadInSignal = true;
+            strncpy(_loadSignal.name, p + 6, sizeof(_loadSignal.name) - 1); _loadSignal.name[sizeof(_loadSignal.name) - 1] = 0;
+        } else if (!strncmp(p, "type: ", 6)) {
+            _loadSignal.isRaw = !strcasecmp(p + 6, "raw");
+        } else if (!strncmp(p, "protocol: ", 10)) {
+            strncpy(_loadProto, p + 10, sizeof(_loadProto) - 1); _loadProto[sizeof(_loadProto) - 1] = 0;
+            _loadSignal.protocol = flipperProtoToType(p + 10);
+        } else if (!strncmp(p, "value: ", 7)) {
+            char* end = nullptr; errno = 0; unsigned long long v = strtoull(p + 7, &end, 0);
+            while (end && (*end == ' ' || *end == '\t')) ++end;
+            if (errno || end == p + 7 || (end && *end)) _loadValidSignal = false; else _loadSignal.value = v;
+            _loadSawValue = true;
+        } else if (!strncmp(p, "bits: ", 6)) {
+            char* end = nullptr; long v = strtol(p + 6, &end, 10);
+            while (end && (*end == ' ' || *end == '\t')) ++end;
+            if (end == p + 6 || (end && *end) || v <= 0 || v > 64) _loadValidSignal = false; else _loadSignal.bits = (uint16_t)v;
+            _loadSawBits = true;
+        } else if (!strncmp(p, "address: ", 9)) _loadValidSignal &= infrared_file::hexBytes(p + 9, _loadSignal.address);
+        else if (!strncmp(p, "command: ", 9)) {
+            _loadValidSignal &= infrared_file::hexBytes(p + 9, _loadSignal.command);
+            if (!_loadSignal.isRaw && !_loadSawValue) { uint64_t v; uint16_t b; if (flipperEncodeFrame(_loadProto, _loadSignal.address, _loadSignal.command, v, b)) { _loadSignal.value = v; if (!_loadSawBits) _loadSignal.bits = b; } }
+        } else if (!strncmp(p, "frequency: ", 11)) {
+            char* end = nullptr; long v = strtol(p + 11, &end, 10); while (end && (*end == ' ' || *end == '\t')) ++end;
+            if (end == p + 11 || (end && *end) || v < 10000 || v > 100000) _loadValidSignal = false; else _loadSignal.frequency = (uint32_t)v;
+        } else if (!strncmp(p, "data: ", 6)) {
+            const char* q = p + 6; bool any = false;
+            while (*q) {
+                while (*q == ' ' || *q == '\t') ++q; if (!*q) break;
+                char* end = nullptr; long v = strtol(q, &end, 10);
+                if (end == q || v < 1 || v > 65535 || _loadSignal.rawData.size() >= infrared_file::kMaxRawDurations || _loadRawUsec > infrared_file::kMaxRawUsec - (uint32_t)v) { _loadValidSignal = false; break; }
+                _loadSignal.rawData.push_back((uint16_t)v); _loadRawUsec += (uint32_t)v; any = true; q = end;
+            }
+            if (*q || !any) _loadValidSignal = false;
+        }
+    }
 
-        remote.signals.clear();
-        strncpy(remote.path, path, sizeof(remote.path) - 1);
-        remote.path[sizeof(remote.path) - 1] = '\0';
-
-        const char* slash = strrchr(path, '/');
-        const char* name = slash ? slash + 1 : path;
-        strncpy(remote.filename, name, sizeof(remote.filename) - 1);
-        remote.filename[sizeof(remote.filename) - 1] = '\0';
-        char* dot = strrchr(remote.filename, '.');
-        if (dot) *dot = '\0';
-
-        /* Reset a signal in-place WITHOUT memsetting over the std::vector
-         * member.  memset over a vector silently orphans its heap allocation
-         * and was the root cause of "second SD load fails" — the heap was
-         * being leaked one signal at a time on every reload. */
-        auto resetSig = [](IrSignal& s) {
-            s.rawData.clear();
-            s.name[0]   = '\0';
-            s.isRaw     = false;
-            s.protocol  = UNKNOWN;
-            s.value     = 0;
-            s.bits      = 0;
-            s.address   = 0;
-            s.command   = 0;
-            s.frequency = 38000;
-        };
-
-        IrSignal sig;
-        resetSig(sig);
-        bool inSignal = false;
-        bool hasSerializedValue = false;
-        bool hasSerializedBits = false;
-        bool validSignal = true;
-        String line;
-        String protoName;
-        static constexpr size_t kMaxLineLen = 8192;   /* 1024 raw entries fit */
-        static constexpr size_t kMaxRawEntries = 1024;
-
-        /* Chunked reader: one f.read() per 512 B instead of per character. */
-        char   chunk[512];
-        size_t chunkPos = 0, chunkLen = 0;
-        auto fillChunk = [&]() -> bool {
-            chunkPos = 0;
-            int n = f.read((uint8_t*)chunk, sizeof(chunk));
-            chunkLen = n > 0 ? (size_t)n : 0;
-            return chunkLen > 0;
-        };
-        line.reserve(256);
-
-        while (chunkPos < chunkLen || f.available()) {
-            /* Stop early if signal cap reached (only when no name filter is
-             * active — filtered loads are inherently bounded by brand count). */
-            if (!filterName && maxSignals > 0 && (int)remote.signals.size() >= maxSignals) break;
-
-            /* Bounded line read: excess characters are discarded and the
-             * current signal is marked invalid. */
-            line = "";
-            bool lineOverflow = false;
-            for (;;) {
-                if (chunkPos >= chunkLen && !fillChunk()) break;   /* EOF */
-                const char* sp = chunk + chunkPos;
-                const size_t avail = chunkLen - chunkPos;
-                const char* nl = (const char*)memchr(sp, '\n', avail);
-                const size_t seg = nl ? (size_t)(nl - sp) : avail;
-                const size_t room = kMaxLineLen - line.length();
-                const size_t take = seg < room ? seg : room;
-                if (take) line.concat(sp, (unsigned int)take);
-                if (take < seg) lineOverflow = true;               /* excess discarded */
-                chunkPos += seg + (nl ? 1 : 0);
-                if (nl) break;
-            }
-            if (lineOverflow) { validSignal = false; continue; }
-            line.trim();
-
-            if (line.startsWith("name: ")) {
-                if (inSignal) {
-                    /* When filtering, only keep signals whose name matches. */
-                    if (validSignal && (!filterName || strcasecmp(sig.name, filterName) == 0)) {
-                        remote.signals.push_back(std::move(sig));
-                    }
-                }
-                resetSig(sig);
-                hasSerializedValue = false;
-                hasSerializedBits = false;
-                validSignal = true;
-                protoName = "";
-                strncpy(sig.name, line.c_str() + 6, sizeof(sig.name) - 1);
-                sig.name[sizeof(sig.name) - 1] = '\0';
-                inSignal = true;
-            }
-            else if (line.startsWith("type: ")) {
-                String t = line.substring(6);
-                t.trim();
-                sig.isRaw = (t == "raw");
-            }
-            else if (line.startsWith("protocol: ")) {
-                String proto = line.substring(10);
-                proto.trim();
-                protoName = proto;
-                sig.protocol = flipperProtoToType(proto.c_str());
-            }
-            else if (line.startsWith("value: ")) {
-                sig.value = strtoull(line.c_str() + 7, nullptr, 0);
-                hasSerializedValue = true;
-            }
-            else if (line.startsWith("bits: ")) {
-                sig.bits = line.substring(6).toInt();
-                hasSerializedBits = true;
-            }
-            else if (line.startsWith("address: ")) {
-                validSignal &= infrared_file::hexBytes(line.c_str() + 9, sig.address);
-            }
-            else if (line.startsWith("command: ")) {
-                validSignal &= infrared_file::hexBytes(line.c_str() + 9, sig.command);
-                if (!sig.isRaw) {
-                    if (!hasSerializedBits) sig.bits = 32;
-                    if (!hasSerializedValue) {
-                        uint64_t v; uint16_t b;
-                        if (flipperEncodeFrame(protoName.c_str(), sig.address, sig.command, v, b)) {
-                            sig.value = v;
-                            if (!hasSerializedBits) sig.bits = b;
-                        } else {
-                            sig.value = ((uint64_t)sig.address) | ((uint64_t)sig.command << 16);
-                        }
-                    }
-                }
-            }
-            else if (line.startsWith("frequency: ")) {
-                long fq = line.substring(11).toInt();
-                if (fq < 10000) fq = 10000;
-                if (fq > 100000) fq = 100000;
-                sig.frequency = (uint32_t)fq;
-            }
-            else if (line.startsWith("data: ")) {
-                const char* p = line.c_str() + 6;
-                while (*p) {
-                    while (*p == ' ') p++;
-                    if (!*p) break;
-                    char* end;
-                    long val = strtol(p, &end, 10);
-                    if (end == p) break;
-                    if (val <= 0 || val > 65535 || sig.rawData.size() >= kMaxRawEntries) {
-                        validSignal = false;
-                        break;
-                    }
-                    sig.rawData.push_back((uint16_t)val);
-                    p = end;
-                }
+    void App09::_beginLoad(const char* path, IrRemote& remote, int maxSignals, const char* filterName, IrScene successScene, const char* purpose)
+    {
+        _cancelLoad(); _loadDestination = &remote; _loadMaxSignals = maxSignals; _loadSuccessScene = successScene;
+        strncpy(_loadPath, path ? path : "", sizeof(_loadPath) - 1); _loadPath[sizeof(_loadPath) - 1] = 0;
+        strncpy(_loadFilter, filterName ? filterName : "", sizeof(_loadFilter) - 1); _loadFilter[sizeof(_loadFilter) - 1] = 0;
+        strncpy(_loadPurpose, purpose ? purpose : "Loading", sizeof(_loadPurpose) - 1); _loadPurpose[sizeof(_loadPurpose) - 1] = 0;
+        char mounted[160]; int n = snprintf(mounted, sizeof(mounted), "/sdcard%s", _loadPath);
+        _loadFile = (n > 0 && (size_t)n < sizeof(mounted)) ? fopen(mounted, "rb") : nullptr;
+        _loadResult.signals.clear(); strncpy(_loadResult.path, _loadPath, sizeof(_loadResult.path) - 1); _loadResult.path[sizeof(_loadResult.path) - 1] = 0;
+        const char* slash = strrchr(_loadPath, '/'); const char* name = slash ? slash + 1 : _loadPath;
+        strncpy(_loadResult.filename, name, sizeof(_loadResult.filename) - 1); _loadResult.filename[sizeof(_loadResult.filename) - 1] = 0;
+        char* dot = strrchr(_loadResult.filename, '.'); if (dot) *dot = 0;
+        _resetLoadSignal(_loadSignal); _loadBytes = _loadRawBytes = _loadRawUsec = 0; _loadProto[0] = 0; _loadSawValue = false; _loadSawBits = false; _loadInSignal = false; _loadEOF = false; _loadFailed = !_loadFile; _loadCancelled = false; _loadError = _loadFile ? nullptr : "Unable to read IR file";
+        if (_loadFile) {
+            bool invalidSize = fseek(_loadFile, 0, SEEK_END) != 0;
+            long inputSize = invalidSize ? -1 : ftell(_loadFile);
+            if (inputSize < 0) invalidSize = true;
+            if (invalidSize || inputSize > (long)infrared_file::kMaxInputBytes || fseek(_loadFile, 0, SEEK_SET) != 0) {
+                fclose(_loadFile); _loadFile = nullptr; _loadFailed = true;
+                _loadError = inputSize > (long)infrared_file::kMaxInputBytes ? "Input too large (limit 4 MiB)" : "Unable to size IR file";
             }
         }
+        _loadOrigin = _scene;
+        _switchScene(IrScene::Loading);
+    }
 
-        if (inSignal) {
-            if (validSignal && (!filterName || strcasecmp(sig.name, filterName) == 0)) {
-                remote.signals.push_back(std::move(sig));
+    bool App09::_stepLoad()
+    {
+        if (_device->button.B.pressed()) { _cancelLoad(); _switchScene(_loadOrigin); return true; }
+        if (_loadFailed) { _finishLoad(false); _drawMsgBox(_loadError ? _loadError : "IR load failed", "Press B to cancel"); return true; }
+        if (!_loadFile) return true;
+        if (!_loadReader) _loadReader = new infrared_stream::Reader(_loadFile);
+        const bool done = _loadReader->step([this](const char* line) { _parseLoadLine(line); }, 2048);
+        _loadBytes = _loadReader->bytes();
+        _device->Lcd.setTextColor(hp::COL_DIM, hp::COL_BG); _device->Lcd.setCursor(20, 90); _device->Lcd.printf("Read %lu bytes", (unsigned long)_loadBytes);
+        if (_loadReader->failed()) { _loadError = "Read error while loading IR file"; _loadFailed = true; _finishLoad(false); return true; }
+        if (done) { if (_loadInSignal && !_loadFailed) _commitLoadSignal(); _loadEOF = true; }
+        if (_loadEOF) { if (_loadFailed || _loadResult.signals.empty()) { if (!_loadError) _loadError = "No valid IR signals"; _loadFailed = true; _finishLoad(false); return true; } _finishLoad(true); return true; }
+        return false;
+    }
+
+    void App09::_cancelLoad() { if (_loadReader) { delete _loadReader; _loadReader = nullptr; } if (_loadFile) { fclose(_loadFile); _loadFile = nullptr; } _loadDestination = nullptr; _loadResult.signals.clear(); _loadSignal.rawData.clear(); }
+    void App09::_finishLoad(bool success) {
+        if (_loadReader) { delete _loadReader; _loadReader = nullptr; } if (_loadFile) { fclose(_loadFile); _loadFile = nullptr; }
+        if (!success) { _loadResult.signals.clear(); _loadSignal.rawData.clear(); _loadDestination = nullptr; return; }
+        if (success && _loadDestination) {
+            *_loadDestination = std::move(_loadResult);
+            if (_loadSuccessScene == IrScene::TVBGone) {
+                _univBlastQ.clear();
+                for (int i = 0; i < (int)_currentRemote.signals.size(); ++i) _univBlastQ.push_back(i);
             }
+            _switchScene(_loadSuccessScene);
+            _prevScene = _loadOrigin;
         }
-
-        f.close();
-        return !remote.signals.empty();
     }
 
     bool App09::_saveSignalToFile(const char* dir, const char* remoteName, const IrSignal& sig)
     {
         if (!signalWritable(sig)) return false;
         char path[128];
-        snprintf(path, sizeof(path), "%s/%s.ir", dir, remoteName);
-
-        File f = SD_MMC.open(path, FILE_WRITE);
-        if (!f) return false;
-
-        f.println("Filetype: IR signals file");
-        f.println("Version: 1");
-        f.println("#");
-        writeSignalEntry(f, sig);
-        f.close();
-        return true;
+        const int n = snprintf(path, sizeof(path), "%s/%s.ir", dir, remoteName);
+        if (n < 0 || static_cast<size_t>(n) >= sizeof(path) || SD_MMC.exists(path)) return false;
+        std::string document = "Filetype: IR signals file\nVersion: 1\n#\n";
+        if (!serializeSignalEntry(document, sig)) return false;
+        char mounted[160];
+        const int mn = snprintf(mounted, sizeof(mounted), "/sdcard%s", path);
+        if (mn < 0 || static_cast<size_t>(mn) >= sizeof(mounted)) return false;
+        return infrared_file::transactionalWrite(mounted, document.data(), document.size(), false) ==
+               infrared_file::TransactionResult::Saved;
     }
 
     bool App09::_appendSignalToFile(const char* path, const IrSignal& sig)
     {
         if (!signalWritable(sig)) return false;
-        File f = SD_MMC.open(path, FILE_APPEND);
-        if (!f) return false;
-
-        f.println("#");
-        writeSignalEntry(f, sig);
-        f.close();
-        return true;
+        std::string suffix = "\n#\n";
+        if (!serializeSignalEntry(suffix, sig)) return false;
+        char mounted[160];
+        const int mn = snprintf(mounted, sizeof(mounted), "/sdcard%s", path);
+        if (mn < 0 || static_cast<size_t>(mn) >= sizeof(mounted)) return false;
+        const infrared_file::TransactionResult result = infrared_file::transactionalWrite(
+            mounted, suffix.data(), suffix.size(), true);
+        return result == infrared_file::TransactionResult::Saved ||
+               result == infrared_file::TransactionResult::SavedBackupRetained;
     }
 
     bool App09::_isDirectoryEmpty(const char* path)

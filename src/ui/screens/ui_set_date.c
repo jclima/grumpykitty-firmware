@@ -37,11 +37,14 @@ static lv_obj_t * s_picker_bg  = NULL;
 /* ── Dirty-tracking clean state ─────────────────────── */
 static uint16_t s_init_M = 0, s_init_D = 0, s_init_Y = 2;
 static bool     s_action_pending = false;  /* gate against double-trigger */
+static lv_obj_t * s_result_hint = NULL;
 
 /* Small bottom-left save hint — visible briefly during FADE_ON transition */
-static void make_save_hint(void)
+static void make_save_hint(const char *text)
 {
+    if (s_result_hint) { lv_obj_del(s_result_hint); s_result_hint = NULL; }
     lv_obj_t * bg = lv_obj_create(ui_date_picker);
+    s_result_hint = bg;
     lv_obj_set_size(bg, 110, 28);
     lv_obj_align(bg, LV_ALIGN_BOTTOM_LEFT, 10, -10);
     lv_obj_set_style_bg_color(bg, THEME_LV(THEME_SURFACE), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -52,7 +55,7 @@ static void make_save_hint(void)
 
     lv_obj_t * lbl = lv_label_create(bg);
     lv_obj_set_align(lbl, LV_ALIGN_CENTER);
-    lv_label_set_text(lbl, "Saved");
+    lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(lbl, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
@@ -71,10 +74,15 @@ void ui_date_picker_action_save(void)
     uint8_t  day   = (uint8_t)(d_raw % 31 + 1);                        /* wrap: 0-61→1-31 */
     uint16_t year  = (uint16_t)(2024 + y_idx);
 
-    ui_rtc_bridge_set_date(year, month, day);
+    if (!ui_rtc_bridge_date_valid(year, month, day) ||
+        !ui_rtc_bridge_set_date(year, month, day)) {
+        s_action_pending = false;
+        make_save_hint("Not saved");
+        return;
+    }
     s_init_M = m_idx; s_init_D = (uint16_t)(d_raw % 31); s_init_Y = y_idx;
 
-    make_save_hint();  /* briefly visible during FADE_ON */
+    make_save_hint("Saved");  /* briefly visible during FADE_ON */
     _ui_screen_change(&ui_manual, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_manual_screen_init);
 }
 
@@ -89,6 +97,8 @@ void ui_date_picker_action_cancel(void)
 static void on_screen_loaded(lv_event_t * e)
 {
     (void)e;
+    if (s_result_hint) { lv_obj_del(s_result_hint); s_result_hint = NULL; }
+    s_action_pending = false;
     uint16_t year; uint8_t month, day, weekday, hour, minute, second;
     if (!ui_rtc_bridge_get(&year, &month, &day, &weekday, &hour, &minute, &second)) return;
 
@@ -102,7 +112,6 @@ static void on_screen_loaded(lv_event_t * e)
     lv_roller_set_selected(ui_date_Roller_Y, y_idx, LV_ANIM_OFF);
 
     s_init_M = m_idx; s_init_D = d_idx; s_init_Y = y_idx;
-    s_action_pending = false;
 }
 
 /* ── Screen init ────────────────────────────────────── */
@@ -244,6 +253,7 @@ void ui_date_picker_screen_init(void)
 
 void ui_date_picker_screen_destroy(void)
 {
+    s_result_hint = NULL;
     if (ui_date_picker) lv_obj_del(ui_date_picker);
     ui_date_picker   = NULL;
     ui_date_Roller_M = NULL;

@@ -58,9 +58,9 @@ class CTP_Class {
             _i2c->writeRegister8(_dev_addr, addr, data, CTP_I2C_FREQ);
         }
 
-        inline void _I2C_readBuff(uint8_t addr, int size, uint8_t buff[])
+        inline bool _I2C_readBuff(uint8_t addr, int size, uint8_t buff[])
         {
-            _i2c->readRegister(_dev_addr, addr, buff, size, CTP_I2C_FREQ);
+            return _i2c->readRegister(_dev_addr, addr, buff, size, CTP_I2C_FREQ);
         }
 
         inline uint8_t _I2C_read8Bit(uint8_t addr)
@@ -92,16 +92,19 @@ class CTP_Class {
             _y_pos = -1;
         }
 
-        inline void _update_coor()
+        inline bool _update_coor()
         {
             uint8_t buff[4];
-            _I2C_readBuff(0x03, 4, buff);
+            if (!_I2C_readBuff(0x03, 4, buff)) {
+                _reset_coor();
+                return false;
+            }
 
             #if CTP_REVERS_XY
                 _y_pos = ((buff[0]&0x0F) << 8) | buff[1];
                 _x_pos = ((buff[2]&0x0F) << 8) | buff[3];
                 #if CTP_REVERS_XPOS
-                    _x_pos = -( _x_pos ) + 320;
+                    _x_pos = -( _x_pos ) + 319;
                 #endif
                 #if CTP_REVERS_YPOS
                     _y_pos = -( _y_pos ) + 240;
@@ -110,6 +113,7 @@ class CTP_Class {
                 _x_pos = ((buff[0]&0x0F) << 8) | buff[1];
                 _y_pos = ((buff[2]&0x0F) << 8) | buff[3];
             #endif
+            return _x_pos >= 0 && _x_pos < 320 && _y_pos >= 0 && _y_pos < 240;
         }
 
     public:
@@ -139,12 +143,18 @@ class CTP_Class {
         inline bool isTouched()
         {
             if (!_enable) return false;
-            return _I2C_read8Bit(0x02) ? true : false;
+            uint8_t count = 0;
+            return _i2c->readRegister(_dev_addr, 0x02, &count, 1, CTP_I2C_FREQ)
+                && count != 0;
         }
 
-        inline void getPos(int& x_pos, int& y_pos)
+        inline bool getPos(int& x_pos, int& y_pos)
         {
-            _update_coor();
+            if (!_enable || !_update_coor()) {
+                x_pos = -1;
+                y_pos = -1;
+                return false;
+            }
             x_pos = _x_pos;
             y_pos = _y_pos;
 
@@ -162,6 +172,7 @@ class CTP_Class {
                 #endif
                 #endif           
             #endif
+            return true;
         }
 
         inline void printCoordinate()

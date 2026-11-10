@@ -136,9 +136,11 @@ def lookup(tree, path_parts):
 
 
 class Handler(BaseHTTPRequestHandler):
+    protect_discovery = False
     server_version = "MockSignalK/1"
     protocol_version = "HTTP/1.1"
     require_token = None
+    auth_status = 401
     verbose = False
 
     def log_message(self, fmt, *args):   # never logs headers, so never the token
@@ -172,6 +174,11 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host") or "localhost"
 
         if path == "/signalk":
+            if self.protect_discovery:
+                got = self.headers.get("Authorization", "")
+                scheme, _, token = got.partition(" ")
+                if self.require_token is None or scheme.lower() != "bearer" or not hmac.compare_digest(token.strip().encode(), self.require_token.encode()):
+                    return self.send_json(self.auth_status, {"error": "unauthorized"}, {"WWW-Authenticate": 'Bearer realm="mock-signalk"'})
             return self.send_json(200, {
                 "endpoints": {"v1": {"version": "1.46.2",
                                      "signalk-http": "http://%s/signalk/v1/api/" % host,
@@ -183,7 +190,7 @@ class Handler(BaseHTTPRequestHandler):
                 got = self.headers.get("Authorization", "")
                 scheme, _, token = got.partition(" ")
                 if scheme.lower() != "bearer" or not hmac.compare_digest(token.strip().encode(), self.require_token.encode()):
-                    return self.send_json(401, {"error": "unauthorized"}, {"WWW-Authenticate": 'Bearer realm="mock-signalk"'})
+                    return self.send_json(self.auth_status, {"error": "unauthorized"}, {"WWW-Authenticate": 'Bearer realm="mock-signalk"'})
             parts = [p for p in path[len("/signalk/v1/api"):].split("/") if p]
             if parts[:2] != ["vessels", "self"]:
                 return self.send_json(404, {"error": "not found"})
@@ -201,12 +208,18 @@ def main():
     ap.add_argument("--port", type=int, default=3000)
     ap.add_argument("--bind", default="127.0.0.1", help="address to bind (use 0.0.0.0 to reach it from the device)")
     ap.add_argument("--require-token", metavar="T", default=None, help="require 'Authorization: Bearer T' on the API")
+    ap.add_argument("--auth-status", type=int, choices=(401, 403), default=401,
+                    help="status to return for missing or wrong token (default: 401)")
+    ap.add_argument("--protect-discovery", action="store_true",
+                    help="require the bearer token for /signalk discovery too")
     ap.add_argument("--scenario", choices=SCENARIOS, default="ok")
     ap.add_argument("-v", "--verbose", action="store_true", help="log requests (never headers)")
     args = ap.parse_args()
 
     STATE["scenario"] = args.scenario
     Handler.require_token = args.require_token
+    Handler.auth_status = args.auth_status
+    Handler.protect_discovery = args.protect_discovery
     Handler.verbose = args.verbose
 
     def cycle(_signo, _frame):

@@ -501,7 +501,7 @@ void ui_wifi_bridge_connect_pending(const char *password)
 {
     if (s_pending_ssid[0] == '\0') return;
     ui_wifi_bridge_connect(s_pending_ssid, password ? password : "");
-    s_pending_ssid[0] = '\0';
+    /* Keep the target available for retries from the same provisioning screen. */
 }
 
 void ui_wifi_bridge_disconnect(void)

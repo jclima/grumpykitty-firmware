@@ -21,6 +21,7 @@ bool begin();               // acquire lease and start advertising; false on fai
 void end();                 // neutral report, release lease; safe to call repeatedly
 void tick();                // drain the send queue; call every onRunning
 bool ready();               // encrypted link, keyboard reports usable (media may differ)
+bool mediaReady();          // encrypted link and consumer-control CCCD usable
 bool connected();           // link exists (possibly still pairing)
 bool failed();              // BLE error or Bluetooth disabled/unavailable
 bool tapKey(uint8_t usage, uint8_t mods = 0);  // press+release; false if dropped

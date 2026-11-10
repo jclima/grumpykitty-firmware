@@ -34,6 +34,9 @@ namespace MOONCAKE::APPS
         void onRunning() override;
         void onClose()   override;
 
+        static void serviceDeferredClose(DEVICES* device);
+        static bool closePending();
+
     private:
         DEVICES* _device = nullptr;
 
@@ -45,7 +48,10 @@ namespace MOONCAKE::APPS
         /* ── Audio capture (FreeRTOS task, core 0, priority 2) ── */
         ES7210_Class       _codec;
         TaskHandle_t       _captureTask = nullptr;
-        volatile bool      _taskRun     = false;
+        std::atomic<bool>  _taskRun     {false};
+        std::atomic<bool>  _capActive   {false};
+        bool _closePending = false;
+        bool _soundSuspended = false;
         std::atomic<float> _latestAngle {0.0f};
 
         /* ── Render state ── */
@@ -86,5 +92,6 @@ namespace MOONCAKE::APPS
         /* ── Helpers ── */
         static float    _calcAmplitude(const int16_t* buf, size_t mono);
         void _releaseResources();
+        void _finishClose();
     };
 }

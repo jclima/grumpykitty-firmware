@@ -8,10 +8,12 @@
  * @copyright Copyright (c) 2025
  */
 #include "ble_spam.h"
+#include <atomic>
 #ifndef APP07_HOST_TEST
 #include "../../system/bluetooth_manager.h"
 #endif
 static bluetooth_manager::Lease s_btLease=0;
+static std::atomic<bool> s_gapError{false};
 #ifndef APP07_HOST_TEST
 #include "../app_common/hp_ui.h"
 #endif
@@ -475,7 +477,7 @@ void App07::_drawRunningStatus()
     auto& Lcd = _device->Lcd;
 
     /* Status badge uses the same header as the menu. */
-    const char* stStr = _advertising ? "ACTIVE" : "IDLE";
+    const char* stStr = _gapError ? "GAP ERROR" : (_advertising ? "ACTIVE" : "IDLE");
     uint16_t stCol = _advertising ? BS_ACCENT : BS_FG_DIM;
     hp::drawHeader(Lcd, "BLE Spam", stStr, stCol);
 
@@ -497,7 +499,7 @@ void App07::_drawRunningStatus()
     Lcd.printf("INT:%-4ums", (unsigned)_delayMs);
     Lcd.setTextColor(BS_ACCENT, BS_BG);
     Lcd.setCursor(RUN_PANEL_X + 6 + 12 * 8, y);
-    Lcd.printf("PKT:%lu", (unsigned long)_packetCount);
+    Lcd.printf("ATTEMPT:%lu", (unsigned long)_packetCount);
     y += 18;
 
     /* Sub-title */
@@ -508,6 +510,7 @@ void App07::_drawRunningStatus()
 
 void App07::_updateRunning()
 {
+    if (s_gapError.exchange(false)) { _gapError = true; _stopSpam(); _drawRunningStatus(); return; }
     /* B press/release is handled centrally in onRunning(). */
 
     /* A = toggle broadcast on/off (stay on running page) */
@@ -561,8 +564,12 @@ void App07::_updateRunning()
         }
 
         if (pktLen > 0) {
-            _sendPacket(pkt, pktLen);
-            _packetCount++;
+            if (_sendPacket(pkt, pktLen)) _packetCount++;
+            else {
+                _drawRunningStatic();
+                _drawRunningStatus();
+                return;
+            }
         }
     }
 
@@ -612,8 +619,15 @@ static esp_ble_adv_params_t s_adv_params = {
 
 static void _gapEventCb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* param)
 {
-    /* Silent — we don't need event acks; raw API is fire-and-forget */
-    (void)event; (void)param;
+    /* Raw GAP is asynchronous; surface controller rejection on the next UI tick. */
+    if (!param) return;
+    if ((event == ESP_GAP_BLE_ADV_DATA_RAW_SET_COMPLETE_EVT &&
+         param->adv_data_raw_cmpl.status != ESP_BT_STATUS_SUCCESS) ||
+        (event == ESP_GAP_BLE_ADV_START_COMPLETE_EVT &&
+         param->adv_start_cmpl.status != ESP_BT_STATUS_SUCCESS) ||
+        (event == ESP_GAP_BLE_SET_STATIC_RAND_ADDR_EVT &&
+         param->set_rand_addr_cmpl.status != ESP_BT_STATUS_SUCCESS))
+        s_gapError.store(true);
 }
 
 void App07::_initBLE()
@@ -647,9 +661,9 @@ void App07::_deinitBLE()
     _bleInited=false; _advRunning=false; _advertising=false;
 }
 
-void App07::_sendPacket(const uint8_t* data, uint8_t len)
+bool App07::_sendPacket(const uint8_t* data, uint8_t len)
 {
-    if (!_bleInited || !bluetooth_manager::owns(s_btLease) || len == 0) return;
+    if (!_bleInited || !bluetooth_manager::owns(s_btLease) || len == 0) return false;
 
     /* New random-static MAC every packet → maximum device diversity.
      * esp_ble_gap_set_rand_addr() is non-blocking; the controller
@@ -657,21 +671,23 @@ void App07::_sendPacket(const uint8_t* data, uint8_t len)
     esp_bd_addr_t addr;
     esp_fill_random(addr, 6);
     addr[0] = (addr[0] | 0xC0);             // top 2 bits = 11 (static)
-    esp_ble_gap_set_rand_addr(addr);
+    if (esp_ble_gap_set_rand_addr(addr) != ESP_OK) { _gapError = true; _stopSpam(); return false; }
 
     /* Update payload in-place — also non-blocking. */
-    esp_ble_gap_config_adv_data_raw((uint8_t*)data, len);
+    if (esp_ble_gap_config_adv_data_raw((uint8_t*)data, len) != ESP_OK) { _gapError = true; _stopSpam(); return false; }
 
     /* First packet: kick off advertising. After that the controller
      * keeps cycling on its own at the HW interval (20-30 ms). */
     if (!_advRunning) {
-        esp_ble_gap_start_advertising(&s_adv_params);
+        if (esp_ble_gap_start_advertising(&s_adv_params) != ESP_OK) { _gapError = true; _stopSpam(); return false; }
         _advRunning = true;
     }
+    return true;
 }
 
 void App07::_startSpam()
 {
+    s_gapError.store(false);
     _initBLE();
     if (!_bleInited) {
         _device->Lcd.fillRect(0,218,320,22,TFT_BLACK);
@@ -681,6 +697,7 @@ void App07::_startSpam()
     }
     _advertising      = true;
     _packetCount      = 0;
+    _gapError         = false;
     _lastAdvTime      = 0;
     _lastDrawTime     = 0;
     _lastMacChangeTime = 0;

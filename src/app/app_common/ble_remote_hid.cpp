@@ -250,7 +250,7 @@ bool keyReady() {
     return baseReady() && (protocolMode == 0 ? (bootSubscribed.load() || assumedKey.load())
                                              : (subscribed.load() || assumedKey.load()));
 }
-bool mediaReady() {
+bool mediaReportReady() {
     return baseReady() && protocolMode != 0 && (mediaSubscribed.load() || assumedMedia.load());
 }
 bool linkReady() { return keyReady(); }  // UI "CONNECTED" = keyboard reports usable
@@ -262,12 +262,12 @@ bool send(const Item& it, bool force = false) {
         const uint16_t handle = handles[0][protocolMode == 0 ? 14 : 10];
         return esp_ble_gatts_send_indicate(iface, conn, handle, 8, data, false) == ESP_OK;
     }
-    if (!mediaReady()) return true;  // Boot protocol / unsubscribed media: drop.
+    if (!mediaReportReady()) return true;  // Boot protocol / unsubscribed media: drop.
     uint8_t data[2] = {static_cast<uint8_t>(it.value), static_cast<uint8_t>(it.value >> 8)};
     return esp_ble_gatts_send_indicate(iface, conn, handles[0][20], 2, data, false) == ESP_OK;
 }
 bool enqueueTap(uint8_t kind, uint8_t mods, uint16_t value) {
-    if (!value || !(kind == 0 ? keyReady() : mediaReady())) return false;
+    if (!value || !(kind == 0 ? keyReady() : mediaReportReady())) return false;
     const unsigned used = (tail + QUEUE_LEN - head) % QUEUE_LEN;
     if (used + 2 >= QUEUE_LEN) return false;  // Keep one slot free; never split a tap.
     queue[tail] = {kind, mods, value}; tail = (tail + 1) % QUEUE_LEN;
@@ -328,6 +328,7 @@ void end() {
 }
 bool connected() { return active && linked; }
 bool ready() { return linkReady(); }
+bool mediaReady() { return mediaReportReady(); }
 bool failed() {
     return error || (active && !bluetooth_manager::owns(lease)) ||
            (active && services != 2 && millis() - startedAt > 5000);

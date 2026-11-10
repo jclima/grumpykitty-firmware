@@ -5,10 +5,10 @@
 
 #include "../ui.h"
 #include "../ui_sd_bridge.h"
+#include "../ui_rtc_bridge.h"
 #include "../ui_wifi_bridge.h"
 #include "../../system/settings_bridge.h"
 #include "../../system/persist.h"
-#include <time.h>
 #include <esp_system.h>
 #include "../../system/recovery.h"
 #include "../../system/power_mgmt.h"
@@ -100,14 +100,17 @@ static void tab_time_refresh(lv_timer_t * t)
 {
     (void)t;
     if(!s_lbl_date || !s_lbl_time_str) return;
-    time_t now = time(NULL);
-    struct tm * ti = localtime(&now);
-    if(!ti) return;
+    uint16_t year; uint8_t month, day, weekday, hour, minute, second;
+    if (!ui_rtc_bridge_get(&year, &month, &day, &weekday, &hour, &minute, &second)) {
+        lv_label_set_text(s_lbl_date, "RTC unavailable");
+        lv_label_set_text(s_lbl_time_str, "Set clock");
+        return;
+    }
     static const char * const wd[7] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
     lv_label_set_text_fmt(s_lbl_date,     "%02d / %02d / %04d",
-                          ti->tm_mon + 1, ti->tm_mday, ti->tm_year + 1900);
+                          month, day, year);
     lv_label_set_text_fmt(s_lbl_time_str, "%s  %02d:%02d",
-                          wd[ti->tm_wday], ti->tm_hour, ti->tm_min);
+                          weekday < 7 ? wd[weekday] : "---", hour, minute);
 }
 
 static void tab_key_a_cb(lv_event_t * e)

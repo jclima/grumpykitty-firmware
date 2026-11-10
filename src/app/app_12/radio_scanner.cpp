@@ -22,6 +22,7 @@ namespace {
 constexpr int MAX_WIFI = 40, BLE_SLOTS = 64, NAME_LEN = 20, CHANNELS = 14;
 constexpr uint32_t WIFI_RESCAN_MS = 5000, WIFI_BUSY_RETRY_MS = 1000;
 constexpr uint32_t BLE_SNAP_MS = 500, BLE_EXPIRE_MS = 30000, DRAW_MIN_MS = 100;
+constexpr uint32_t BLE_START_DEADLINE_MS = 5000;
 constexpr uint32_t MONITOR_DRAW_MS = 250;
 constexpr uint32_t REPEAT_DELAY = 400, REPEAT_EVERY = 120;
 constexpr int VIS = hp::LIST2_VIS;
@@ -37,6 +38,10 @@ portMUX_TYPE g_mux = portMUX_INITIALIZER_UNLOCKED;
 BleSlot g_table[BLE_SLOTS];
 std::atomic<bool> g_ble_paused{false};
 std::atomic<bool> g_ble_running{false};
+std::atomic<bool> g_ble_active{false};
+std::atomic<bool> g_ble_starting{false};
+std::atomic<bool> g_ble_start_failed{false};
+std::atomic<uint32_t> g_ble_start_deadline{0};
 esp_ble_scan_params_t g_scan_params;
 
 void tableClear() {
@@ -75,12 +80,16 @@ void onScanResult(const esp_ble_gap_cb_param_t::ble_scan_result_evt_param& r) {
 }
 
 void gapCb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t* p) {
+    if (!g_ble_active.load()) return;
     switch (event) {
     case ESP_GAP_BLE_SCAN_PARAM_SET_COMPLETE_EVT:
-        if (p->scan_param_cmpl.status == ESP_BT_STATUS_SUCCESS) esp_ble_gap_start_scanning(0);
+        if (p->scan_param_cmpl.status != ESP_BT_STATUS_SUCCESS || esp_ble_gap_start_scanning(0) != ESP_OK)
+            g_ble_start_failed = true;
         break;
     case ESP_GAP_BLE_SCAN_START_COMPLETE_EVT:
         g_ble_running = (p->scan_start_cmpl.status == ESP_BT_STATUS_SUCCESS);
+        g_ble_starting = false;
+        if (!g_ble_running) g_ble_start_failed = true;
         break;
     case ESP_GAP_BLE_SCAN_RESULT_EVT: onScanResult(p->scan_rst); break;
     default: break;
@@ -179,6 +188,7 @@ void AppRadioScanner::_stopWifiScan() {
     WiFi.scanDelete();
 }
 void AppRadioScanner::_stopBle() {
+    g_ble_active = false; g_ble_starting = false;
     if (_lease) bluetooth_manager::release(_lease);  // also stops scanning
     _lease = 0; g_ble_running = false;
 }
@@ -204,6 +214,9 @@ void AppRadioScanner::_enterTab(Tab tab) {
     g_scan_params.scan_interval = 0x50;
     g_scan_params.scan_window = 0x30;
     g_scan_params.scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE;
+    g_ble_running = false; g_ble_start_failed = false; g_ble_starting = true;
+    g_ble_start_deadline = millis() + BLE_START_DEADLINE_MS;
+    g_ble_active = true;
     if (esp_ble_gap_set_scan_params(&g_scan_params) != ESP_OK) { _stopBle(); _state = ST_BT_ERR; return; }
     _state = ST_SCAN;
 }
@@ -296,6 +309,11 @@ void AppRadioScanner::_bleTick(uint32_t now) {
         _lease = 0; g_ble_running = false;
         _target_present = false;
         _state = bluetooth_manager::enabled() ? ST_BT_ERR : ST_BT_OFF; _count = 0; _dirty = true;
+        return;
+    }
+    if (g_ble_start_failed.load() || (g_ble_starting.load() && static_cast<int32_t>(now - g_ble_start_deadline.load()) >= 0)) {
+        _stopBle(); _state = ST_BT_ERR; _count = 0;
+        _setMessage("BLE scan failed; press A to retry", hp::COL_ERR); _dirty = true;
         return;
     }
     if (_paused || static_cast<int32_t>(now - _next_snap) < 0) return;
@@ -696,6 +714,10 @@ void AppRadioScanner::onRunning() {
         _monitorAdjust(left ? -1 : 1);
     }
     if (a) {
+        if (_screen == SURVEY && _tab == BLE && _state == ST_BT_ERR) {
+            /* Retry is an explicit reacquire: stale callbacks are fenced by _stopBle(). */
+            _leaveTab(); _enterTab(BLE); _dirty = true;
+        } else
         if (_screen == SURVEY && (_tab == WIFI || _tab == BLE)) {
             _sortClamp();
             _trackSelection();

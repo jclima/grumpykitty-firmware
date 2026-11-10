@@ -26,11 +26,14 @@ lv_obj_t * ui_time_Roller_M     = NULL;
 /* ── Dirty-tracking clean state ─────────────────────── */
 static uint16_t s_init_W = 0, s_init_H = 0, s_init_Min = 0;
 static bool     s_action_pending = false;
+static lv_obj_t * s_result_hint = NULL;
 
 /* Small bottom-left save hint — visible briefly during FADE_ON transition */
-static void make_save_hint(void)
+static void make_save_hint(const char *text)
 {
+    if (s_result_hint) { lv_obj_del(s_result_hint); s_result_hint = NULL; }
     lv_obj_t * bg = lv_obj_create(ui_time_picker);
+    s_result_hint = bg;
     lv_obj_set_size(bg, 110, 28);
     lv_obj_align(bg, LV_ALIGN_BOTTOM_LEFT, 10, -10);
     lv_obj_set_style_bg_color(bg, THEME_LV(THEME_SURFACE), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -41,7 +44,7 @@ static void make_save_hint(void)
 
     lv_obj_t * lbl = lv_label_create(bg);
     lv_obj_set_align(lbl, LV_ALIGN_CENTER);
-    lv_label_set_text(lbl, "Saved");
+    lv_label_set_text(lbl, text);
     lv_obj_set_style_text_color(lbl, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(lbl, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 }
@@ -56,11 +59,16 @@ void ui_time_picker_action_save(void)
     uint8_t hour    = (uint8_t)lv_roller_get_selected(ui_time_Roller_H);           /* 0-23 (INFINITE normalized) */
     uint8_t minute  = (uint8_t)(lv_roller_get_selected(ui_time_Roller_M) % 60);   /* wrap: 0-119→0-59 */
 
-    ui_rtc_bridge_set_time(hour, minute, 0);
-    ui_rtc_bridge_set_weekday(weekday);
+    if (hour > 23 || minute > 59 || weekday > 6 ||
+        !ui_rtc_bridge_set_time(hour, minute, 0) ||
+        !ui_rtc_bridge_set_weekday(weekday)) {
+        s_action_pending = false;
+        make_save_hint("Not saved");
+        return;
+    }
     s_init_W = weekday; s_init_H = hour; s_init_Min = minute;
 
-    make_save_hint();  /* briefly visible during FADE_ON */
+    make_save_hint("Saved");  /* briefly visible during FADE_ON */
     _ui_screen_change(&ui_manual, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_manual_screen_init);
 }
 
@@ -75,6 +83,8 @@ void ui_time_picker_action_cancel(void)
 static void on_screen_loaded(lv_event_t * e)
 {
     (void)e;
+    if (s_result_hint) { lv_obj_del(s_result_hint); s_result_hint = NULL; }
+    s_action_pending = false;
     uint16_t year; uint8_t month, day, weekday, hour, minute, second;
     if (!ui_rtc_bridge_get(&year, &month, &day, &weekday, &hour, &minute, &second)) return;
 
@@ -87,7 +97,6 @@ static void on_screen_loaded(lv_event_t * e)
     lv_roller_set_selected(ui_time_Roller_M, 60 + m_idx, LV_ANIM_OFF); /* start in 2nd copy */
 
     s_init_W = w_idx; s_init_H = h_idx; s_init_Min = m_idx;
-    s_action_pending = false;
 }
 
 /* ── Screen init ────────────────────────────────────── */
@@ -229,6 +238,7 @@ void ui_time_picker_screen_init(void)
 
 void ui_time_picker_screen_destroy(void)
 {
+    s_result_hint = NULL;
     if (ui_time_picker) lv_obj_del(ui_time_picker);
     ui_time_picker   = NULL;
     ui_time_Roller_W = NULL;

@@ -36,10 +36,8 @@ extern lv_obj_t * ui_input_textarea;
 /* ── Lifecycle ───────────────────────────────────────────────── */
 void ui_t9_keyboard_screen_init(void);
 void ui_t9_keyboard_screen_destroy(void);
-/** Cancel timers + null all pointers WITHOUT deleting the screen.
- *  Use when the T9 screen is active and you need lv_scr_load_anim
- *  to handle the transition — calling lv_obj_del on the active
- *  screen before load_anim causes a use-after-free restart. */
+/** Cancel timers and clear password state without deleting the owned screen.
+ *  The screen is retained across transitions and reset on re-entry. */
 void ui_t9_keyboard_cleanup(void);
 
 /* ── WiFi provisioning API ───────────────────────────────────── */

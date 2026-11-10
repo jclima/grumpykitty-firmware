@@ -55,6 +55,8 @@ static lv_timer_t * s_nav_timer       = NULL;  /* tracked nav-back timer */
 static uint32_t     s_conn_start_ms   = 0;
 static lv_obj_t   * s_overlay_status  = NULL;  /* label inside overlay */
 static lv_obj_t   * s_err_label       = NULL;  /* inline error below textarea */
+static lv_obj_t   * s_reveal_button   = NULL;
+static lv_obj_t   * s_reveal_label    = NULL;
 
 static const uint32_t kConnTimeoutMs  = 15000;
 
@@ -74,9 +76,13 @@ static const char * t9_lower[9][5] = {
 static const char * number_map[9]  = {"1","2","3","4","5","6","7","8","9"};
 
 /* Symbol page 0 — common password / special chars (ASCII only) */
-static const char * sym_page0[9]   = {".", "!", "@", "#", "$", "%", "&", "*", "?"};
-/* Symbol page 1 — extended */
-static const char * sym_page1[9]   = {"-", "_", "(", ")", "+", "=", "/", "\"", "'"};
+static const char * sym_pages[][9] = {
+    {".", "!", "@", "#", "$", "%", "&", "*", "?"},
+    {"-", "_", "(", ")", "+", "=", "/", "\"", "'"},
+    {":", ";", "\\", "[", "]", "{", "}", "<", ">"},
+    {"^", "~", "`", "|", ",", ".", "!", "@", "#"}
+};
+#define SYM_PAGE_COUNT ((int)(sizeof(sym_pages) / sizeof(sym_pages[0])))
 
 /* ═══════════════════════════════════════════════════════════════
  *  Internal helpers
@@ -130,7 +136,7 @@ static void _refresh_labels(void)
         if(s_space_bar) lv_obj_add_flag(s_space_bar, LV_OBJ_FLAG_HIDDEN);
 
     } else { /* MODE_SYMBOL */
-        const char ** sym = (s_sym_page == 0) ? sym_page0 : sym_page1;
+        const char ** sym = sym_pages[s_sym_page % SYM_PAGE_COUNT];
         for(int i = 0; i < 9; i++) lv_label_set_text(s_key_labels[i], sym[i]);
         /* Restore space-key background */
         lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_TRANSP, 0);
@@ -149,6 +155,63 @@ static void _clear_err(void)
     if(s_err_label) { lv_obj_del(s_err_label); s_err_label = NULL; }
 }
 
+static void _commit_pending_tap(void)
+{
+    if(s_commit_timer) { lv_timer_del(s_commit_timer); s_commit_timer = NULL; }
+    s_last_key = -1;
+    s_tap_count = 0;
+}
+
+static void _overlay_hide(void);
+
+static bool _valid_wifi_password(const char * text, int * reason)
+{
+    int len = text ? (int)strlen(text) : 0;
+    if(reason) *reason = 0;
+    if(len < 8) { if(reason) *reason = 1; return false; }
+    if(len > 64) { if(reason) *reason = 2; return false; }
+    for(int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)text[i];
+        if(c < 0x20 || c > 0x7e) { if(reason) *reason = 3; return false; }
+    }
+    if(len == 64) {
+        for(int i = 0; i < len; i++) {
+            unsigned char c = (unsigned char)text[i];
+            bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                       (c >= 'A' && c <= 'F');
+            if(!hex) { if(reason) *reason = 4; return false; }
+        }
+    }
+    return true;
+}
+
+static void _reveal_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED || !ui_input_textarea) return;
+    bool reveal = lv_textarea_get_password_mode(ui_input_textarea);
+    lv_textarea_set_password_mode(ui_input_textarea, !reveal);
+    if(s_reveal_label) lv_label_set_text(s_reveal_label, reveal ? "Hide" : "Show");
+}
+
+static void _t9_screen_event_cb(lv_event_t * e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_SCREEN_UNLOAD_START || code == LV_EVENT_SCREEN_UNLOADED) {
+        _overlay_hide();
+        _commit_pending_tap();
+        if(s_nav_timer) { lv_timer_del(s_nav_timer); s_nav_timer = NULL; }
+        if(ui_input_textarea) lv_textarea_set_text(ui_input_textarea, "");
+        s_prefill_buf[0] = '\0';
+        s_wifi_ssid[0] = '\0';
+        s_wifi_mode = false;
+    }
+}
+
+static void _textarea_event_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) _commit_pending_tap();
+}
+
 /* ── Show inline error below textarea ──────────────────────── */
 static void _show_err(const char * msg)
 {
@@ -156,6 +219,8 @@ static void _show_err(const char * msg)
     if(!ui_t9_keyboard) return;
     s_err_label = lv_label_create(ui_t9_keyboard);
     lv_label_set_text(s_err_label, msg);
+    lv_label_set_long_mode(s_err_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_width(s_err_label, 288);
     lv_obj_set_style_text_color(s_err_label, lv_color_hex(0xFF5555), 0);
     lv_obj_set_style_text_font(s_err_label, &ui_font_name_14, 0);
     lv_obj_set_pos(s_err_label, 16, 43);
@@ -177,13 +242,15 @@ static void _nav_back_to_wifi(lv_timer_t * t)
 {
     (void)t;
     s_nav_timer = NULL;         /* already firing — prevent cleanup() double-del */
-    ui_t9_keyboard_cleanup();   /* NULL all pointers before LVGL auto_del fires */
+    if(lv_scr_act() != ui_t9_keyboard) return;
+    ui_t9_keyboard_cleanup();
     _ui_screen_change(&ui_wifi, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_wifi_screen_init);
 }
 
 static void _conn_poll_cb(lv_timer_t * t)
 {
     (void)t;
+    if(lv_scr_act() != ui_t9_keyboard) { _overlay_hide(); return; }
     wifi_bridge_status_t st  = ui_wifi_bridge_get_status();
     uint32_t elapsed = lv_tick_get() - s_conn_start_ms;
 
@@ -195,14 +262,12 @@ static void _conn_poll_cb(lv_timer_t * t)
 
     } else if(st == WIFI_BRIDGE_FAILED) {
         _overlay_hide();
-        if(ui_input_textarea) lv_textarea_set_text(ui_input_textarea, "");
-        _show_err(LV_SYMBOL_WARNING " Wrong password, try again");
+        _show_err("Failed. Check Wi-Fi/password.");
 
     } else if(elapsed >= kConnTimeoutMs) {
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
-        if(s_overlay_status) lv_label_set_text(s_overlay_status, "Timeout");
-        s_nav_timer = lv_timer_create(_nav_back_to_wifi, 900, NULL);
-        lv_timer_set_repeat_count(s_nav_timer, 1);
+        _overlay_hide();
+        _show_err("Timed out. Try again.");
 
     } else {
         /* update countdown */
@@ -284,29 +349,24 @@ static void _overlay_show(void)
 static void _do_send(void)
 {
     if(!ui_input_textarea) return;
+    if(s_overlay || s_nav_timer || ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING) return;
     const char * txt = lv_textarea_get_text(ui_input_textarea);
     if(!txt) txt = "";
 
-    /* Commit any pending T9 multi-tap */
-    if(s_commit_timer) {
-        lv_timer_del(s_commit_timer);
-        s_commit_timer = NULL;
-        s_last_key     = -1;
-        s_tap_count    = 0;
-    }
+    _commit_pending_tap();
     _clear_err();
 
     if(s_wifi_mode) {
-        int plen = (int)strlen(txt);
-        if(plen == 0) {
-            _show_err(LV_SYMBOL_WARNING " Enter a password");
+        int reason = 0;
+        if(!_valid_wifi_password(txt, &reason)) {
+            if(reason == 1) _show_err("Password must be 8-63 chars (or 64 hex)");
+            else if(reason == 2) _show_err("Password is too long");
+            else if(reason == 4) _show_err("64-char key must be hexadecimal");
+            else _show_err("Password has unsupported characters");
             return;
         }
-        if(plen < 8) {
-            _show_err(LV_SYMBOL_WARNING " Too short (min 8 chars)");
-            return;
-        }
-        ui_wifi_bridge_connect_pending(txt);
+        /* The screen owns the target for every attempt; never consume it. */
+        ui_wifi_bridge_connect(s_wifi_ssid, txt);
         _overlay_show();
     } else {
         /* Generic text-entry mode: just navigate back */
@@ -336,7 +396,7 @@ static void _key_cb(lv_event_t * e)
     if(s_mode == MODE_NUMBER) {
         lv_textarea_add_text(ui_input_textarea, number_map[idx]);
     } else if(s_mode == MODE_SYMBOL) {
-        const char ** sym = (s_sym_page == 0) ? sym_page0 : sym_page1;
+        const char ** sym = sym_pages[s_sym_page % SYM_PAGE_COUNT];
         lv_textarea_add_text(ui_input_textarea, sym[idx]);
     } else {
         /* T9 multi-tap */
@@ -369,10 +429,11 @@ static void _key_cb(lv_event_t * e)
 static void _ctrl2_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _commit_pending_tap();
     if(s_mode == MODE_NUMBER) {
         if(ui_input_textarea) lv_textarea_add_text(ui_input_textarea, "0");
     } else if(s_mode == MODE_SYMBOL) {
-        s_sym_page = (s_sym_page == 0) ? 1 : 0;
+        s_sym_page = (s_sym_page + 1) % SYM_PAGE_COUNT;
         _refresh_labels();
     } else {
         s_upper = !s_upper;
@@ -384,6 +445,7 @@ static void _ctrl2_cb(lv_event_t * e)
 static void _switch_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _commit_pending_tap();
     if(s_mode == MODE_LETTER)        s_mode = MODE_NUMBER;
     else if(s_mode == MODE_NUMBER)  { s_mode = MODE_SYMBOL; s_sym_page = 0; }
     else                              s_mode = MODE_LETTER;
@@ -516,13 +578,17 @@ void ui_t9_keyboard_screen_init(void)
     s_nav_timer    = NULL;
     s_overlay_status = NULL;
     s_err_label    = NULL;
+    s_reveal_button = NULL;
+    s_reveal_label = NULL;
 
     /* ── Text input textarea ──────────────────────────────────── */
     ui_input_textarea = lv_textarea_create(ui_t9_keyboard);
-    lv_obj_set_width(ui_input_textarea, 240);
+    lv_obj_set_width(ui_input_textarea, 195);
     lv_obj_set_height(ui_input_textarea, 44);
     lv_obj_set_pos(ui_input_textarea, 15, 8);
     lv_textarea_set_one_line(ui_input_textarea, true);
+    lv_textarea_set_password_mode(ui_input_textarea, true);
+    lv_textarea_set_password_show_time(ui_input_textarea, 0);
     lv_textarea_set_text(ui_input_textarea, "");
 
     lv_textarea_set_placeholder_text(ui_input_textarea, "");
@@ -542,6 +608,19 @@ void ui_t9_keyboard_screen_init(void)
     lv_obj_set_style_bg_opa(ui_input_textarea, LV_OPA_COVER, LV_PART_CURSOR);
     lv_obj_set_style_border_opa(ui_input_textarea, LV_OPA_TRANSP, LV_PART_CURSOR);
     lv_obj_add_state(ui_input_textarea, LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(ui_input_textarea, _textarea_event_cb, LV_EVENT_CLICKED, NULL);
+
+    s_reveal_button = lv_btn_create(ui_t9_keyboard);
+    lv_obj_set_size(s_reveal_button, 42, 28);
+    lv_obj_set_pos(s_reveal_button, 207, 10);
+    lv_obj_set_style_bg_opa(s_reveal_button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_reveal_button, 0, 0);
+    s_reveal_label = lv_label_create(s_reveal_button);
+    lv_label_set_text(s_reveal_label, "Show");
+    lv_obj_set_style_text_color(s_reveal_label, THEME_LV(THEME_ACCENT), 0);
+    lv_obj_set_style_text_font(s_reveal_label, &ui_font_name_14, 0);
+    lv_obj_center(s_reveal_label);
+    lv_obj_add_event_cb(s_reveal_button, _reveal_cb, LV_EVENT_CLICKED, NULL);
 
     /* Apply pre-fill (used when retrying a saved-network password) */
     if(s_prefill_buf[0]) {
@@ -609,6 +688,7 @@ void ui_t9_keyboard_screen_init(void)
     lv_obj_add_event_cb(ui_control_3, _switch_cb, LV_EVENT_CLICKED, NULL);
     _make_clickable(ui_switch);
     lv_obj_add_event_cb(ui_switch, _switch_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(ui_t9_keyboard, _t9_screen_event_cb, LV_EVENT_ALL, NULL);
 
     /* ── Apply initial label state ───────────────────────────── */
     _refresh_labels();
@@ -638,6 +718,8 @@ void ui_t9_keyboard_screen_destroy(void)
     s_lbl_ctrl2       = NULL;
     s_sym_icon        = NULL;
     s_space_bar       = NULL;
+    s_reveal_button   = NULL;
+    s_reveal_label    = NULL;
     for(int i = 0; i < 9; i++) s_key_labels[i] = NULL;
 
     /* Reset WiFi mode for next open */
@@ -645,13 +727,11 @@ void ui_t9_keyboard_screen_destroy(void)
 }
 
 /* ─────────────────────────────────────────────────────────────────
- * ui_t9_keyboard_cleanup — cancel timers + null all LVGL pointers
- * WITHOUT calling lv_obj_del on the screen.
+ * ui_t9_keyboard_cleanup — cancel timers and clear password state while
+ * retaining the owned screen and its live LVGL pointers.
  *
- * Use this instead of screen_destroy when the T9 screen is still
- * the active (visible) screen.  LVGL's lv_scr_load_anim(auto_del)
- * will delete the old screen after the animation; calling lv_obj_del
- * on the active screen first causes a use-after-free restart.
+ * Use this when leaving the active T9 screen. The screen remains owned by
+ * the UI manager across auto_del=false transitions and is reset on re-entry.
  * ─────────────────────────────────────────────────────────────────*/
 void ui_t9_keyboard_cleanup(void)
 {
@@ -659,25 +739,9 @@ void ui_t9_keyboard_cleanup(void)
     if(s_commit_timer) { lv_timer_del(s_commit_timer); s_commit_timer = NULL; }
     if(s_nav_timer)    { lv_timer_del(s_nav_timer);    s_nav_timer    = NULL; }
 
-    ui_t9_keyboard     = NULL;   /* screen object stays alive for LVGL auto_del */
-    ui_t9_keyboard_bg  = NULL;
-    ui_text_input      = NULL;
-    ui_backspace__keybg= NULL;
-    ui_matrix_bg       = NULL;
-    ui_matrix_1 = ui_matrix_2 = ui_matrix_3 = NULL;
-    ui_matrix_4 = ui_matrix_5 = ui_matrix_6 = NULL;
-    ui_matrix_7 = ui_matrix_8 = ui_matrix_9 = NULL;
-    ui_control_1 = ui_control_2 = ui_control_3 = NULL;
-    ui_capital        = NULL;
-    ui_send           = NULL;
-    ui_switch         = NULL;
-    ui_input_textarea = NULL;
-    s_overlay_status  = NULL;
-    s_err_label       = NULL;
-    s_lbl_ctrl2       = NULL;
-    s_sym_icon        = NULL;
-    s_space_bar       = NULL;
-    for(int i = 0; i < 9; i++) s_key_labels[i] = NULL;
+    if(ui_input_textarea) lv_textarea_set_text(ui_input_textarea, "");
+    s_prefill_buf[0] = '\0';
+    s_wifi_ssid[0] = '\0';
     s_wifi_mode = false;
 }
 
@@ -690,6 +754,19 @@ void ui_t9_keyboard_prepare_for_wifi(const char * ssid)
     strncpy(s_wifi_ssid, ssid ? ssid : "", sizeof(s_wifi_ssid) - 1);
     s_wifi_ssid[sizeof(s_wifi_ssid) - 1] = '\0';
     s_wifi_mode = true;
+    _overlay_hide();
+    _clear_err();
+    _commit_pending_tap();
+    s_mode = MODE_LETTER;
+    s_sym_page = 0;
+    s_upper = false;
+    if(ui_input_textarea) {
+        lv_textarea_set_password_mode(ui_input_textarea, true);
+        lv_textarea_set_password_show_time(ui_input_textarea, 0);
+        lv_textarea_set_text(ui_input_textarea, "");
+        if(s_reveal_label) lv_label_set_text(s_reveal_label, "Show");
+        _refresh_labels();
+    }
 }
 
 void ui_t9_keyboard_set_prefill(const char * pass)
@@ -699,6 +776,9 @@ void ui_t9_keyboard_set_prefill(const char * pass)
     s_prefill_buf[sizeof(s_prefill_buf) - 1] = '\0';
     /* If screen already visible, apply directly */
     if(ui_input_textarea && s_prefill_buf[0]) {
+        lv_textarea_set_password_mode(ui_input_textarea, true);
+        lv_textarea_set_password_show_time(ui_input_textarea, 0);
+        if(s_reveal_label) lv_label_set_text(s_reveal_label, "Show");
         lv_textarea_set_text(ui_input_textarea, s_prefill_buf);
         lv_textarea_set_cursor_pos(ui_input_textarea, LV_TEXTAREA_CURSOR_LAST);
         s_prefill_buf[0] = '\0';

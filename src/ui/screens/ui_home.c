@@ -18,6 +18,7 @@ lv_obj_t * ui_unit2;
 lv_obj_t * ui_unit3;
 lv_obj_t * ui_unit4;
 lv_obj_t * ui_unit5;
+static lv_obj_t * s_nav_hint;
 
 /*
  * Home 十字导航布局：手势方向 = 动画方向（推送式）
@@ -124,6 +125,16 @@ void ui_home_screen_init(void)
     lv_obj_add_flag(ui_mascot, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_mascot, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
+    /* Small first-use cue; the mascot and navigation artwork remain primary. */
+    s_nav_hint = lv_label_create(ui_home);
+    lv_obj_set_width(s_nav_hint, 300);
+    lv_obj_set_x(s_nav_hint, 10);
+    lv_obj_set_y(s_nav_hint, 184);
+    lv_label_set_text(s_nav_hint, "R Apps  L Settings  U SD  D Clock");
+    lv_obj_set_style_text_align(s_nav_hint, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(s_nav_hint, THEME_LV(THEME_TEXT_DIM), 0);
+    lv_obj_set_style_text_font(s_nav_hint, &ui_font_name_14, 0);
+
     ui_soc = lv_label_create(ui_home);
     lv_obj_set_width(ui_soc, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_soc, LV_SIZE_CONTENT);    /// 1
@@ -201,5 +212,6 @@ void ui_home_screen_destroy(void)
     ui_unit3 = NULL;
     ui_unit4 = NULL;
     ui_unit5 = NULL;
+    s_nav_hint = NULL;
 
 }

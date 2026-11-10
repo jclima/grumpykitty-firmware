@@ -18,6 +18,7 @@
 
 namespace MOONCAKE::APPS
 {
+static App03* s_app03 = nullptr;
 
 /* ══════════════════════════════════════════════════════════════════
  *  Constants
@@ -58,6 +59,15 @@ static constexpr float    kAngleThr    = 0.3f;
 App03::App03(DEVICES* device) : _device(device)
 {
     setAppInfo().name = "VU Meter";
+    s_app03 = this;
+}
+
+bool App03::closePending() { return s_app03 && s_app03->_closePending; }
+
+void App03::serviceDeferredClose(DEVICES*) {
+    if (!s_app03 || !s_app03->_closePending ||
+        s_app03->_capActive.load(std::memory_order_acquire)) return;
+    s_app03->_finishClose();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -83,6 +93,15 @@ float App03::_calcAmplitude(const int16_t* buf, size_t mono)
  * ══════════════════════════════════════════════════════════════════ */
 void App03::onOpen()
 {
+    serviceDeferredClose(_device);
+    if (_closePending || _capActive.load(std::memory_order_acquire)) {
+        _device->Lcd.fillScreen(TFT_BLACK);
+        _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
+        _device->Lcd.setTextFont(2);
+        _device->Lcd.drawCentreString("Audio busy", 160, 110);
+        _initState = InitState::Failed;
+        return;
+    }
     /* ES7210 RX and ES8311 TX share MCLK/BCLK/WS pins. Give app03 exclusive
      * ownership before I2S1 changes the GPIO matrix. */
     if (!system_sound_suspend()) {
@@ -96,13 +115,12 @@ void App03::onOpen()
         _initState = InitState::Failed;
         return;
     }
-
-    // If a previous crash left the I2S driver installed, uninstall it now.
-    // esp_err_t is ignored — the call is a no-op when the driver is absent.
-    i2s_driver_uninstall(I2S_NUM_1);
+    _soundSuspended = true;
 
     _initState        = InitState::Loading;
-    _taskRun          = false;
+    _taskRun.store(false, std::memory_order_release);
+    _capActive.store(false, std::memory_order_release);
+    _closePending = false;
     _captureTask      = nullptr;
     _latestAngle.store(ANGLE_MIN);
     _lastFrameMs      = 0;
@@ -118,6 +136,7 @@ void App03::_doHeavyInit()
 {
     auto fail = [&](const char* msg) {
         _releaseResources();
+        _finishClose();
         _device->Lcd.fillScreen(TFT_BLACK);
         _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
         _device->Lcd.setTextFont(2);
@@ -226,10 +245,12 @@ void App03::_doHeavyInit()
     }
 
     /* 7. Start DSP capture task on core 0 */
-    _taskRun = true;
+    _taskRun.store(true, std::memory_order_release);
+    _capActive.store(true, std::memory_order_release);
     if (xTaskCreatePinnedToCore(_captureTaskEntry, "vu_cap",
                                 4096, this, 2, &_captureTask, 0) != pdPASS) {
-        _taskRun = false;
+        _taskRun.store(false, std::memory_order_release);
+        _capActive.store(false, std::memory_order_release);
         fail("Capture task failed"); return;
     }
 
@@ -245,31 +266,6 @@ static int16_t* s_capBuf = nullptr;
  * ══════════════════════════════════════════════════════════════════ */
 void App03::_releaseResources()
 {
-    _taskRun = false;
-    if (_captureTask) {
-        /* Cooperative exit: the task polls _taskRun (i2s_read times out in
-         * 60 ms), frees its buffer and clears _captureTask itself. */
-        for (int i = 0; i < 100 && _captureTask; ++i)
-            vTaskDelay(pdMS_TO_TICKS(10));
-        if (_captureTask) {
-            /* Task is wedged. Do NOT vTaskDelete: it races the task's own exit
-             * (double free of its buffer) and could leave the I2S RX mutex held.
-             * Leak the task and its buffer; the I2S uninstall below is skipped. */
-            Serial.println("[VU] capture task did not exit; leaking it (no delete)");
-        }
-    }
-
-    if (_codecReady) {
-        _codec.stop();
-        _codec.end();
-        _codecReady = false;
-    }
-    if (_i2sReady && !_captureTask) {   /* a live task may still be inside i2s_read */
-        i2s_stop(I2S_NUM_1);
-        i2s_driver_uninstall(I2S_NUM_1);
-        _i2sReady = false;
-    }
-
     auto del = [](LGFX_Sprite*& sp) {
         if (sp) { sp->deleteSprite(); delete sp; sp = nullptr; }
     };
@@ -279,16 +275,34 @@ void App03::_releaseResources()
     if (_maskPixels) { heap_caps_free(_maskPixels); _maskPixels = nullptr; }
 }
 
+void App03::_finishClose()
+{
+    if (_capActive.load(std::memory_order_acquire)) return;
+    if (_codecReady) { _codec.stop(); _codec.end(); _codecReady = false; }
+    if (_i2sReady) {
+        i2s_stop(I2S_NUM_1);
+        i2s_driver_uninstall(I2S_NUM_1);
+        _i2sReady = false;
+    }
+    _captureTask = nullptr;
+    _releaseResources();
+    _initState = InitState::Idle;
+    if (_soundSuspended) {
+        if (!system_sound_resume()) Serial.println("[VU] Failed to restore system audio");
+        _soundSuspended = false;
+    }
+    _closePending = false;
+}
+
 void App03::onClose()
 {
+    _taskRun.store(false, std::memory_order_release);
     _releaseResources();
-
-    _initState = InitState::Idle;
-    _device->Lcd.fillScreen(TFT_BLACK);
-
-    /* I2S1 is fully released; restore ES8311/I2S0 and reclaim shared pins. */
-    if (!system_sound_resume())
-        Serial.println("[VU] Failed to restore system audio");
+    if (_capActive.load(std::memory_order_acquire)) {
+        _closePending = true;
+        return;
+    }
+    _finishClose();
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -346,7 +360,6 @@ void App03::_captureTaskEntry(void* arg)
 {
     auto* self = static_cast<App03*>(arg);
     self->_captureLoop();
-    self->_captureTask = nullptr;
     vTaskDelete(nullptr);
 }
 
@@ -356,13 +369,17 @@ void App03::_captureLoop()
     constexpr size_t kBufBytes   = kStereoSamp * sizeof(int16_t);
 
     int16_t* buf = (int16_t*)heap_caps_malloc(kBufBytes, MALLOC_CAP_INTERNAL);
-    if (!buf) { _taskRun = false; return; }
+    if (!buf) {
+        _taskRun.store(false, std::memory_order_release);
+        _capActive.store(false, std::memory_order_release);
+        return;
+    }
     s_capBuf = buf;
 
     float   smooth = ANGLE_MIN;
     int32_t dcAcc  = 0;
 
-    while (_taskRun) {
+    while (_taskRun.load(std::memory_order_acquire)) {
         size_t bytesRead = 0;
         if (i2s_read(I2S_NUM_1, buf, kBufBytes, &bytesRead, pdMS_TO_TICKS(60))
                 != ESP_OK || bytesRead < 4)
@@ -387,6 +404,7 @@ void App03::_captureLoop()
 
     s_capBuf = nullptr;
     heap_caps_free(buf);
+    _capActive.store(false, std::memory_order_release);
 }
 
 } // namespace MOONCAKE::APPS

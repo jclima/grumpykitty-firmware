@@ -138,6 +138,13 @@ void ui_clock_screen_init(void)
     lv_obj_set_style_text_opa(ui_time, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_time, &ui_font_number_60, LV_PART_MAIN | LV_STATE_DEFAULT);
 
+    /* Make the existing double-tap edit affordance discoverable. */
+    lv_obj_t * edit_hint = lv_label_create(ui_clock);
+    lv_label_set_text(edit_hint, "Double-tap to edit");
+    lv_obj_set_x(edit_hint, 105); lv_obj_set_y(edit_hint, 204);
+    lv_obj_set_style_text_color(edit_hint, lv_color_white(), 0);
+    lv_obj_set_style_text_font(edit_hint, &ui_font_name_14, 0);
+
     /* 1Hz RTC timer — persists for lifetime of screen, created once */
     static lv_timer_t * s_tick = NULL;
     if (!s_tick) {

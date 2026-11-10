@@ -1,0 +1,83 @@
+#include <cassert>
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include "lvgl.h"
+#include "../../../src/ui/screens/ui_wifi.h"
+#include "../../../src/ui/screens/ui_t9_keyboard.h"
+#include "../../../src/ui/ui_wifi_bridge.h"
+#include "../../../src/ui/screens/ui_sd_card_files.h"
+#include "../../../src/ui/ui_sd_bridge.h"
+
+extern "C" void host_advance_ms(uint32_t);
+extern "C" void host_wifi_reset(void);
+extern "C" void host_wifi_add(const char*, int, bool, bool);
+extern "C" void host_wifi_finish_scan(void);
+extern "C" void host_wifi_set_status(wifi_bridge_status_t);
+extern "C" int host_wifi_connect_calls(void);
+extern "C" const char *host_wifi_last_ssid(void);
+extern "C" const char *host_wifi_last_pass(void);
+extern "C" void host_sd_mode(int);
+extern "C" int host_sd_open_count(void);
+extern "C" int host_sd_close_count(void);
+
+static lv_color_t frame[320 * 240], drawbuf[320 * 240];
+static const char *capture_name;
+static void flush(lv_disp_drv_t *drv, const lv_area_t *a, lv_color_t *p) {
+    for(int y=a->y1; y<=a->y2; ++y) for(int x=a->x1; x<=a->x2; ++x) frame[y*320+x] = *p++;
+    if(!capture_name) { lv_disp_flush_ready(drv); return; }
+    FILE *f = nullptr; char path[160]; snprintf(path,sizeof(path),"/tmp/meowkit-ui-%s.ppm",capture_name); f=fopen(path,"wb");
+    if(!f) { lv_disp_flush_ready(drv); return; } fprintf(f,"P6\n320 240\n255\n"); for(auto c: frame) { unsigned r=LV_COLOR_GET_R(c)*255/31, g=LV_COLOR_GET_G(c)*255/63, b=LV_COLOR_GET_B(c)*255/31; fputc(r,f);fputc(g,f);fputc(b,f); } fclose(f); lv_disp_flush_ready(drv);
+}
+static void tick(uint32_t ms) { host_advance_ms(ms); lv_timer_handler(); }
+static void render(const char *name) { capture_name=name; lv_obj_invalidate(lv_scr_act()); lv_refr_now(lv_disp_get_default()); capture_name=nullptr; }
+static unsigned children(lv_obj_t *o) { unsigned n=0; for(lv_obj_t *c=lv_obj_get_child(o,0); c; c=lv_obj_get_child(o,n)) { ++n; } return n; }
+static lv_obj_t *find_text(lv_obj_t *root, const char *needle) { if(!root)return nullptr; if(lv_obj_check_type(root,&lv_label_class) && strstr(lv_label_get_text(root),needle))return root; for(uint32_t i=0;i<lv_obj_get_child_cnt(root);i++){lv_obj_t*r=find_text(lv_obj_get_child(root,i),needle);if(r)return r;} return nullptr; }
+static void click(lv_obj_t *o) { assert(o); lv_event_send(o, LV_EVENT_CLICKED, nullptr); tick(1); }
+static void init_lv() { lv_init(); static lv_disp_draw_buf_t db; lv_disp_draw_buf_init(&db,drawbuf,nullptr,320*240); static lv_disp_drv_t d; lv_disp_drv_init(&d); d.hor_res=320;d.ver_res=240;d.flush_cb=flush;d.draw_buf=&db;lv_disp_drv_register(&d); }
+static void park_screen() { lv_obj_t *safe=lv_obj_create(NULL); lv_scr_load(safe); }
+static void test_t9() {
+    puts("t9 start"); fflush(stdout);
+    host_wifi_reset(); ui_t9_keyboard_screen_init(); lv_scr_load(ui_t9_keyboard);
+    assert(lv_textarea_get_password_mode(ui_input_textarea));
+    assert(lv_textarea_get_password_show_time(ui_input_textarea) == 0);
+    render("t9-default-masked");
+    /* Letter a, then number 1, then letter a again: mode changes must not delete. */
+    click(ui_matrix_4); click(ui_control_3); click(ui_matrix_4); click(ui_control_3); click(ui_control_3); click(ui_matrix_4); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),"a1a"));
+    /* Cursor click commits a pending multi-tap rather than replacing it. */
+    click(ui_matrix_4); click(ui_input_textarea); click(ui_matrix_4); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),"a1ba"));
+    ui_t9_keyboard_prepare_for_wifi("TestNet"); ui_t9_keyboard_set_prefill("abcdefgh"); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),"abcdefgh"));
+    assert(lv_textarea_get_password_mode(ui_input_textarea));
+    assert(lv_textarea_get_password_show_time(ui_input_textarea) == 0);
+    ui_t9_keyboard_send(); assert(host_wifi_connect_calls()==1); assert(!strcmp(host_wifi_last_ssid(),"TestNet")); assert(!strcmp(host_wifi_last_pass(),"abcdefgh"));
+    click(ui_control_1); /* no-op while overlay is active */
+    ui_t9_keyboard_cancel_connect(); assert(!ui_t9_keyboard_is_connecting()); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),"abcdefgh"));
+    ui_t9_keyboard_send(); assert(host_wifi_connect_calls()==2); host_wifi_set_status(WIFI_BRIDGE_FAILED); tick(500); assert(!ui_t9_keyboard_is_connecting()); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),"abcdefgh")); render("t9-failed-retry");
+    ui_t9_keyboard_prepare_for_wifi("TestNet"); ui_t9_keyboard_set_prefill("abcdefgX"); ui_t9_keyboard_send(); assert(host_wifi_connect_calls()==3); assert(!strcmp(host_wifi_last_ssid(),"TestNet")); assert(!strcmp(host_wifi_last_pass(),"abcdefgX"));
+    /* Leaving while a connection is pending must not navigate back later. */
+    ui_t9_keyboard_prepare_for_wifi("TestNet"); ui_t9_keyboard_set_prefill("abcdefgh"); ui_t9_keyboard_send(); lv_obj_t *pending_park=lv_obj_create(NULL); lv_scr_load(pending_park); host_wifi_set_status(WIFI_BRIDGE_FAILED); tick(1000); assert(lv_scr_act()==pending_park); lv_scr_load(ui_t9_keyboard); assert(!ui_t9_keyboard_is_connecting()); lv_obj_del(pending_park);
+    /* Reveal is a public LVGL click callback on the real button. */
+    lv_obj_t *reveal=nullptr; for(unsigned i=0;i<children(ui_t9_keyboard);i++){lv_obj_t*c=lv_obj_get_child(ui_t9_keyboard,i);if(c&&lv_obj_get_width(c)==42&&lv_obj_get_height(c)==28)reveal=c;} assert(reveal); click(reveal); assert(!lv_textarea_get_password_mode(ui_input_textarea)); click(reveal); assert(lv_textarea_get_password_mode(ui_input_textarea));
+    lv_event_send(ui_t9_keyboard, LV_EVENT_SCREEN_UNLOAD_START, nullptr); assert(!strcmp(lv_textarea_get_text(ui_input_textarea),""));
+    park_screen(); ui_t9_keyboard_screen_destroy();
+}
+static void test_lifecycle() {
+    puts("lifecycle start"); fflush(stdout);
+    host_wifi_reset(); ui_t9_keyboard_screen_init(); lv_scr_load(ui_t9_keyboard); lv_obj_t *parking=lv_obj_create(NULL); lv_scr_load(parking); unsigned base=lv_disp_get_default()->screen_cnt;
+    for(int i=0;i<100;i++){ lv_scr_load(ui_t9_keyboard); lv_scr_load(parking); assert(lv_disp_get_default()->screen_cnt==base); }
+    lv_obj_t *safe=lv_obj_create(NULL); lv_scr_load(safe); lv_obj_del(parking); ui_t9_keyboard_screen_destroy();
+}
+static void test_wifi_scan() {
+    puts("wifi start"); fflush(stdout);
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); assert(ui_wifi_bridge_is_scanning()); host_wifi_add("Secure",80,true,true); host_wifi_finish_scan(); tick(1000); assert(!ui_wifi_bridge_is_scanning());
+    render("wifi-scan-complete");
+    park_screen(); ui_wifi_screen_destroy(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000); assert(!ui_wifi_bridge_is_scanning()); park_screen(); ui_wifi_screen_destroy();
+    host_wifi_reset(); host_wifi_set_status(WIFI_BRIDGE_CONNECTING); ui_wifi_screen_init(); lv_scr_load(ui_wifi); tick(500); assert(lv_scr_act()==ui_wifi); host_wifi_set_status(WIFI_BRIDGE_FAILED); tick(500); assert(lv_scr_act()==ui_wifi); park_screen(); ui_wifi_screen_destroy();
+}
+static void test_sd() {
+    puts("sd start"); fflush(stdout); host_sd_mode(UI_SD_OK); ui_sd_card_files_screen_init(); lv_scr_load(ui_sd_card_files); for(int i=0;i<50;i++) tick(2);
+    assert(strstr(lv_label_get_text(ui_sd_header_label),"SD Card Files")); assert(find_text(ui_sd_card_files,"page 1")); ui_sd_card_files_action_next_page(); for(int i=0;i<50;i++) tick(2); assert(find_text(ui_sd_card_files,"page 2")); assert(find_text(ui_sd_card_files,"entry-20"));
+    render("sd-page"); host_sd_mode(UI_SD_UNSUPPORTED); lv_event_send(ui_sd_card_files,LV_EVENT_SCREEN_LOADED,nullptr); assert(children(ui_sd_card_files)>0); render("sd-unsupported");
+    int opened=host_sd_open_count(); lv_event_send(ui_sd_card_files,LV_EVENT_SCREEN_UNLOADED,nullptr); assert(host_sd_close_count()>=opened); park_screen(); ui_sd_card_files_screen_destroy();
+}
+int main() { puts("init"); fflush(stdout); init_lv(); puts("inited"); test_t9(); test_lifecycle(); test_wifi_scan(); test_sd(); puts("ui regression: PASS"); return 0; }

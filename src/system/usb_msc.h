@@ -14,6 +14,11 @@
 extern "C" {
 #endif
 
+typedef enum {
+    USB_MSC_MISSING = 0, USB_MSC_UNSUPPORTED, USB_MSC_INIT_FAILED,
+    USB_MSC_ACTIVE, USB_MSC_DRAINING, USB_MSC_EJECTED
+} usb_msc_state_t;
+
 /** Start USB MSC — dismount SD FAT-FS and expose raw sectors to host.
  *  Returns 1 on success, 0 on failure (FAT-FS is remounted on failure). */
 int  usb_msc_enable(void);
@@ -30,6 +35,9 @@ int  usb_msc_is_draining(void);
 
 /** Cumulative bytes transferred (read + write) since last enable(). */
 unsigned long usb_msc_bytes_transferred(void);
+usb_msc_state_t usb_msc_state(void);
+void usb_msc_set_error(usb_msc_state_t state);
+void usb_msc_set_ejected(void);
 
 #ifdef __cplusplus
 }

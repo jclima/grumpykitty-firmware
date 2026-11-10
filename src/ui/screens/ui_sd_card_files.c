@@ -4,7 +4,7 @@
 // Navigation model:
 //   Tap a folder       → enter that folder (_item_click_cb)
 //   Tap B icon / phys B → back one level  (ui_sd_card_files_action_back)
-//   Physical A         → return to Home   (handled by launcher handlePhysicalNav)
+//   Physical A         → refresh          (launcher should call action_refresh)
 //   Joystick up        → return to Home   (handled by launcher handlePhysicalNav)
 //   Bottom swipe       → return to Home   (ui_event_sd_card_files gesture)
 //
@@ -34,6 +34,16 @@ lv_obj_t * ui_key_b_back;
 
 static char       _current_path[SD_PATH_MAX] = "/";
 static lv_obj_t * _file_list                 = NULL;
+static ui_sd_dir_cursor_t * _cursor          = NULL;
+static lv_timer_t * _load_timer              = NULL;
+static size_t _page                            = 0;
+static uint16_t _rows                         = 0;
+static size_t _skipped                        = 0;
+static int _has_next                          = 0;
+static int _load_error                        = 0;
+static lv_obj_t *_page_prev = NULL, *_page_next = NULL, *_page_label = NULL;
+static lv_timer_t *_media_timer = NULL;
+#define SD_PAGE_SIZE 20
 
 typedef struct {
     char    path[SD_PATH_MAX];
@@ -42,6 +52,19 @@ typedef struct {
 
 /* ── Forward declaration ─────────────────────────────────────────── */
 static void _build_file_list(void);
+static void _load_tick(lv_timer_t *t);
+
+static void _screen_loaded_cb(lv_event_t *e)
+{
+    (void)e;
+    if (_cursor) { ui_sd_dir_close(_cursor); _cursor = NULL; }
+    if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+    /* Re-probe on every visit so insertion/removal and USB copies are visible. */
+    ui_sd_present();
+    _build_file_list();
+}
+
+static void _on_key_a_click(lv_event_t *e) { (void)e; ui_sd_card_files_action_refresh(); }
 
 /* ── Path helpers ────────────────────────────────────────────────── */
 
@@ -67,6 +90,7 @@ static void _item_click_cb(lv_event_t * e)
     if (!it || !it->is_dir) return;
     strncpy(_current_path, it->path, sizeof(_current_path) - 1);
     _current_path[sizeof(_current_path) - 1] = '\0';
+    _page = 0;
     _build_file_list();
 }
 
@@ -76,32 +100,33 @@ static void _item_delete_cb(lv_event_t * e)
     if (it) free(it);
 }
 
-/* ── Per-entry visitor (called once per dir entry by ui_sd_list_dir) */
-typedef struct { int row; } _visit_ctx_t;
-
-static void _visit_entry(const char * name, int is_dir, void * user)
+/* ── Render one bounded entry per timer tick ─────────────────────── */
+static void _visit_entry(const char * name, int is_dir)
 {
-    _visit_ctx_t * ctx = (_visit_ctx_t *)user;
-    if (!_file_list || !name) return;
+    if (!_file_list || !name || _rows >= SD_PAGE_SIZE) return;
 
     /* Shorten known long system folder names for display */
     const char * display_name = name;
     if (strcasecmp(name, "System Volume Information") == 0) display_name = "system";
 
     sd_item_t * it = (sd_item_t *)malloc(sizeof(sd_item_t));
-    if (!it) return;
+    if (!it) { _load_error = -3; return; }
     it->is_dir = (uint8_t)(is_dir != 0);
-    if (strcmp(_current_path, "/") == 0)
-        snprintf(it->path, sizeof(it->path), "/%s", name);
-    else
-        snprintf(it->path, sizeof(it->path), "%s/%s", _current_path, name);
+    int path_len = (strcmp(_current_path, "/") == 0)
+        ? snprintf(it->path, sizeof(it->path), "/%s", name)
+        : snprintf(it->path, sizeof(it->path), "%s/%s", _current_path, name);
+    if (path_len < 0 || (size_t)path_len >= sizeof(it->path)) {
+        free(it);
+        _load_error = -2;
+        return;
+    }
 
     /* Match the Wi-Fi list: 4 rows in a 152px container, 38px per row. */
     lv_obj_t * btn = lv_btn_create(_file_list);
     lv_obj_set_width(btn, 280);
     lv_obj_set_height(btn, 38);
     lv_obj_set_x(btn, 0);
-    lv_obj_set_y(btn, (lv_coord_t)(ctx->row * 38));
+    lv_obj_set_y(btn, (lv_coord_t)(_rows * 38));
     lv_obj_set_style_bg_opa(btn,   LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(btn, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(btn,   80,            LV_PART_MAIN | LV_STATE_PRESSED);
@@ -123,11 +148,14 @@ static void _visit_entry(const char * name, int is_dir, void * user)
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
     lv_obj_set_align(lbl, LV_ALIGN_LEFT_MID);
+    lv_obj_set_width(lbl, 250);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_x(lbl, 24);
 
-    lv_obj_add_event_cb(btn, _item_click_cb,  LV_EVENT_CLICKED, it);
+    if (is_dir) lv_obj_add_event_cb(btn, _item_click_cb, LV_EVENT_CLICKED, it);
+    else lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(btn, _item_delete_cb, LV_EVENT_DELETE,  it);
-    ctx->row++;
+    _rows++;
 }
 
 /* ── Build (or rebuild) the visible list ────────────────────────── */
@@ -135,6 +163,8 @@ static void _visit_entry(const char * name, int is_dir, void * user)
 static void _build_file_list(void)
 {
     if (!_file_list) return;
+    if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+    if (_cursor) { ui_sd_dir_close(_cursor); _cursor = NULL; }
     lv_obj_clean(_file_list);  /* LV_EVENT_DELETE → frees each sd_item_t */
 
     if (ui_sd_header_label) {
@@ -144,14 +174,17 @@ static void _build_file_list(void)
             lv_label_set_text_fmt(ui_sd_header_label, "SD%s", _current_path);
     }
 
-    _visit_ctx_t ctx = { 0 };
-    int rc = ui_sd_list_dir(_current_path, _visit_entry, &ctx);
-
-    if (rc != 0 || ctx.row == 0) {
+    _rows = 0; _skipped = 0; _has_next = 0; _load_error = 0;
+    if (_page_label) { lv_label_set_text_fmt(_page_label, "page %lu", (unsigned long)(_page + 1)); lv_obj_set_style_text_color(_page_label, lv_color_white(), 0); }
+    if (_page_prev) lv_obj_add_state(_page_prev, LV_STATE_DISABLED);
+    if (_page_next) lv_obj_add_state(_page_next, LV_STATE_DISABLED);
+    _cursor = ui_sd_dir_open(_current_path);
+    if (!_cursor) _load_error = -1;
+    if (_load_error) {
         lv_obj_t * lbl = lv_label_create(_file_list);
-        const int unsupported = (rc != 0 && ui_sd_state() == UI_SD_UNSUPPORTED);
+        const int unsupported = (ui_sd_state() == UI_SD_UNSUPPORTED);
         lv_label_set_text(lbl, unsupported ? "Unsupported card format - use FAT32 (MBR)"
-                                           : (rc != 0 ? "(No SD card)" : "(Empty)"));
+                                           : (ui_sd_state() == UI_SD_OK ? "Unable to read folder" : "(No SD card)"));
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_font(lbl,  &ui_font_name_14, 0);
         if (unsupported) {
@@ -161,7 +194,65 @@ static void _build_file_list(void)
         } else {
             lv_obj_set_pos(lbl, 60, 50);
         }
+    } else _load_timer = lv_timer_create(_load_tick, 1, NULL);
+}
+
+static void _load_tick(lv_timer_t *t)
+{
+    (void)t;
+    if (!_cursor || !_file_list) return;
+    if (lv_scr_act() != ui_sd_card_files) {
+        ui_sd_dir_close(_cursor); _cursor = NULL;
+        if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+        return;
     }
+    char name[256]; int is_dir = 0;
+    int rc = ui_sd_dir_next(_cursor, name, sizeof(name), &is_dir);
+    if (rc > 0) {
+        if (_skipped < ((size_t)_page * SD_PAGE_SIZE)) { _skipped++; return; }
+        if (_rows >= SD_PAGE_SIZE) { _has_next = 1; ui_sd_dir_close(_cursor); _cursor = NULL;
+            if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+        } else {
+            _visit_entry(name, is_dir);
+            if (_load_error) { ui_sd_dir_close(_cursor); _cursor = NULL; if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; } }
+            else return;
+        }
+    }
+    if (rc < 0) _load_error = rc;
+    ui_sd_dir_close(_cursor); _cursor = NULL;
+    if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+    if (_rows == 0 || _load_error) {
+        if (_load_error) { lv_obj_clean(_file_list); _rows = 0; }
+        lv_obj_t *lbl = lv_label_create(_file_list);
+        lv_label_set_text(lbl, _load_error == -2 ? "Name too long" : (_load_error == -3 ? "Out of memory" : (_load_error ? "Unable to read folder" : "(Empty)")));
+        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
+        lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+        lv_obj_set_pos(lbl, 60, 50);
+    }
+    if (_page_prev) {
+        if (_page) lv_obj_clear_state(_page_prev, LV_STATE_DISABLED);
+        else lv_obj_add_state(_page_prev, LV_STATE_DISABLED);
+    }
+    if (_page_next) {
+        if (_has_next) lv_obj_clear_state(_page_next, LV_STATE_DISABLED);
+        else lv_obj_add_state(_page_next, LV_STATE_DISABLED);
+    }
+}
+
+void ui_sd_card_files_action_refresh(void) { _page = 0; _build_file_list(); }
+void ui_sd_card_files_action_next_page(void) { if (_has_next) { _page++; _build_file_list(); } }
+void ui_sd_card_files_action_previous_page(void)
+{ if (_page) { _page--; _build_file_list(); } }
+
+static void _page_prev_cb(lv_event_t *e) { (void)e; ui_sd_card_files_action_previous_page(); }
+static void _page_next_cb(lv_event_t *e) { (void)e; if (_has_next) ui_sd_card_files_action_next_page(); }
+
+static void _media_tick(lv_timer_t *t) {
+    (void)t;
+    if (lv_scr_act() != ui_sd_card_files) return;
+    if (_cursor || _load_timer) return;
+    int before = ui_sd_state(); ui_sd_present();
+    if (before != ui_sd_state()) { _page = 0; _build_file_list(); }
 }
 
 /* ── Public: pop one folder level ────────────────────────────────── */
@@ -169,7 +260,7 @@ static void _build_file_list(void)
 void ui_sd_card_files_action_back(void)
 {
     if (_path_pop()) {
-        _build_file_list();
+        _page = 0; _build_file_list();
     } else {
         /* Already at root — exit to home */
         _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, &ui_home_screen_init);
@@ -187,6 +278,11 @@ static void _on_key_b_click(lv_event_t * e)
 void ui_event_sd_card_files(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
+    if (event_code == LV_EVENT_SCREEN_UNLOADED || event_code == LV_EVENT_DELETE) {
+        if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+        if (_cursor) { ui_sd_dir_close(_cursor); _cursor = NULL; }
+        return;
+    }
     if (event_code == LV_EVENT_GESTURE &&
         lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_BOTTOM) {
         lv_indev_wait_release(lv_indev_get_act());
@@ -245,7 +341,7 @@ void ui_sd_card_files_screen_init(void)
     _file_list = lv_obj_create(ui_sd_card_files);
     lv_obj_set_x(_file_list, 15);
     lv_obj_set_y(_file_list, 52);
-    lv_obj_set_size(_file_list, 290, 152);
+    lv_obj_set_size(_file_list, 290, 120);
     lv_obj_set_style_bg_opa(_file_list,     LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_file_list, 0, 0);
     lv_obj_set_style_pad_all(_file_list,    0, 0);
@@ -271,10 +367,12 @@ void ui_sd_card_files_screen_init(void)
     lv_img_set_src(ui_key_a_bg, &ui_img_key_a_png);
     lv_obj_set_width(ui_key_a_bg, LV_SIZE_CONTENT);   /// 66
     lv_obj_set_height(ui_key_a_bg, LV_SIZE_CONTENT);    /// 22
-    lv_obj_set_x(ui_key_a_bg, 171);
+    lv_obj_set_x(ui_key_a_bg, 153);
     lv_obj_set_y(ui_key_a_bg, 207);
     lv_obj_add_flag(ui_key_a_bg, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
-    lv_obj_clear_flag(ui_key_a_bg, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(ui_key_a_bg, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(ui_key_a_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(ui_key_a_bg, _on_key_a_click, LV_EVENT_CLICKED, NULL);
 
     /* B key — clickable; tap or physical B → back one level */
     ui_key_b_bg = lv_img_create(ui_sd_card_files);
@@ -290,7 +388,9 @@ void ui_sd_card_files_screen_init(void)
     ui_sd_header_label = lv_label_create(ui_sd_card_files);
     lv_obj_set_width(ui_sd_header_label, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_sd_header_label, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_sd_header_label, 97);
+    lv_obj_set_width(ui_sd_header_label, 260);
+    lv_label_set_long_mode(ui_sd_header_label, LV_LABEL_LONG_DOT);
+    lv_obj_set_x(ui_sd_header_label, 40);
     lv_obj_set_y(ui_sd_header_label, 14);
     lv_label_set_text(ui_sd_header_label, "SD Card Files");
     lv_obj_set_style_text_color(ui_sd_header_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -300,9 +400,11 @@ void ui_sd_card_files_screen_init(void)
     ui_key_a_enter = lv_label_create(ui_sd_card_files);
     lv_obj_set_width(ui_key_a_enter, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_key_a_enter, LV_SIZE_CONTENT);    /// 1
-    lv_obj_set_x(ui_key_a_enter, 195);
+    lv_obj_set_x(ui_key_a_enter, 175);
     lv_obj_set_y(ui_key_a_enter, 210);
-    lv_label_set_text(ui_key_a_enter, "Enter");
+    lv_label_set_text(ui_key_a_enter, "Refresh");
+    lv_obj_add_flag(ui_key_a_enter, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(ui_key_a_enter, _on_key_a_click, LV_EVENT_CLICKED, NULL);
     lv_obj_set_style_text_color(ui_key_a_enter, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_key_a_enter, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_key_a_enter, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -313,19 +415,37 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_x(ui_key_b_back, 267);
     lv_obj_set_y(ui_key_b_back, 210);
     lv_label_set_text(ui_key_b_back, "Back");
+
+    _page_prev = lv_btn_create(ui_sd_card_files);
+    lv_obj_set_size(_page_prev, 34, 20); lv_obj_set_pos(_page_prev, 15, 176);
+    lv_obj_add_event_cb(_page_prev, _page_prev_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *pl = lv_label_create(_page_prev); lv_label_set_text(pl, "<"); lv_obj_center(pl);
+    _page_next = lv_btn_create(ui_sd_card_files);
+    lv_obj_set_size(_page_next, 34, 20); lv_obj_set_pos(_page_next, 271, 176);
+    lv_obj_add_event_cb(_page_next, _page_next_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *nl = lv_label_create(_page_next); lv_label_set_text(nl, ">"); lv_obj_center(nl);
+    _page_label = lv_label_create(ui_sd_card_files);
+    lv_label_set_text_fmt(_page_label, "page %lu", (unsigned long)(_page + 1));
+    lv_obj_set_pos(_page_label, 140, 178);
+    lv_obj_set_style_text_font(_page_label, &ui_font_name_14, 0);
     lv_obj_set_style_text_color(ui_key_b_back, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_key_b_back, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_key_b_back, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     _build_file_list();
+    _media_timer = lv_timer_create(_media_tick, 1000, NULL);
 
     lv_obj_add_event_cb(ui_sd_card_files, ui_event_sd_card_files, LV_EVENT_ALL, NULL);
+    lv_obj_add_event_cb(ui_sd_card_files, _screen_loaded_cb, LV_EVENT_SCREEN_LOADED, NULL);
 }
 
 /* ── Screen destroy ──────────────────────────────────────────────── */
 
 void ui_sd_card_files_screen_destroy(void)
 {
+    if (_load_timer) { lv_timer_del(_load_timer); _load_timer = NULL; }
+    if (_media_timer) { lv_timer_del(_media_timer); _media_timer = NULL; }
+    if (_cursor) { ui_sd_dir_close(_cursor); _cursor = NULL; }
     if (ui_sd_card_files) lv_obj_del(ui_sd_card_files);
     /* lv_obj_del fires LV_EVENT_DELETE on all descendants → frees sd_item_t */
 
@@ -341,5 +461,6 @@ void ui_sd_card_files_screen_destroy(void)
     ui_key_a_enter      = NULL;
     ui_key_b_back       = NULL;
     _file_list          = NULL;
+    _page_prev = _page_next = _page_label = NULL;
     strcpy(_current_path, "/");
 }

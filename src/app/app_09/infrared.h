@@ -16,9 +16,11 @@
 #include <SD_MMC.h>
 #include <FS.h>
 #include <vector>
+#include <cstdio>
 #include <algorithm>
 #include "../app_common/hp_ui.h"
 #include "../app_common/sd_guard.h"
+#include "infrared_stream.h"
 
 using namespace mooncake;
 
@@ -61,13 +63,14 @@ namespace MOONCAKE::APPS
         UniversalMenu,
         UniversalTV,
         TVBGone,        /* Iterates all signals in tv.ir like TV-B-Gone */
+        Loading,
         Sending,
     };
 
     /* ── TUI colors ── */
     static constexpr uint16_t COL_BG        = hp::COL_BG;
     static constexpr uint16_t COL_FG        = hp::COL_FG;
-    static constexpr uint16_t COL_FG_DIM    = hp::COL_ACCENT;
+    static constexpr uint16_t COL_FG_DIM    = hp::COL_DIM;
     static constexpr uint16_t COL_ACCENT    = hp::COL_ACCENT;
     static constexpr uint16_t COL_HIGHLIGHT = hp::COL_HL;
     static constexpr uint16_t COL_ERR       = hp::COL_ERR;
@@ -86,6 +89,7 @@ namespace MOONCAKE::APPS
         /* ── Scene stack ── */
         IrScene _scene = IrScene::MainMenu;
         IrScene _prevScene = IrScene::MainMenu;
+        IrScene _loadOrigin = IrScene::MainMenu;
         bool    _sceneDirty = true;
 
         void _switchScene(IrScene s);
@@ -144,7 +148,14 @@ namespace MOONCAKE::APPS
         void _runSending();
 
         /* ── File I/O (Flipper .ir format) ── */
-        bool _loadRemote(const char* path, IrRemote& remote, int maxSignals = 0, const char* filterName = nullptr);
+        void _beginLoad(const char* path, IrRemote& remote, int maxSignals, const char* filterName,
+                        IrScene successScene, const char* purpose);
+        bool _stepLoad();
+        void _cancelLoad();
+        void _finishLoad(bool success);
+        void _parseLoadLine(const char* line);
+        void _commitLoadSignal();
+        void _resetLoadSignal(IrSignal& s);
         bool _saveSignalToFile(const char* dir, const char* remoteName, const IrSignal& sig);
         bool _appendSignalToFile(const char* path, const IrSignal& sig);
         void _listIrFiles(const char* dir, std::vector<String>& out, bool includeFolders = false);
@@ -154,7 +165,7 @@ namespace MOONCAKE::APPS
         IRrecv*  _irRecv  = nullptr;
         IRsend*  _irSend  = nullptr;
 
-        void _txSignal(const IrSignal& sig);
+        bool _txSignal(const IrSignal& sig);
         void _startRx();
         void _stopRx();
 
@@ -177,6 +188,33 @@ namespace MOONCAKE::APPS
         bool      _saveFolderPending = false;
         bool      _restoreFolderName = false;
         bool      _preserveSignalName = false;
+
+        /* Incremental loader.  The parser owns a stdio stream so EOF and
+         * read errors are distinguishable on SD/FAT.  _loadResult is never
+         * published to the requested destination until the whole file passes. */
+        FILE* _loadFile = nullptr;
+        infrared_stream::Reader* _loadReader = nullptr;
+        IrRemote* _loadDestination = nullptr;
+        IrRemote _loadResult;
+        IrSignal _loadSignal;
+        char _loadPath[128] = {};
+        char _loadFilter[32] = {};
+        char _loadProto[24] = {};
+        char _loadPurpose[24] = {};
+        size_t _loadBytes = 0;
+        size_t _loadRawBytes = 0;
+        uint32_t _loadRawUsec = 0;
+        int _loadMaxSignals = 0;
+        uint16_t _loadCurrentRawCount = 0;
+        bool _loadInSignal = false;
+        bool _loadValidSignal = true;
+        bool _loadSawValue = false;
+        bool _loadSawBits = false;
+        bool _loadEOF = false;
+        bool _loadFailed = false;
+        bool _loadCancelled = false;
+        IrScene _loadSuccessScene = IrScene::RemoteView;
+        const char* _loadError = nullptr;
 
         /* save-name editor */
         char _editBuf[24];

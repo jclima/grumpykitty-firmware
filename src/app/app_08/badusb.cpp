@@ -846,8 +846,8 @@ void AppBadUSB::_drawRunningFooter()
     case ExecState::Ready:       a = "[A]Run";  break;
     case ExecState::Running:
     case ExecState::Delay:
-    case ExecState::StringDelay:
-    case ExecState::WaitButton:
+    case ExecState::StringDelay: a = "[A]Stop"; break;
+    case ExecState::WaitButton:  a = "[A]Continue"; break;
     case ExecState::Paused:      a = "[A]Stop"; break;
     case ExecState::Done:
     case ExecState::Error:       a = "[A]Run";  break; /* re-run from start */
@@ -1088,11 +1088,9 @@ void AppBadUSB::_updateRunning()
         break;
 
     case ExecState::WaitButton:
-        /* [A] = stop & abort (no pause feature per spec). */
+        /* [A] resumes at the next line; B remains the abort/back action. */
         if (_device->button.A.pressed()) {
-            _kbdReleaseAll();
-            _execState   = ExecState::Done;
-            _execEndTime = millis();
+            _execState = ExecState::Running;
         }
         if (now - _lastDraw > 200) { _drawRunningDynamic(); _lastDraw = now; }
         break;
@@ -1629,6 +1627,24 @@ int32_t AppBadUSB::_parseLine(const char* line)
     uint32_t cl = _cmdLen(line);
     const char* param = badusb_parse::arguments(line, cl);
 
+    /* This port deliberately has no deterministic support for these commands.
+     * Reject them before touching LEDs, modifiers, or any HID endpoint. */
+    if (_mode == BuMode::BLE && ((cl == 7 && (!strncmp(line, "ALTCHAR", 7) || !strncmp(line, "ALTCODE", 7))) ||
+        (cl == 9 && !strncmp(line, "ALTSTRING", 9)))) {
+        _errMsg = "ALT commands unsupported"; return -10;
+    }
+    if (_mode == BuMode::BLE && ((cl == 4 && !strncmp(line, "HOLD", 4)) || (cl == 7 && !strncmp(line, "RELEASE", 7)))) {
+        const char* kn = _skipWs(param);
+        if (_mouseByName(kn)) { _errMsg = "mouse HOLD/RELEASE unsupported"; return -10; }
+    }
+    if (_mode == BuMode::BLE && ((cl == 9 && !strncmp(line, "MOUSEMOVE", 9)) ||
+        (cl == 10 && !strncmp(line, "MOUSE_MOVE", 10)) ||
+        (cl == 11 && !strncmp(line, "MOUSESCROLL", 11)) ||
+        (cl == 12 && !strncmp(line, "MOUSE_SCROLL", 12)) ||
+        _mouseByName(line))) {
+        _errMsg = "mouse commands unsupported"; return -10;
+    }
+
     /* --- DELAY n --- */
     if (cl == 5 && strncmp(line, "DELAY", 5) == 0) {
         uint32_t ms = 0;
@@ -1714,7 +1730,7 @@ int32_t AppBadUSB::_parseLine(const char* line)
         return 0;
     }
 
-    /* --- ALTCHAR charcode --- */
+    /* --- ALTCHAR charcode (handled by the explicit rejection above) --- */
     if (cl == 7 && strncmp(line, "ALTCHAR", 7) == 0) {
         uint32_t code;
         if (!badusb_parse::unsignedValue(param, code)) {
@@ -1771,6 +1787,7 @@ int32_t AppBadUSB::_parseLine(const char* line)
 
     /* --- MEDIA key --- */
     if (cl == 5 && strncmp(line, "MEDIA", 5) == 0) {
+        if (_mode == BuMode::BLE) { _errMsg = "MEDIA unsupported over BLE"; return -10; }
         const char* kn = _skipWs(param);
         uint16_t mc = _mediaByName(kn);
         if (mc) { _consumerPress(mc); _consumerRelease(); return 0; }
@@ -2033,6 +2050,7 @@ void AppBadUSB::_consumerRelease()
 void AppBadUSB::_numlockOn()
 {
 #if ARDUINO_USB_MODE == 0
+    if (_mode != BuMode::USB || !_isConnected()) return;
     if (!(usb_hid_leds() & LED_NUMLOCK)) {
         usb_hid_kbd().press(KEY_NUM_LOCK);
         delay(5);
@@ -2046,6 +2064,7 @@ bool AppBadUSB::_numpadPress(char digit)
 {
     if (digit < '0' || digit > '9') return false;
 #if ARDUINO_USB_MODE == 0
+    if (_mode != BuMode::USB || !_isConnected()) return false;
     uint8_t raw = s_numpadKeys[digit - '0'];
     usb_hid_kbd().pressRaw(raw);
     delay(2);

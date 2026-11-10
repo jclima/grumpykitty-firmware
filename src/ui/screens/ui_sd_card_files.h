@@ -26,6 +26,10 @@ extern lv_obj_t * ui_key_b_bg;
 extern lv_obj_t * ui_sd_header_label;
 extern lv_obj_t * ui_key_a_enter;
 extern lv_obj_t * ui_key_b_back;
+void ui_sd_card_files_action_back(void);
+void ui_sd_card_files_action_refresh(void);
+void ui_sd_card_files_action_next_page(void);
+void ui_sd_card_files_action_previous_page(void);
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

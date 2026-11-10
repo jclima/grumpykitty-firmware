@@ -52,6 +52,7 @@ static void ui_event_msc_button_click(lv_event_t * e)
      * Without a card the host would enumerate an empty drive and MSC init
      * may panic the SD driver when it tries to read the block count. */
     if (!ui_sd_present()) {
+        usb_msc_set_error(ui_sd_state() == UI_SD_UNSUPPORTED ? USB_MSC_UNSUPPORTED : USB_MSC_MISSING);
         _ui_screen_change(&ui_usb_msc, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_usb_msc_screen_init);
         if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label,
             ui_sd_state() == UI_SD_UNSUPPORTED ? "unsupported card - use FAT32"
@@ -62,6 +63,7 @@ static void ui_event_msc_button_click(lv_event_t * e)
     /* Enable MSC first so the host sees the drive immediately after screen
      * transition completes. Disable is handled by launcher A/B key handlers. */
     int ok = usb_manager_request(USB_MODE_MSC);
+    if (!ok) usb_msc_set_error(USB_MSC_INIT_FAILED);
     _ui_screen_change(&ui_usb_msc, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_usb_msc_screen_init);
     if(ui_usb_msc_label) {
         lv_label_set_text(ui_usb_msc_label, ok ? "connected - copy files" : "MSC init failed");

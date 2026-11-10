@@ -19,6 +19,13 @@ extern "C" {
  */
 typedef void (*ui_sd_visit_cb)(const char* name, int is_dir, void* user);
 
+/* Incremental directory cursor. Each next call visits at most one entry. */
+typedef struct ui_sd_dir_cursor ui_sd_dir_cursor_t;
+ui_sd_dir_cursor_t * ui_sd_dir_open(const char *path);
+int ui_sd_dir_next(ui_sd_dir_cursor_t *cursor, char *name, uint32_t name_size,
+                   int *is_dir);
+void ui_sd_dir_close(ui_sd_dir_cursor_t *cursor);
+
 /* Active SD probe — opens "/" and verifies it is a directory.
  * Returns 1 if accessible, 0 otherwise. Safe to call ~1 Hz. */
 int ui_sd_present(void);
