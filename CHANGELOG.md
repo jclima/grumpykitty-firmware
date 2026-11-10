@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.3-grumpy] - 2026-11-10
+
+### Added
+- Radio Scanner Plus adds Wi-Fi channel counts, signal history for a selected Wi-Fi or BLE device, CSV export to microSD, and the Grumpy Scout survey view.
+- Radio Scanner Plus adds a passive Wi-Fi management frame monitor with explicit Start and Stop, channel selection when disconnected, and optional filtered PCAP files on microSD.
+
 ## [0.1.2-grumpy] - 2026-11-09
 
 ### Changed

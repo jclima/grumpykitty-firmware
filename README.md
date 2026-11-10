@@ -13,7 +13,7 @@ Community firmware for the MeowKit-S3 (ESP32-S3-WROOM-1-N16R8): more apps, bug f
 
 - All the vendor apps, plus a scrollable apps menu (up to 24 apps).
 - **Media Remote** and **Slide Clicker**: BLE HID remotes.
-- **Radio Scanner**: passive Wi-Fi and BLE survey.
+- **Radio Scanner Plus**: passive Wi-Fi and BLE survey, Wi-Fi channel counts, signal tracking, CSV export, and Grumpy Scout.
 - **Voice Recorder**: WAV files on the SD card.
 - **Boat Dash**: read-only Signal K dashboard with alarms.
 - Infrared: Flipper `.ir` files parsed and saved correctly (bounded parsing, proper protocol names).
@@ -55,6 +55,18 @@ Hold Power for 4-5 s to power off, then press Power to boot (or briefly short RE
 ## SD card
 
 Format the card as **FAT32 with an MBR** partition table (exFAT is not supported), then copy the contents of the `sd files/` folder to its root. On macOS: Disk Utility > View > Show All Devices > select the card (the device, not the volume) > Erase > Format `MS-DOS (FAT)`, Scheme `Master Boot Record`.
+
+## Radio Scanner Plus quick start
+
+Open **Radio Scan+** from the apps menu. Use Left and Right to switch between Wi-Fi, Channels, Grumpy Scout, and BLE. On a Wi-Fi or BLE list, highlight a device and press **A** to track its signal. Press **B** to go back or open the survey actions, where you can pause, resume, or export the current results to `/surveys` on the SD card. Hold **B** to exit.
+
+The Channels view counts access points seen on each channel. Grumpy Scout reacts to Wi-Fi survey results. Each CSV is a snapshot of the current Wi-Fi or BLE results and includes device identifiers.
+
+From a Wi-Fi view, press **B** and select **Wi-Fi packet monitor**. Use Up and Down to pick a setting and Left and Right to change it. Choose the current channel or select a 2.4 GHz channel allowed by the device's Wi-Fi region. While connected to an access point, use its current channel. Turn on **Save to microSD** and choose a PCAP filter to record all management frames, beacons, probes, or deauthentication and disassociation frames. The live counters show all observed management frames regardless of the file filter.
+
+Press **A** to start, then **A** again to stop and finalize the capture. Hold **B** to stop and exit the app. Finished captures appear in `/captures` on the FAT32 microSD card and open in Wireshark. The monitor itself only listens. An existing Wi-Fi connection stays active on its channel, and any channel change the monitor made while disconnected is restored on stop. Captures include network and device identifiers.
+
+Capture stops and saves the file if the radio changes channel or the file reaches its 16 MiB limit. PCAP stores up to 512 bytes per management frame. If the system clock is unset, capture timestamps show time since boot.
 
 ## Boat Dash quick start
 

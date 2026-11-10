@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 JC Lima
 
-/** Radio Scanner: passive WiFi + BLE observation. Never transmits, never connects. */
+/** Radio Scanner: passive WiFi + BLE observation. Uses passive discovery without initiating a connection. */
 #include "radio_scanner.h"
 #include "../app_09/infrared_file_utils.h"
 #include "../../system/bluetooth_manager.h"
 #include "../../system/settings_bridge.h"
 #include "../../ui/ui_wifi_bridge.h"
+#include "../app_common/sd_guard.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <SD_MMC.h>
 #include <esp_wifi.h>
 #include <esp_gap_ble_api.h>
 #include <algorithm>
@@ -17,12 +19,13 @@
 #include <new>
 
 namespace {
-constexpr int MAX_WIFI = 40, BLE_SLOTS = 64, NAME_LEN = 20;
+constexpr int MAX_WIFI = 40, BLE_SLOTS = 64, NAME_LEN = 20, CHANNELS = 14;
 constexpr uint32_t WIFI_RESCAN_MS = 5000, WIFI_BUSY_RETRY_MS = 1000;
 constexpr uint32_t BLE_SNAP_MS = 500, BLE_EXPIRE_MS = 30000, DRAW_MIN_MS = 100;
+constexpr uint32_t MONITOR_DRAW_MS = 250;
 constexpr uint32_t REPEAT_DELAY = 400, REPEAT_EVERY = 120;
 constexpr int VIS = hp::LIST2_VIS;
-enum Idx { I_UP, I_DOWN, I_LEFT, I_RIGHT, I_A, I_B };
+enum Idx { I_UP, I_DOWN, I_LEFT, I_RIGHT, I_A };
 enum State { ST_SCAN, ST_BUSY, ST_WIFI_OFF, ST_BT_OFF, ST_BT_ERR };
 
 struct WifiRow { char ssid[33]; uint8_t bssid[6]; uint8_t ch; int8_t rssi; uint8_t auth; };
@@ -104,16 +107,35 @@ const char* authName(uint8_t a) {
 void macStr(char* out, const uint8_t* m) {
     snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
 }
+// A Wi-Fi label has at most 32 bytes. Quotes may double, and a spreadsheet
+// text prefix, two delimiters and the terminator need four more bytes.
+void csvLabel(char (&out)[68], const char* label) {
+    const char* first = label;
+    while (*first == ' ') ++first;
+    char* p = out;
+    *p++ = '"';
+    if (*first && strchr("=+-@", *first)) *p++ = '\'';
+    for (; *label; ++label) {
+        if (*label == '"') *p++ = '"';
+        *p++ = *label;
+    }
+    *p++ = '"';
+    *p = '\0';
+}
 }
 
 namespace MOONCAKE::APPS {
 struct AppRadioScanner::Rows {
     WifiRow wifi[MAX_WIFI];
+    uint16_t channels[CHANNELS];
+    int wifiTotal;
+    uint32_t wifiSeen;
+    bool wifiReady;
     BleRow ble[BLE_SLOTS];
 };
 
 AppRadioScanner::AppRadioScanner(DEVICES* device) : _device(device) {
-    setAppInfo().name = "Radio Scanner";
+    setAppInfo().name = "Radio Scan+";
 }
 bool AppRadioScanner::_edge(int idx, bool down) {
     const bool fire = down && !_prev[idx];
@@ -126,8 +148,12 @@ void AppRadioScanner::onOpen() {
     _r = new (std::nothrow) Rows();
     if (!_r) { close(); return; }
     memset(_prev, 0, sizeof(_prev));
-    _hold_at[0] = _hold_at[1] = _rep_at[0] = _rep_at[1] = 0;
+    _rep_at[0] = _rep_at[1] = 0;
     _paused = false; _dirty = true; _count = _sel = _off = 0; _state = ST_SCAN;
+    _screen = SURVEY; _b_down = false; _message[0] = 0;
+    _monitor_option = 0; _monitor_channel = 0;
+    _monitor_filter = wifi_packet_monitor::Filter::All;
+    _monitor_save = false; _monitor_redraw = 0;
     _next_scan = _next_snap = _last_draw = 0;
     _wifi_scanning = false; _lease = 0; g_ble_paused = false; g_ble_running = false;
     _saved_mode = static_cast<int>(WiFi.getMode());
@@ -136,7 +162,8 @@ void AppRadioScanner::onOpen() {
     b.Up.hasChanged(); b.Down.hasChanged(); b.Left.hasChanged(); b.Right.hasChanged();
     _device->Lcd.fillScreen(hp::COL_BG);
     hp::drawChrome(_device->Lcd);
-    _enterTab(0);
+    _prev[I_A] = b.A.state() == Button_Class::PRESSED;
+    _enterTab(WIFI);
 }
 
 void AppRadioScanner::_stopWifiScan() {
@@ -156,12 +183,13 @@ void AppRadioScanner::_stopBle() {
     _lease = 0; g_ble_running = false;
 }
 void AppRadioScanner::_leaveTab() {
-    if (_tab == 0) _stopWifiScan(); else _stopBle();
+    if (_tab == BLE) _stopBle(); else _stopWifiScan();
 }
-void AppRadioScanner::_enterTab(int tab) {
+void AppRadioScanner::_enterTab(Tab tab) {
     _tab = tab; _count = _sel = _off = 0; _dirty = true; _paused = false;
     g_ble_paused = false; _next_scan = _next_snap = 0;
-    if (tab == 0) {
+    if (tab != BLE) {
+        _r->wifiReady = false;
         _state = settings_get_wifi_en() ? ST_SCAN : ST_WIFI_OFF;
         return;
     }
@@ -186,7 +214,7 @@ void AppRadioScanner::_sortClamp() {
 
 void AppRadioScanner::_wifiTick(uint32_t now) {
     if (!settings_get_wifi_en()) {
-        if (_state != ST_WIFI_OFF) { _stopWifiScan(); _state = ST_WIFI_OFF; _count = 0; _dirty = true; }
+        if (_state != ST_WIFI_OFF) { _stopWifiScan(); _state = ST_WIFI_OFF; _count = 0; _r->wifiReady = false; _target_present = false; _dirty = true; }
         return;
     }
     if (_state == ST_WIFI_OFF) { _state = ST_SCAN; _next_scan = 0; _dirty = true; }
@@ -206,6 +234,21 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
             if (n < 0) { _state = ST_BUSY; _next_scan = now + WIFI_BUSY_RETRY_MS; _dirty = true; }
             else _next_scan = now + WIFI_RESCAN_MS;
             return;
+        }
+        // Arduino's accessors use an 8-bit scan index.
+        const int scanned = std::min(n, 256);
+        memset(_r->channels, 0, sizeof(_r->channels));
+        _r->wifiTotal = scanned;
+        _r->wifiSeen = now;
+        _r->wifiReady = true;
+        if (_screen == SIGNAL) _target_present = false;
+        for (int i = 0; i < scanned; ++i) {
+            const int channel = WiFi.channel(i);
+            if (channel >= 1 && channel <= CHANNELS) ++_r->channels[channel - 1];
+            const auto* bssid = WiFi.BSSID(i);
+            if (_screen == SIGNAL && !_target_present && bssid && !memcmp(bssid, _target_key, 6)) {
+                _addSample(int8_t(WiFi.RSSI(i)), now);
+            }
         }
         const int keep = std::min(n, MAX_WIFI);
         for (int i = 0; i < keep; ++i) {
@@ -251,6 +294,7 @@ void AppRadioScanner::_bleTick(uint32_t now) {
     if (_state == ST_BT_OFF || _state == ST_BT_ERR) return;
     if (!bluetooth_manager::owns(_lease)) {  // revoked, e.g. Bluetooth turned off in Settings
         _lease = 0; g_ble_running = false;
+        _target_present = false;
         _state = bluetooth_manager::enabled() ? ST_BT_ERR : ST_BT_OFF; _count = 0; _dirty = true;
         return;
     }
@@ -264,21 +308,293 @@ void AppRadioScanner::_bleTick(uint32_t now) {
     }
     portEXIT_CRITICAL(&g_mux);
     std::sort(_r->ble, _r->ble + n, [](const BleRow& a, const BleRow& b) { return a.rssi > b.rssi; });
-    _count = n; _dirty = true;
+    _count = n;
+    if (_screen == SIGNAL) {
+        _target_present = false;
+        for (int i = 0; i < n; ++i) {
+            const auto& row = _r->ble[i];
+            if (row.type != _target_type || memcmp(row.addr, _target_key, 6)) continue;
+            if (row.seen != _target_seen) _addSample(row.rssi, row.seen);
+            _target_present = true;
+            break;
+        }
+    }
+    _dirty = true;
+}
+
+void AppRadioScanner::_addSample(int8_t rssi, uint32_t seen) {
+    constexpr int capacity = sizeof(_history);
+    _history[_history_head] = rssi;
+    _history_head = (_history_head + 1) % capacity;
+    _history_count = std::min(_history_count + 1, capacity);
+    _target_seen = seen;
+    _target_present = true;
+}
+
+void AppRadioScanner::_trackSelection() {
+    const int index = _off + _sel;
+    if (index >= _count) return;
+    _history_head = _history_count = 0;
+    if (_tab == BLE) {
+        const auto& row = _r->ble[index];
+        memcpy(_target_key, row.addr, sizeof(_target_key));
+        _target_type = row.type;
+        _addSample(row.rssi, row.seen);
+    } else {
+        const auto& row = _r->wifi[index];
+        memcpy(_target_key, row.bssid, sizeof(_target_key));
+        _addSample(row.rssi, _r->wifiSeen);
+    }
+    _screen = SIGNAL;
+}
+
+void AppRadioScanner::_setMessage(const char* text, uint16_t color) {
+    strncpy(_message, text, sizeof(_message) - 1); _message[sizeof(_message) - 1] = 0; _message_color = color; _dirty = true;
+}
+
+bool AppRadioScanner::_exportCsv() {
+    if (_count == 0) { _setMessage("No results to export", hp::COL_WARN); return false; }
+    const auto status = sd_guard::check();
+    if (status != sd_guard::Status::Ok) {
+        _setMessage(sd_guard::message(status), hp::COL_ERR);
+        return false;
+    }
+    constexpr char dir[] = "/surveys";
+    if (!SD_MMC.exists(dir) && !SD_MMC.mkdir(dir)) {
+        _setMessage("Cannot create /surveys", hp::COL_ERR);
+        return false;
+    }
+
+    const bool ble = _tab == BLE;
+    const unsigned long stamp = millis();
+    char path[40];
+    File file;
+    for (unsigned i = 0; i < 32; ++i) {
+        snprintf(path, sizeof(path), "%s/%s-%08lx-%02u.csv", dir, ble ? "ble" : "wifi", stamp, i);
+        if (!SD_MMC.exists(path)) {
+            file = SD_MMC.open(path, FILE_WRITE);
+            break;
+        }
+    }
+    if (!file) { _setMessage("Cannot open survey CSV", hp::COL_ERR); return false; }
+
+    size_t expected = 0;
+    auto write = [&](const char* data, size_t size) {
+        expected += size;
+        return file.write(reinterpret_cast<const uint8_t*>(data), size) == size;
+    };
+    constexpr char header[] = "radio,id,label,rssi_dbm,channel,security,address_type\r\n";
+    bool ok = write(header, sizeof(header) - 1);
+    for (int i = 0; ok && i < _count; ++i) {
+        char id[18], label[68], line[128];
+        int length;
+        if (ble) {
+            const auto& row = _r->ble[i];
+            macStr(id, row.addr);
+            csvLabel(label, row.name);
+            length = snprintf(line, sizeof(line), "ble,%s,%s,%d,,,%u\r\n",
+                              id, label, row.rssi, unsigned(row.type));
+        } else {
+            const auto& row = _r->wifi[i];
+            macStr(id, row.bssid);
+            csvLabel(label, row.ssid);
+            length = snprintf(line, sizeof(line), "wifi,%s,%s,%d,%u,%s,\r\n",
+                              id, label, row.rssi, unsigned(row.ch), authName(row.auth));
+        }
+        ok = length > 0 && size_t(length) < sizeof(line) && write(line, size_t(length));
+    }
+    file.flush();
+    file.close();
+    if (ok) {
+        // Arduino File::flush and close do not return filesystem errors.
+        File saved = SD_MMC.open(path, FILE_READ);
+        ok = saved && saved.size() == expected;
+        saved.close();
+    }
+    if (!ok) {
+        SD_MMC.remove(path);
+        _setMessage("CSV write failed", hp::COL_ERR);
+        return false;
+    }
+    _setMessage(path, hp::COL_INFO);
+    return true;
+}
+
+void AppRadioScanner::_drawChannels() {
+    auto& lcd = _device->Lcd;
+    if (!_r->wifiReady) {
+        put(lcd, 12, 90, _state == ST_WIFI_OFF ? "Wi-Fi disabled in Settings" :
+                         _state == ST_BUSY ? "Radio busy, retrying..." :
+                         _paused ? "Survey paused" : "Waiting for first Wi-Fi scan", hp::COL_DIM);
+        return;
+    }
+    put(lcd, 12, 34, "Access points per channel", hp::COL_FG);
+    const auto* channels = _r->channels;
+    const int peak = std::max<int>(1, *std::max_element(channels, channels + CHANNELS));
+    constexpr int base = 173, maxBar = 83;
+    lcd.drawFastHLine(15, base, 290, hp::COL_DIM);
+    for (int i = 0; i < CHANNELS; ++i) {
+        const int x = 16 + i * 21;
+        const int count = channels[i];
+        const int height = count ? std::max(2, count * maxBar / peak) : 0;
+        if (height) lcd.fillRect(x + 2, base - height, 13, height, hp::COL_ACCENT);
+        char label[6];
+        snprintf(label, sizeof(label), "%d", count);
+        // Three digit counts are possible on a crowded channel. Raise odd
+        // labels so adjacent values have room.
+        if (count) put(lcd, x, base - height - 17 - (i % 2) * 17, label, hp::COL_FG);
+        snprintf(label, sizeof(label), "%d", i + 1);
+        put(lcd, x, base + 4, label, hp::COL_DIM);
+    }
+}
+
+void AppRadioScanner::_drawScout() {
+    auto& lcd = _device->Lcd;
+    const bool found = _r->wifiReady && _r->wifiTotal > 0;
+    const char* status = _state == ST_WIFI_OFF ? "Wi-Fi is off." :
+                         _paused ? "Scout is on a break." :
+                         _state == ST_BUSY ? "The radio is busy." :
+                         found ? "I hear something." :
+                         _r->wifiReady ? "Quiet around here." : "Scout is listening...";
+    const uint16_t ink = found && !_paused ? hp::COL_ACCENT : hp::COL_DIM;
+    lcd.fillTriangle(111, 115, 112, 64, 147, 100, ink);
+    lcd.fillTriangle(173, 100, 208, 64, 209, 115, ink);
+    lcd.fillEllipse(160, 119, 52, 32, ink);
+    const int eye = found && !_paused ? 9 : 2;
+    lcd.fillEllipse(139, 115, 8, eye, hp::COL_BG);
+    lcd.fillEllipse(181, 115, 8, eye, hp::COL_BG);
+    lcd.drawLine(129, 105, 149, 113, hp::COL_BG);
+    lcd.drawLine(171, 113, 191, 105, hp::COL_BG);
+    lcd.fillTriangle(155, 128, 165, 128, 160, 133, hp::COL_BG);
+    lcd.drawLine(154, 140, 160, 137, hp::COL_BG);
+    lcd.drawLine(160, 137, 166, 140, hp::COL_BG);
+    put(lcd, 72, 160, status, hp::COL_FG);
+    if (_r->wifiReady) {
+        char line[35];
+        snprintf(line, sizeof(line), "%d APs in last scan", _r->wifiTotal);
+        put(lcd, 72, 182, line, hp::COL_DIM);
+    }
+}
+
+void AppRadioScanner::_drawHistory() {
+    auto& lcd = _device->Lcd;
+    char addr[18];
+    macStr(addr, _target_key);
+    put(lcd, 16, 36, addr, hp::COL_FG);
+    char status[38];
+    constexpr int capacity = sizeof(_history);
+    const int newest = (_history_head + capacity - 1) % capacity;
+    const auto age = static_cast<unsigned long>((millis() - _target_seen) / 1000);
+    if (_paused) snprintf(status, sizeof(status), "Paused  |  Last: %d dBm", _history[newest]);
+    else if (!_target_present) snprintf(status, sizeof(status), "Not seen  |  Last: %d dBm", _history[newest]);
+    else snprintf(status, sizeof(status), "%d dBm  |  Seen %lus ago", _history[newest], age);
+    put(lcd, 16, 58, status, _target_present ? hp::COL_INFO : hp::COL_WARN);
+
+    constexpr int graphX = 65, graphTop = 88, base = 175;
+    lcd.drawRect(graphX, graphTop, 238, base - graphTop + 1, hp::COL_DIM);
+    put(lcd, 18, graphTop, "-20", hp::COL_DIM);
+    put(lcd, 18, base - 15, "-100", hp::COL_DIM);
+    for (int i = 0; i < _history_count; ++i) {
+        const int sample = (_history_head + capacity - _history_count + i) % capacity;
+        const int x = graphX + 8 + (capacity - _history_count + i) * 14;
+        const int strength = std::clamp<int>(_history[sample], -100, -20);
+        const int height = std::max(2, (strength + 100) * (base - graphTop - 1) / 80);
+        lcd.fillRect(x, base - height, 9, height, hp::COL_ACCENT);
+    }
+    put(lcd, 68, 184, "Oldest", hp::COL_DIM);
+    put(lcd, 253, 184, "Newest", hp::COL_DIM);
+}
+
+void AppRadioScanner::_drawActions() {
+    auto& lcd = _device->Lcd;
+    hp::drawListItem(lcd, 0, _paused ? "Resume survey" : "Pause survey", _action == 0);
+    hp::drawListItem(lcd, 1, "Export CSV snapshot", _action == 1);
+    if (_tab != BLE) hp::drawListItem(lcd, 2, "Wi-Fi packet monitor", _action == 2);
+    if (_message[0]) put(lcd, 12, 120, _message, _message_color);
+    put(lcd, 12, 147, _tab == BLE ? "CSV: current BLE results" : "CSV: current Wi-Fi results", hp::COL_DIM);
+}
+
+void AppRadioScanner::_drawMonitor() {
+    namespace monitor = wifi_packet_monitor;
+    auto& lcd = _device->Lcd;
+    const bool live = monitor::running();
+    const auto stats = monitor::stats();
+    char line[40], badge[16];
+    if (live) snprintf(badge, sizeof(badge), "LIVE CH%u", unsigned(stats.channel));
+    else snprintf(badge, sizeof(badge), "STOPPED");
+    hp::drawHeader(lcd, "PACKET MONITOR", badge, live ? hp::COL_ACCENT : hp::COL_FG);
+    hp::drawFooter3(lcd, live ? "" : "^vPick <>Set", live ? "A Stop" : "A Start",
+                    live ? "Hold B:Exit" : "B Back");
+
+    if (_monitor_channel) snprintf(line, sizeof(line), "Channel: %u", unsigned(_monitor_channel));
+    else snprintf(line, sizeof(line), "Channel: current");
+    hp::drawListItem(lcd, 0, line, !live && _monitor_option == 0);
+    constexpr const char* filters[] = {"All management", "Beacons", "Probes", "Disconnect frames"};
+    snprintf(line, sizeof(line), "PCAP: %s", filters[static_cast<unsigned>(_monitor_filter)]);
+    hp::drawListItem(lcd, 1, line, !live && _monitor_option == 1);
+    hp::drawListItem(lcd, 2, _monitor_save ? "Save to microSD: on" : "Save to microSD: off",
+                     !live && _monitor_option == 2);
+
+    snprintf(line, sizeof(line), "Beacon %lu   Probe %lu",
+             (unsigned long)stats.beacons, (unsigned long)stats.probes);
+    put(lcd, 12, 109, line, hp::COL_FG);
+    snprintf(line, sizeof(line), "Disconnect %lu   Other %lu",
+             (unsigned long)stats.disconnects, (unsigned long)stats.other);
+    put(lcd, 12, 130, line, hp::COL_FG);
+    snprintf(line, sizeof(line), "Written %lu   Dropped %lu",
+             (unsigned long)stats.saved, (unsigned long)stats.dropped);
+    put(lcd, 12, 151, line, hp::COL_DIM);
+    const char* msg = _message[0] ? _message : monitor::message();
+    if (msg && msg[0]) put(lcd, 12, 174, msg, _message[0] ? _message_color : hp::COL_INFO);
+    const char* path = monitor::savedPath();
+    if (path[0]) put(lcd, 12, 193, path, hp::COL_DIM);
+}
+
+void AppRadioScanner::_monitorAdjust(int direction) {
+    if (_monitor_option == 0) {
+        _monitor_channel = (_monitor_channel + direction + CHANNELS + 1) % (CHANNELS + 1);
+    } else if (_monitor_option == 1) {
+        constexpr int count = static_cast<int>(wifi_packet_monitor::Filter::Disconnects) + 1;
+        _monitor_filter = static_cast<wifi_packet_monitor::Filter>(
+            (static_cast<int>(_monitor_filter) + direction + count) % count);
+    } else {
+        _monitor_save = !_monitor_save;
+    }
+    _message[0] = 0;
+    _dirty = true;
 }
 
 void AppRadioScanner::_draw() {
     auto& lcd = _device->Lcd;
+    hp::clearContent(lcd);
+    if (_screen == MONITOR) { _drawMonitor(); return; }
+    if (_screen == SIGNAL) {
+        hp::drawHeader(lcd, "SIGNAL HISTORY");
+        hp::drawFooter(lcd, "B Back", "Hold B:Exit");
+        _drawHistory();
+        return;
+    }
+    if (_screen == ACTIONS) {
+        hp::drawHeader(lcd, "SURVEY ACTIONS");
+        hp::drawFooter3(lcd, "^v Move", "A Select", "B Back");
+        _drawActions();
+        return;
+    }
     char badge[16];
     uint16_t bcol = hp::COL_INFO;
     if (_paused) { snprintf(badge, sizeof(badge), "PAUSED"); bcol = hp::COL_WARN; }
     else if (_state == ST_BUSY) { snprintf(badge, sizeof(badge), "BUSY"); bcol = hp::COL_WARN; }
     else if (_state == ST_WIFI_OFF || _state == ST_BT_OFF || _state == ST_BT_ERR) { snprintf(badge, sizeof(badge), "OFF"); bcol = hp::COL_ERR; }
-    else snprintf(badge, sizeof(badge), "%d %s", _count, _tab == 0 ? "APs" : "DEV");
-    hp::drawHeader(lcd, _tab == 0 ? "WIFI SCAN" : "BLE SCAN", badge, bcol);
-    hp::drawFooter3(lcd, "<>Tab ^vMove", _paused ? "[A]Run" : "[A]Pause", "Hold B:Exit");
+    else if (_tab == BLE) snprintf(badge, sizeof(badge), "%d DEV", _count);
+    else if (_r->wifiReady) snprintf(badge, sizeof(badge), "%d APs", _r->wifiTotal);
+    else snprintf(badge, sizeof(badge), "SCAN");
+    const char* titles[] = {"WIFI SCAN", "CHANNELS", "GRUMPY SCOUT", "BLE SCAN"};
+    hp::drawHeader(lcd, titles[_tab], badge, bcol);
+    const bool list = _tab == WIFI || _tab == BLE;
+    hp::drawFooter3(lcd, list ? "<>Tab ^vMove" : "<>Tab", list ? "A Track" : "", "B Actions");
+    if (_tab == CHANNELS) { _drawChannels(); return; }
+    if (_tab == SCOUT) { _drawScout(); return; }
     _sortClamp();
-    hp::clearContent(lcd);
     const char* msg = nullptr;
     uint16_t mcol = hp::COL_DIM;
     switch (_state) {
@@ -286,14 +602,18 @@ void AppRadioScanner::_draw() {
     case ST_BT_OFF: msg = "Enable Bluetooth in Settings"; mcol = hp::COL_ERR; break;
     case ST_BT_ERR: msg = "Bluetooth error"; mcol = hp::COL_ERR; break;
     default:
-        if (_count == 0) msg = _state == ST_BUSY ? "Radio busy, retrying..." : "Scanning...";
+        if (_count == 0) {
+            msg = _state == ST_BUSY ? "Radio busy, retrying..." :
+                  _paused ? "Survey paused" :
+                  _tab == WIFI && _r->wifiReady ? "No access points in last scan" : "Scanning...";
+        }
     }
     if (msg && _count == 0) { put(lcd, 16, 90, msg, mcol); return; }
     const uint32_t now = millis();
     const int end = std::min(VIS, _count - _off);
     for (int i = 0; i < end; ++i) {
         char title[40], sub[48], mac[18];
-        if (_tab == 0) {
+        if (_tab == WIFI) {
             const WifiRow& w = _r->wifi[_off + i];
             macStr(mac, w.bssid);
             snprintf(title, sizeof(title), "%s", w.ssid);
@@ -316,41 +636,119 @@ void AppRadioScanner::onRunning() {
     auto& b = _device->button;
     b.update(); b.tick();
     if (!_r) { close(); return; }
-    if (b.B.isLongPress()) { close(); return; }
+    if (_b_down && b.B.isLongPress()) { close(); return; }
 
-    const bool up = b.Up.state() == Button_Class::PRESSED, down = b.Down.state() == Button_Class::PRESSED;
-    const bool left = b.Left.state() == Button_Class::PRESSED, right = b.Right.state() == Button_Class::PRESSED;
-    const bool a = b.A.state() == Button_Class::PRESSED;
-    const bool dirs[2] = {up, down};
+    const bool pressed = b.B.state() == Button_Class::PRESSED;
+    if (b.B.hasChanged() && pressed) {
+        _b_down = true;
+        _b_started = now;
+    }
+    if (!pressed && _b_down) {
+        _b_down = false;
+        if (now - _b_started >= 1000) { close(); return; }
+        if (_screen == SURVEY) {
+            _screen = ACTIONS;
+            _action = 0;
+            _message[0] = 0;
+        } else if (_screen == MONITOR && wifi_packet_monitor::running()) {
+            wifi_packet_monitor::stop();
+        } else {
+            _screen = SURVEY;
+        }
+        _dirty = true;
+    }
+
+    const bool dirs[] = {b.Up.state() == Button_Class::PRESSED, b.Down.state() == Button_Class::PRESSED};
+    const bool left = _edge(I_LEFT, b.Left.state() == Button_Class::PRESSED);
+    const bool right = _edge(I_RIGHT, b.Right.state() == Button_Class::PRESSED);
+    const bool a = _edge(I_A, b.A.state() == Button_Class::PRESSED);
     for (int i = 0; i < 2; ++i) {
-        bool step = false;
-        if (_edge(i, dirs[i])) { _rep_at[i] = now + REPEAT_DELAY; step = true; }
-        else if (dirs[i] && static_cast<int32_t>(now - _rep_at[i]) >= 0) { _rep_at[i] = now + REPEAT_EVERY; step = true; }
-        if (!step || _count == 0) continue;
-        const int abs = _off + _sel + (i == I_UP ? -1 : 1);
-        if (abs < 0 || abs >= _count) continue;
-        if (abs < _off) { _off = abs; _sel = 0; }
-        else if (abs >= _off + VIS) { _off = abs - VIS + 1; _sel = VIS - 1; }
-        else _sel = abs - _off;
+        const bool edge = _edge(i, dirs[i]);
+        if (edge) _rep_at[i] = now + REPEAT_DELAY;
+        const bool repeat = dirs[i] && !edge && static_cast<int32_t>(now - _rep_at[i]) >= 0;
+        if (repeat) _rep_at[i] = now + REPEAT_EVERY;
+        if (_screen == ACTIONS && edge) {
+            _action = std::clamp(_action + (i == I_UP ? -1 : 1), 0, _tab == BLE ? 1 : 2);
+            _dirty = true;
+        }
+        if (_screen == MONITOR && edge && !wifi_packet_monitor::running()) {
+            _monitor_option = std::clamp(_monitor_option + (i == I_UP ? -1 : 1), 0, 2);
+            _dirty = true;
+        }
+        if (_screen != SURVEY || (_tab != WIFI && _tab != BLE) || (!edge && !repeat)) continue;
+        const int index = _off + _sel + (i == I_UP ? -1 : 1);
+        if (index < 0 || index >= _count) continue;
+        if (index < _off) _off = index;
+        else if (index >= _off + VIS) _off = index - VIS + 1;
+        _sel = index - _off;
         _dirty = true;
     }
-    if (_edge(I_LEFT, left) && _tab != 0) { _leaveTab(); _enterTab(0); }
-    else if (_edge(I_RIGHT, right) && _tab != 1) { _leaveTab(); _enterTab(1); }
-    if (_edge(I_A, a)) {
-        _paused = !_paused; g_ble_paused = _paused;
-        if (!_paused && _tab == 1) { tableClear(); _next_snap = 0; }  // drop entries aged out while paused
+    if (_screen == SURVEY && (left || right)) {
+        const auto next = static_cast<Tab>((_tab + (left ? TAB_COUNT - 1 : 1)) % TAB_COUNT);
+        if (_tab == BLE || next == BLE) {
+            _leaveTab();
+            _enterTab(next);
+        } else {
+            _tab = next;
+            _dirty = true;
+        }
+    } else if (_screen == MONITOR && (left || right) && !wifi_packet_monitor::running()) {
+        _monitorAdjust(left ? -1 : 1);
+    }
+    if (a) {
+        if (_screen == SURVEY && (_tab == WIFI || _tab == BLE)) {
+            _sortClamp();
+            _trackSelection();
+        } else if (_screen == ACTIONS && _action == 0) {
+            _paused = !_paused;
+            g_ble_paused = _paused;
+            if (!_paused && _tab == BLE) { tableClear(); _next_snap = 0; }
+            _message[0] = 0;
+        } else if (_screen == ACTIONS && _action == 1) {
+            _exportCsv();
+        } else if (_screen == ACTIONS) {
+            _screen = MONITOR;
+            _monitor_option = 0;
+            _message[0] = 0;
+        } else if (_screen == MONITOR) {
+            if (wifi_packet_monitor::running()) {
+                wifi_packet_monitor::stop();
+            } else if (_wifi_scanning) {
+                _setMessage("Wait for the survey scan to finish", hp::COL_WARN);
+            } else {
+                _message[0] = 0;
+                wifi_packet_monitor::start(_monitor_channel, _monitor_filter, _monitor_save);
+            }
+        }
         _dirty = true;
     }
-    if (_tab == 0) _wifiTick(now); else _bleTick(now);
+    if (_screen == MONITOR) {
+        if (wifi_packet_monitor::running()) {
+            wifi_packet_monitor::tick();
+            if (!wifi_packet_monitor::running() || now - _monitor_redraw >= MONITOR_DRAW_MS) {
+                _monitor_redraw = now;
+                _dirty = true;
+            }
+        } else if (_wifi_scanning) {
+            // Let an existing passive survey finish. The monitor never starts one.
+            _wifiTick(now);
+        }
+    } else if (_tab == BLE) {
+        _bleTick(now);
+    } else {
+        _wifiTick(now);
+    }
 
     if (_dirty && now - _last_draw >= DRAW_MIN_MS) { _dirty = false; _last_draw = now; _draw(); }
     delay(1);
 }
 
 void AppRadioScanner::onClose() {
+    wifi_packet_monitor::stop();
     _leaveTab();
     // WiFi.scanNetworks() may have switched the radio into STA; put back what we found.
-    if (static_cast<int>(WiFi.getMode()) != _saved_mode) WiFi.mode(static_cast<wifi_mode_t>(_saved_mode));
+    if (!ui_wifi_bridge_radio_busy() && static_cast<int>(WiFi.getMode()) != _saved_mode)
+        WiFi.mode(static_cast<wifi_mode_t>(_saved_mode));
     delete _r; _r = nullptr;
     _device->Lcd.fillScreen(TFT_BLACK);
 }

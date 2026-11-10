@@ -18,3 +18,7 @@ CXX=${CXX:-c++}
 $CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
   src/app/app_14/sk_model.cpp tools/host_tests/test_sk_model.cpp -o "$OUT/t"
 "$OUT/t"
+
+$CXX -std=c++17 -Wall -Wextra \
+  tools/host_tests/test_wifi_pcap.cpp -o "$OUT/wifi_pcap"
+"$OUT/wifi_pcap"

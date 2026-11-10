@@ -63,6 +63,7 @@ static inline void _unlock(void) { if (s_lock) xSemaphoreGive(s_lock); }
 
 /* One worker owns scan results and deferred radio actions. */
 static bool s_scan_task_active = false;
+static bool s_monitor_active = false;
 
 enum wifi_radio_action_t { WIFI_ACTION_NONE, WIFI_ACTION_CONNECT,
                            WIFI_ACTION_DISCONNECT, WIFI_ACTION_FORGET };
@@ -289,6 +290,7 @@ static void _capture_reconnect_locked(void)
 void ui_wifi_bridge_start_scan(void)
 {
     _lock();
+    if (s_monitor_active) { _unlock(); return; }
 
     /* A scan task is already running: don't spawn a second one, ask it to
      * scan again (it discards its current results first).  Unless a queued
@@ -351,9 +353,26 @@ bool ui_wifi_bridge_scan_complete(void) { return (s_scan_count >= 0);  }
 bool ui_wifi_bridge_radio_busy(void)
 {
     _lock();
-    bool busy = s_scan_task_active;
+    bool busy = s_scan_task_active || s_monitor_active;
     _unlock();
     return busy;
+}
+
+bool ui_wifi_bridge_try_acquire_monitor(void)
+{
+    if (!s_lock) return false;
+    _lock();
+    const bool idle = !s_scan_task_active && !s_monitor_active && s_status != WIFI_BRIDGE_CONNECTING;
+    if (idle) s_monitor_active = true;
+    _unlock();
+    return idle;
+}
+
+void ui_wifi_bridge_release_monitor(void)
+{
+    _lock();
+    s_monitor_active = false;
+    _unlock();
 }
 
 void ui_wifi_bridge_get_ssid(int idx, char *buf, int len)
@@ -422,6 +441,7 @@ void ui_wifi_bridge_connect(const char *ssid, const char *pass)
     /* Stop any in-progress scan before connecting. The scan task (sole owner
      * of the results) notices the generation change and frees them itself. */
     _lock();
+    if (s_monitor_active) { _unlock(); return; }
     bool was_scanning = s_scan_task_active;
     if (was_scanning) {
         s_scan_gen++;
@@ -487,6 +507,7 @@ void ui_wifi_bridge_connect_pending(const char *password)
 void ui_wifi_bridge_disconnect(void)
 {
     _lock();
+    if (s_monitor_active) { _unlock(); return; }
     s_try_valid = false;
     bool was_scanning = s_scan_task_active;
     if (was_scanning) {
@@ -557,6 +578,10 @@ const char *ui_wifi_bridge_get_current_ssid(void)
 void ui_wifi_bridge_forget(const char *ssid)
 {
     if (!ssid || ssid[0] == '\0') return;
+    _lock();
+    const bool monitoring = s_monitor_active;
+    _unlock();
+    if (monitoring) return;
     char saved[33] = {};
     persist_get_str(kKeySsid, saved, sizeof(saved), "");
     if (strcmp(ssid, saved) == 0) {

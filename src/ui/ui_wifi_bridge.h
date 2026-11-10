@@ -79,8 +79,14 @@ bool ui_wifi_bridge_is_scanning(void);
  *  before a scan is triggered (-2). */
 bool ui_wifi_bridge_scan_complete(void);
 
-/** True while the bridge owns the WiFi radio for a scan or queued action. */
+/** True while a scan worker or the packet monitor owns the WiFi radio. */
 bool ui_wifi_bridge_radio_busy(void);
+
+/** Packet monitor reservation. Acquire and release on the launcher task,
+ * which also runs the settings actions. Acquire fails during scans or an
+ * in-flight connection. Release only after restoring the radio. */
+bool ui_wifi_bridge_try_acquire_monitor(void);
+void ui_wifi_bridge_release_monitor(void);
 
 /**
  * Get details for AP at scan index i.
