@@ -41,13 +41,14 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           python3 tools/release/merge_bin.py --build-dir .pio/build/esp32s3box --version "$VERSION" --out-dir dist
-          cd dist && sha256sum ./*.bin manifest.json > SHA256SUMS && cat SHA256SUMS
+          cd dist && sha256sum ./*.bin manifest.json ota.json > SHA256SUMS && cat SHA256SUMS
       - name: Assemble Pages site
         run: |
           mkdir -p _site/flash
           cp -R docs/flash/. _site/flash/
           VERSION="${GITHUB_REF_NAME#v}"
           cp "dist/manifest.json" \
+            "dist/ota.json" \
             "dist/grumpykitty-${VERSION}-merged.bin" \
             "dist/grumpykitty-${VERSION}-bootloader.bin" \
             "dist/grumpykitty-${VERSION}-partitions.bin" \
@@ -83,7 +84,7 @@ jobs:
             "dist/grumpykitty-${VERSION}-partitions.bin" \
             "dist/grumpykitty-${VERSION}-boot_app0.bin" \
             "dist/grumpykitty-${VERSION}-firmware.bin" \
-            dist/SHA256SUMS dist/manifest.json
+            dist/SHA256SUMS dist/manifest.json dist/ota.json
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

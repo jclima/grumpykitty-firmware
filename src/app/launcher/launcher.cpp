@@ -55,6 +55,7 @@
 #include "../../system/usb_manager.h"
 #include "../../system/settings_bridge.h"  /* includes persist internally */
 #include "../../system/power_mgmt.h"
+#include "../../system/ota_updater.h"
 #include "../../system/mk_events.h"
 #include "../../system/system_sound.h"
 #include <Arduino.h>
@@ -344,6 +345,19 @@ void Launcher::onLoop()
 
     /* Flush dirty settings to NVS after debounce — ~0 cost when clean */
     settings_tick();
+
+    // onCreate renders the home screen before onLoop begins. Wait for a
+    // few seconds of normal loop operation, even if an app is opened early.
+    static uint32_t healthySince = 0;
+    static bool otaChecked = false;
+    if (!otaChecked && _ui_ready && ui_home && lv_disp_get_default() && lv_scr_act()) {
+        const uint32_t now = millis();
+        if (healthySince == 0) healthySince = now;
+        if (now - healthySince >= 3000) {
+            ota_updater::confirmHealthyBoot();
+            otaChecked = true;
+        }
+    }
 
     if (!_app_running) {
         /* ── GUI state: LVGL active ── */

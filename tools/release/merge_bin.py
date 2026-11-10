@@ -180,6 +180,14 @@ def main():
     with open(os.path.join(a.out_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")
+    # The device derives the same-origin payload name from VERSION. This feed
+    # describes only the app binary, never the USB flash image or partition table.
+    with open(files[0x10000], "rb") as fw:
+        app_digest = hashlib.sha256(fw.read()).hexdigest()
+    with open(os.path.join(a.out_dir, "ota.json"), "w") as f:
+        json.dump({"schema": 1, "device": "meowkit-s3", "version": version,
+                   "size": size, "sha256": app_digest}, f, indent=2)
+        f.write("\n")
     h = hashlib.sha256(open(merged, "rb").read()).hexdigest()
     print(f"merged: {merged} ({os.path.getsize(merged)} bytes) sha256={h}")
 

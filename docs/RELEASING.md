@@ -10,7 +10,7 @@
 
 ## Version
 
-The single source of truth is the `VERSION` file at the repo root (plain `X.Y.Z` or `X.Y.Z-suffix`, for example `0.1.0-grumpy`; no leading `v`). The release workflow takes the version from the tag (`vX.Y.Z` -> `X.Y.Z`) and fails early if it differs from `VERSION`, so keep the two equal.
+The single source of truth is the `VERSION` file at the repo root. For the public OTA feed use `X.Y.Z-grumpy` with canonical numeric components and no leading `v`. The release tag is `vX.Y.Z-grumpy` and must match `VERSION`.
 
 The firmware gets the same version at build time: `tools/gk_version.py` (a PlatformIO pre-script) reads `VERSION` and defines `GK_VERSION`, and `src/bsp/config.h` derives `FIRMWARE_VERSION` (`"v" GK_VERSION`, shown in Settings) from it. Do not hand-edit version strings elsewhere.
 
@@ -18,12 +18,14 @@ The firmware gets the same version at build time: `tools/gk_version.py` (a Platf
 
 1. Edit `VERSION`.
 2. In `CHANGELOG.md`, rename `[Unreleased]` to `[X.Y.Z] - date` (the tag without `v`) and start a fresh `[Unreleased]`.
-3. Commit, then tag and push:
+3. Commit, then tag and push to the GrumpyKitty repository. In a checkout where that remote is named `grumpy`:
    ```
-   git tag vX.Y.Z
-   git push origin main vX.Y.Z
+   git tag vX.Y.Z-grumpy
+   git push --atomic grumpy HEAD:refs/heads/main refs/tags/vX.Y.Z-grumpy
    ```
-4. The `Release` workflow builds, runs host tests, creates the merged clean-install image plus versioned bootloader, partition-table, `boot_app0` and firmware images, checksums and a split-image `manifest.json`, publishes all of them in a GitHub Release, runs `tools/release/check_release.py` on the assembled site (manifest offsets, checksums, the shipped partition table is exactly app0 `ota_0` at 0x10000 and app1 `ota_1` at 0x790000 with NVS at 0x9000 and otadata at 0xe000, firmware fits the smallest OTA slot, no part overlapping NVS, merged image NVS blank, version string in the firmware), and deploys the same exact-version files to Pages (`/flash/`, with a root page redirecting there). Existing Pages manifests remain merged until a new release replaces them.
+4. The `Release` workflow builds, runs host tests, packages the merged and split images, and verifies both the USB manifest and OTA feed before publishing the release and deploying the same files to Pages under `/flash/`. Verify the live `ota.json` version, size and SHA-256 against the live versioned firmware binary after deployment.
+
+The on-device updater reads `/flash/ota.json` and downloads only the versioned `-firmware.bin` from the same HTTPS origin. The browser installer continues to use `manifest.json`. Keep the two metadata files and the versioned app binary in the same Pages deployment. Releases that change the bootloader or partition layout must be installed over USB because the updater writes only the inactive app slot.
 
 ## Local dry run
 
@@ -31,7 +33,7 @@ The firmware gets the same version at build time: `tools/gk_version.py` (a Platf
 make dist     # builds first (make build), then writes dist/ (git-ignored)
 ```
 
-`dist/` contains the merged image (flash at 0x0), versioned split images and `manifest.json`. The merged CLI image is for esptool clean installs only: it contains 0xFF over the settings/NVS area, so flashing it wipes saved settings. The browser manifest writes the split regions at their existing offsets, preserving the settings/NVS partition unless the user explicitly selects erase; schema migrations may still require an erase or a firmware-provided migration. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-merged.bin`.
+`dist/` contains the merged image (flash at 0x0), versioned split images, `manifest.json` and `ota.json`. The merged CLI image is for esptool clean installs only: it contains 0xFF over the settings/NVS area, so flashing it wipes saved settings. The browser manifest writes the split regions at their existing offsets, preserving the settings/NVS partition unless the user explicitly selects erase; schema migrations may still require an erase or a firmware-provided migration. Flash locally with `python -m esptool --chip esp32s3 write_flash 0x0 dist/grumpykitty-X.Y.Z-grumpy-merged.bin`.
 
 ### Partition layout and size guard
 

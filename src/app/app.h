@@ -40,6 +40,7 @@
 #include "app_12/radio_scanner.h"  /* Radio Scanner */
 #include "app_13/voice_recorder.h" /* Voice Recorder */
 #include "app_14/boat_dash.h"      /* Boat Dash    */
+#include "app_15/firmware_update.h" /* FW Update    */
 
 #include <mooncake.h>
 #include <memory>
@@ -75,6 +76,7 @@ static const AppReg APP_REGISTRY[] = {
     { &make<MOONCAKE::APPS::AppRadioScanner>, &ui_img_radarscan_png    }, /* app_12  Radio Scanner */
     { &make<MOONCAKE::APPS::AppVoiceRecorder>, &ui_img_voicerec_png    }, /* app_13  Voice Recorder */
     { &make<MOONCAKE::APPS::AppBoatDash>,      &ui_img_boatdash_png    }, /* app_14  Boat Dash    */
+    { &make<MOONCAKE::APPS::AppFirmwareUpdate>, &ui_img_detailed_settings_png }, /* app_15  FW Update */
 };
 static const int APP_REGISTRY_COUNT =
     (int)(sizeof(APP_REGISTRY) / sizeof(APP_REGISTRY[0]));

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.4-grumpy] - 2026-11-10
+
+### Added
+- FW Update checks for newer GrumpyKitty releases over HTTPS, verifies the download, and stages it in the inactive firmware slot. Install this first OTA-capable version via the USB browser flasher.
+- The release workflow publishes an OTA feed tied to the exact app image and validates it before deployment.
+
 ## [0.1.3-grumpy] - 2026-11-10
 
 ### Added

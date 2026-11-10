@@ -16,6 +16,7 @@ Community firmware for the MeowKit-S3 (ESP32-S3-WROOM-1-N16R8): more apps, bug f
 - **Radio Scanner Plus**: passive Wi-Fi and BLE survey, Wi-Fi channel counts, signal tracking, CSV export, and Grumpy Scout.
 - **Voice Recorder**: WAV files on the SD card.
 - **Boat Dash**: read-only Signal K dashboard with alarms.
+- **FW Update**: checks for and installs newer firmware over Wi-Fi.
 - Infrared: Flipper `.ir` files parsed and saved correctly (bounded parsing, proper protocol names).
 - Fixes: SD cards in unsupported formats are reported clearly, battery monitoring and shutdown logic made robust, Wi-Fi credentials no longer stored in plaintext, race conditions in USB MSC and system sound, UI typos and overflows. Full list in [CHANGELOG.md](CHANGELOG.md).
 
@@ -27,7 +28,7 @@ Always power the device **off** first and enter Download Mode (below). Flashing 
 
 The browser flasher writes only the bootloader, partition table, `boot_app0` and firmware regions, so saved settings are kept as long as you leave **Erase device** unticked. A future settings-format change may still need an erase or a migration. The merged image in (b) wipes saved settings, because it also overwrites the settings area with blank data.
 
-**Partition table change (dual OTA slots).** This release replaces the single 12.5 MB app partition with two 7.5 MB slots (`app0` and `app1`), preparing for over-the-air updates in a later release. The firmware is about 5.8 MB, so it fits a slot with room to spare. Moving a device from the old table needs this one release flashed once more by the browser flasher or wired (esptool); no full erase is needed, and saved settings stay because the settings (NVS) partition does not move, so leave **Erase device** unticked. A device cannot change its own partition table over the air, so this step can never be done remotely.
+**First OTA-capable release.** Install **v0.1.4-grumpy** once via USB. Leave **Erase device** unticked when updating an existing GrumpyKitty installation to keep its settings. The browser installer also installs the dual-slot layout if your device is still on the older single-slot layout.
 
 **b) With esptool (clean install; wipes settings).** Download `grumpykitty-X.Y.Z-merged.bin` from [Releases](https://github.com/jclima/grumpykitty-firmware/releases):
 
@@ -51,6 +52,12 @@ make bootstrap-check && make upload
 ### After flashing
 
 Hold Power for 4-5 s to power off, then press Power to boot (or briefly short RESET to GND). Saved settings such as Wi-Fi are wiped by a full-chip erase and by flashing the merged image; updating from GrumpyKitty builds with the browser flasher (Erase unticked) keeps them.
+
+## Update over Wi-Fi
+
+On v0.1.4 or later, connect to Wi-Fi and open **FW Update** from the apps menu. Press **A** to check. If a newer release is available, press **A** to download and verify it. When the screen says the update is ready, press **A** to restart into it. Plug in USB power or start with at least 30% battery. Hold **B** to leave before restarting. The running firmware stays selected until you choose to restart.
+
+Wi-Fi updates write only the inactive firmware slot. They preserve settings and microSD data. If an update fails to boot and the device resets before it confirms the new firmware, the bootloader can return to the previous slot. The USB browser flasher remains the recovery path.
 
 ## SD card
 

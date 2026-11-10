@@ -21,8 +21,10 @@ Checks (all must pass):
     from the shipped partitions.bin (parts must also not overlap each other)
   * the merged image is all 0xFF across 0x9000-0xE000 (NVS region)
   * firmware.bin contains the VERSION string
+  * ota.json describes the exact app-only firmware bytes and target
+  * boot_app0.bin resets OTA selection to app0 when installing over USB
 """
-import argparse, hashlib, json, os, struct, subprocess, sys, tempfile
+import argparse, hashlib, json, os, re, struct, subprocess, sys, tempfile, zlib
 
 SECTOR = 0x1000
 EXPECTED = {0x0: "bootloader", 0x8000: "partitions", 0xE000: "boot_app0", 0x10000: "firmware"}
@@ -100,6 +102,18 @@ def check_table(partitions_bin):
     return nvs[0][3], nvs[0][3] + nvs[0][4], min(app0[4], app1[4])
 
 
+def check_usb_boot_selection(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    if len(data) != 2 * SECTOR:
+        raise CheckError("boot_app0.bin must replace both OTA selector sectors")
+    seq, state, crc = struct.unpack_from("<I20xII", data)
+    alternate = struct.unpack_from("<I", data, SECTOR)[0]
+    if (seq != 1 or state not in (2, 0xFFFFFFFF) or alternate not in (0, 0xFFFFFFFF) or
+            crc != zlib.crc32(data[:4], 0xFFFFFFFF)):
+        raise CheckError("boot_app0.bin must select the USB-flashed app0")
+
+
 def check(site, version, sums_path=None):
     flash = os.path.join(site, "flash")
     manifest_path = os.path.join(flash, "manifest.json")
@@ -135,7 +149,7 @@ def check(site, version, sums_path=None):
             raise CheckError(f"{name}: sha256 differs from SHA256SUMS")
         files[off] = path
     if sums_path:
-        for name in [f"grumpykitty-{version}-merged.bin", "manifest.json"]:
+        for name in [f"grumpykitty-{version}-merged.bin", "manifest.json", "ota.json"]:
             path = os.path.join(flash, name)
             if name not in sums:
                 raise CheckError(f"{name} not listed in SHA256SUMS")
@@ -160,6 +174,7 @@ def check(site, version, sums_path=None):
     for (_, e, lp), (s, _, rp) in zip(ranges, ranges[1:]):
         if e > s:
             raise CheckError(f"{os.path.basename(lp)} overlaps {os.path.basename(rp)}")
+    check_usb_boot_selection(files[OTADATA_OFFSET])
 
     merged = os.path.join(flash, f"grumpykitty-{version}-merged.bin")
     if not os.path.isfile(merged):
@@ -173,6 +188,17 @@ def check(site, version, sums_path=None):
     with open(files[0x10000], "rb") as f:
         if version.encode() not in f.read():
             raise CheckError(f"firmware.bin does not contain version string {version!r}")
+    if not re.fullmatch(r"(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})\.(?:0|[1-9][0-9]{0,3})-grumpy", version):
+        raise CheckError("VERSION is not a supported GrumpyKitty OTA version")
+    try:
+        with open(os.path.join(flash, "ota.json")) as f:
+            ota = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise CheckError(f"cannot read ota.json: {exc}") from exc
+    expected = {"schema": 1, "device": "meowkit-s3", "version": version,
+                "size": fw_size, "sha256": sha256(files[0x10000])}
+    if ota != expected or type(ota["schema"]) is not int or type(ota["size"]) is not int:
+        raise CheckError("ota.json does not match the app binary, version, and device")
     return nvs_start, nvs_end
 
 
@@ -192,7 +218,7 @@ def _make_site(root, version, fw_size=0x2000, boot_size=0x5000, nvs_clean=True,
     blobs = {
         "bootloader": b"\x11" * boot_size,
         "partitions": table.ljust(0xC00, b"\xff"),
-        "boot_app0": b"\x22" * 0x2000,
+        "boot_app0": (struct.pack("<I20xII", 1, 0xFFFFFFFF, 0x4743989A)).ljust(0x2000, b"\xff"),
         "firmware": (b"fw " + version.encode() + b"\0").ljust(fw_size, b"\x33"),
     }
     parts = []
@@ -209,11 +235,15 @@ def _make_site(root, version, fw_size=0x2000, boot_size=0x5000, nvs_clean=True,
     with open(os.path.join(flash, "manifest.json"), "w") as f:
         json.dump({"name": "GrumpyKitty", "version": version, "new_install_prompt_erase": True,
                    "builds": [{"chipFamily": "ESP32-S3", "parts": parts}]}, f)
+    with open(os.path.join(flash, "ota.json"), "w") as f:
+        app = blobs["firmware"]
+        json.dump({"schema": 1, "device": "meowkit-s3", "version": version,
+                   "size": len(app), "sha256": hashlib.sha256(app).hexdigest()}, f)
     return flash
 
 
 def self_test():
-    version = "9.9.9-test"
+    version = "9.9.9-grumpy"
     cases = [
         ("pass", {}, None),
         ("nvs-overlap (bootloader reaches 0x9000)", {"boot_size": 0x9100}, "overlaps NVS"),
@@ -248,6 +278,35 @@ def self_test():
             ok = "offsets" in str(e)
         print(f"self-test {'ok  ' if ok else 'FAIL'} wrong offsets rejected")
         failures += not ok
+    for key, value in [("sha256", "0" * 64), ("size", 1), ("version", "9.9.8-grumpy"),
+                       ("device", "other-board"), ("schema", True)]:
+        with tempfile.TemporaryDirectory() as tmp:
+            flash = _make_site(tmp, version)
+            path = os.path.join(flash, "ota.json")
+            with open(path) as f:
+                ota = json.load(f)
+            ota[key] = value
+            with open(path, "w") as f:
+                json.dump(ota, f)
+            try:
+                check(tmp, version)
+                ok = False
+            except CheckError as e:
+                ok = "ota.json" in str(e)
+            print(f"self-test {'ok  ' if ok else 'FAIL'} wrong OTA {key} rejected")
+            failures += not ok
+    with tempfile.TemporaryDirectory() as tmp:
+        flash = _make_site(tmp, version)
+        with open(os.path.join(flash, f"grumpykitty-{version}-boot_app0.bin"), "r+b") as f:
+            f.seek(SECTOR)
+            f.write(struct.pack("<I", 2))
+        try:
+            check(tmp, version)
+            ok = False
+        except CheckError as e:
+            ok = "must select the USB-flashed app0" in str(e)
+        print(f"self-test {'ok  ' if ok else 'FAIL'} stale app1 selector rejected")
+        failures += not ok
     return failures
 
 
@@ -266,7 +325,7 @@ def main():
         s, e = check(a.site, version, a.sums)
     except CheckError as ex:
         sys.exit(f"check_release: FAIL: {ex}")
-    print(f"check_release: OK (version {version}, NVS {s:#x}-{e:#x} untouched by split parts)")
+    print(f"check_release: OK (version {version}, app-only OTA feed, NVS {s:#x}-{e:#x} untouched by split parts)")
 
 
 if __name__ == "__main__":

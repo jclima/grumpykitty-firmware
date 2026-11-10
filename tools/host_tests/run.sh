@@ -22,3 +22,7 @@ $CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
 $CXX -std=c++17 -Wall -Wextra \
   tools/host_tests/test_wifi_pcap.cpp -o "$OUT/wifi_pcap"
 "$OUT/wifi_pcap"
+
+$CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
+  tools/host_tests/test_ota_manifest.cpp -o "$OUT/ota_manifest"
+"$OUT/ota_manifest"
