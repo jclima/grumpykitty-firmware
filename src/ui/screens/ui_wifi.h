@@ -14,8 +14,10 @@ extern "C" {
 extern void ui_wifi_screen_init(void);
 extern void ui_wifi_screen_destroy(void);
 extern void ui_event_wifi(lv_event_t * e);
-/** Connect the last-tapped row (used by physical A button in launcher). */
+/** Activate the highlighted network or Rescan (physical A button). */
 extern void ui_wifi_connect_focused(void);
+extern void ui_wifi_focus_step(int direction);
+extern bool ui_wifi_handle_back(void);
 extern lv_obj_t * ui_wifi;
 extern lv_obj_t * ui_wifi_bg;
 extern lv_obj_t * ui_wifi_header_bg;

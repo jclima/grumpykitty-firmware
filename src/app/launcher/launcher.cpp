@@ -1091,7 +1091,10 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     }
     if (cur == ui_wifi) {
         if (a) { ui_wifi_connect_focused(); return; }
-        if (b) { _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
+        if (b) { if (ui_wifi_handle_back()) return; _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
+        if (up) { ui_wifi_focus_step(-1); return; }
+        if (down) { ui_wifi_focus_step(1); return; }
+        return;
     }
     if (cur == ui_tabview) {
         if (a)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_home_screen_init); return; }

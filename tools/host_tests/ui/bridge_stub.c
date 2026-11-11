@@ -9,15 +9,18 @@ lv_obj_t *ui_settings;
 void ui_settings_screen_init(void) { if(!ui_settings) ui_settings=lv_obj_create(NULL); }
 lv_obj_t *ui_home;
 void ui_home_screen_init(void) { if(!ui_home) ui_home=lv_obj_create(NULL); }
-typedef struct { const char *ssid; int pct; bool encrypted; bool saved; } ap_t;
-static ap_t aps[128]; static int ap_count; static bool scanning; static bool complete;
+typedef struct { char ssid[64]; int pct; bool encrypted; bool saved; } ap_t;
+static ap_t aps[256]; static int ap_count; static bool scanning; static bool complete;
 static wifi_bridge_status_t status; static char pending[64]; static char current[64];
 static char last_ssid[64]; static char last_pass[65]; static int connect_calls;
 void host_wifi_reset(void) { ap_count=0; scanning=false; complete=false; status=WIFI_BRIDGE_IDLE; pending[0]=0; current[0]=0; last_ssid[0]=0; last_pass[0]=0; connect_calls=0; }
-void host_wifi_add(const char *s,int p,bool e,bool sv) { if(ap_count<128) aps[ap_count++]=(ap_t){s,p,e,sv}; }
+void host_wifi_add(const char *s,int p,bool e,bool sv) { if(ap_count<256) { snprintf(aps[ap_count].ssid,sizeof(aps[ap_count].ssid),"%s",s?s:""); aps[ap_count].pct=p; aps[ap_count].encrypted=e; aps[ap_count].saved=sv; ap_count++; } }
+void host_wifi_clear_aps(void) { ap_count=0; }
+void host_wifi_set_current_ssid(const char *s) { snprintf(current,sizeof(current),"%s",s?s:""); }
 int host_wifi_connect_calls(void) { return connect_calls; }
 const char *host_wifi_last_ssid(void) { return last_ssid; }
 const char *host_wifi_last_pass(void) { return last_pass; }
+const char *host_wifi_pending_ssid(void) { return pending; }
 void host_wifi_finish_scan(void) { scanning=false; complete=true; }
 void host_wifi_set_status(wifi_bridge_status_t s) { status=s; }
 void ui_wifi_bridge_init(void) {}

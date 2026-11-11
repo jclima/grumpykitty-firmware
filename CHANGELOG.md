@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.1.8-grumpy] - 2026-11-11
+
+### Fixed
+- Wi-Fi setup keeps Up/Down selection visible, activates the selected network with A, and refreshes safely after rescans or screen changes.
+
 ## [0.1.7-grumpy] - 2026-11-10
 
 ### Added

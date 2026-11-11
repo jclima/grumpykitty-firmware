@@ -14,11 +14,14 @@
 extern "C" void host_advance_ms(uint32_t);
 extern "C" void host_wifi_reset(void);
 extern "C" void host_wifi_add(const char*, int, bool, bool);
+extern "C" void host_wifi_clear_aps(void);
+extern "C" void host_wifi_set_current_ssid(const char*);
 extern "C" void host_wifi_finish_scan(void);
 extern "C" void host_wifi_set_status(wifi_bridge_status_t);
 extern "C" int host_wifi_connect_calls(void);
 extern "C" const char *host_wifi_last_ssid(void);
 extern "C" const char *host_wifi_last_pass(void);
+extern "C" const char *host_wifi_pending_ssid(void);
 extern "C" void host_sd_mode(int);
 extern "C" int host_sd_open_count(void);
 extern "C" int host_sd_close_count(void);
@@ -75,6 +78,109 @@ static void test_wifi_scan() {
     render("wifi-scan-complete");
     park_screen(); ui_wifi_screen_destroy(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000); assert(!ui_wifi_bridge_is_scanning()); park_screen(); ui_wifi_screen_destroy();
     host_wifi_reset(); host_wifi_set_status(WIFI_BRIDGE_CONNECTING); ui_wifi_screen_init(); lv_scr_load(ui_wifi); tick(500); assert(lv_scr_act()==ui_wifi); host_wifi_set_status(WIFI_BRIDGE_FAILED); tick(500); assert(lv_scr_act()==ui_wifi); park_screen(); ui_wifi_screen_destroy();
+}
+static void test_wifi_button_selection() {
+    puts("wifi button selection start"); fflush(stdout);
+    /* A physical focus step selects Target below the connected Saved row. */
+    host_wifi_reset(); host_wifi_set_current_ssid("Saved"); host_wifi_set_status(WIFI_BRIDGE_CONNECTED);
+    host_wifi_add("Saved",95,false,true); host_wifi_add("Target",90,true,false); host_wifi_add("Other",40,true,false);
+    ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    lv_obj_t *saved_row = lv_obj_get_parent(find_text(ui_wifi,"Saved")); assert(saved_row);
+    assert(lv_obj_has_state(saved_row, LV_STATE_FOCUSED));
+    assert(host_wifi_connect_calls() == 0);
+    ui_wifi_connect_focused(); assert(host_wifi_connect_calls() == 0); /* already connected */
+    ui_wifi_focus_step(1);
+    lv_obj_t *target_row = lv_obj_get_parent(find_text(ui_wifi,"Target")); assert(target_row);
+    assert(lv_obj_has_state(target_row, LV_STATE_FOCUSED));
+    render("wifi-button-selection");
+
+    /* Physical A must enter the already-created T9 screen with Target pending. */
+    int calls = host_wifi_connect_calls();
+    ui_wifi_connect_focused(); tick(400);
+    assert(lv_scr_act() == ui_t9_keyboard);
+    assert(!strcmp(host_wifi_pending_ssid(), "Target"));
+    ui_t9_keyboard_set_prefill("password");
+    ui_t9_keyboard_send();
+    assert(host_wifi_connect_calls() == calls + 1);
+    assert(!strcmp(host_wifi_last_ssid(), "Target"));
+    assert(!strcmp(host_wifi_last_pass(), "password"));
+    park_screen(); ui_t9_keyboard_screen_destroy(); ui_wifi_screen_destroy();
+
+    /* Focus wraps to Rescan; refreshed results rebuild order and metadata. */
+    host_wifi_reset();
+    ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    host_wifi_add("A",90,false,true); host_wifi_add("B",80,true,false);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    ui_wifi_focus_step(-1); /* A -> Rescan */
+    calls = host_wifi_connect_calls(); ui_wifi_connect_focused();
+    assert(host_wifi_connect_calls() == calls && ui_wifi_bridge_is_scanning());
+    host_wifi_clear_aps(); host_wifi_add("C",99,false,false); host_wifi_add("B",20,true,false); host_wifi_add("A",10,false,true);
+    host_wifi_finish_scan(); tick(1000);
+    ui_wifi_focus_step(1); /* Rescan -> saved A */
+    ui_wifi_focus_step(1); /* A -> C */
+    ui_wifi_focus_step(1); /* C -> encrypted B */
+    ui_wifi_connect_focused(); tick(400);
+    assert(lv_scr_act() == ui_t9_keyboard);
+    assert(!strcmp(host_wifi_pending_ssid(), "B"));
+    ui_t9_keyboard_set_prefill("password"); ui_t9_keyboard_send();
+    assert(!strcmp(host_wifi_last_ssid(), "B"));
+    park_screen(); ui_t9_keyboard_screen_destroy(); ui_wifi_screen_destroy();
+
+    /* Missing focused AP falls back to the first refreshed result; guards hold. */
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    host_wifi_add("Gone",80,true,false); host_wifi_add("Stay",70,false,false);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    host_wifi_clear_aps(); host_wifi_add("Stay",70,false,false);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    assert(!strcmp(host_wifi_pending_ssid(), ""));
+    ui_wifi_connect_focused(); assert(!strcmp(host_wifi_last_ssid(), "Stay"));
+    calls = host_wifi_connect_calls(); ui_wifi_focus_step(1); ui_wifi_connect_focused();
+    assert(host_wifi_connect_calls() == calls); /* connecting guard */
+    park_screen(); ui_wifi_screen_destroy();
+
+    /* Empty scan focuses Rescan and A starts another scan without connecting. */
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    lv_obj_t *rescan = lv_obj_get_parent(find_text(ui_wifi,"Rescan")); assert(rescan);
+    assert(lv_obj_has_state(rescan, LV_STATE_FOCUSED)); calls = host_wifi_connect_calls();
+    ui_wifi_connect_focused(); assert(host_wifi_connect_calls() == calls && ui_wifi_bridge_is_scanning());
+    park_screen(); ui_wifi_screen_destroy();
+
+    /* A saved row long-press opens a modal; A and focus steps are blocked. */
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    host_wifi_add("ModalSaved",80,false,true); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    lv_obj_t *modal_row = lv_obj_get_parent(find_text(ui_wifi,"ModalSaved")); assert(modal_row);
+    lv_event_send(modal_row,LV_EVENT_LONG_PRESSED,nullptr); calls = host_wifi_connect_calls();
+    ui_wifi_connect_focused(); ui_wifi_focus_step(1);
+    assert(host_wifi_connect_calls() == calls); assert(ui_wifi_handle_back());
+    park_screen(); ui_wifi_screen_destroy();
+
+    /* Preserve selected B across a switch-triggered refresh while encryption changes. */
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    host_wifi_add("A",90,false,false); host_wifi_add("B",80,true,false);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000); ui_wifi_focus_step(1);
+    host_wifi_clear_aps(); host_wifi_add("A",100,false,false); host_wifi_add("B",70,false,false);
+    lv_obj_clear_state(ui_wifi_scan_switch,LV_STATE_CHECKED); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr);
+    lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr);
+    host_wifi_finish_scan(); tick(1000); calls = host_wifi_connect_calls(); ui_wifi_connect_focused();
+    assert(host_wifi_connect_calls() == calls + 1); assert(!strcmp(host_wifi_last_ssid(),"B")); assert(!strcmp(host_wifi_last_pass(),""));
+    park_screen(); ui_wifi_screen_destroy();
+
+    /* More than 128 results remain addressable and wrap to Rescan. */
+    host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    char ap_name[64];
+    for(int i = 0; i < 130; i++) { snprintf(ap_name,sizeof(ap_name),"AP%03d",i); host_wifi_add(ap_name,200 - i,false,false); }
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    lv_obj_t *last_row = lv_obj_get_parent(find_text(ui_wifi,"AP129")); assert(last_row);
+    bool found_last = false;
+    for(int i = 0; i < 131; i++) { if(lv_obj_has_state(last_row,LV_STATE_FOCUSED)) { found_last = true; break; } ui_wifi_focus_step(1); }
+    assert(found_last);
+    rescan = lv_obj_get_parent(find_text(ui_wifi,"Rescan")); assert(rescan);
+    bool wrapped_to_rescan = false;
+    for(int i = 0; i < 131; i++) { if(lv_obj_has_state(rescan,LV_STATE_FOCUSED)) { wrapped_to_rescan = true; break; } ui_wifi_focus_step(1); }
+    assert(wrapped_to_rescan);
+    park_screen(); ui_wifi_screen_destroy();
 }
 static void test_sd() {
     puts("sd start"); fflush(stdout); host_sd_mode(UI_SD_OK); ui_sd_card_files_screen_init(); lv_scr_load(ui_sd_card_files); for(int i=0;i<50;i++) tick(2);
@@ -136,4 +242,4 @@ static void test_apps_menu() {
     assert(find_text(ui_apps_menu,"No apps visible")); render("apps-menu-empty");
     park_screen(); ui_apps_menu_screen_destroy();
 }
-int main() { puts("init"); fflush(stdout); init_lv(); puts("inited"); test_t9(); test_lifecycle(); test_wifi_scan(); test_apps_manager(); test_apps_menu(); test_sd(); puts("ui regression: PASS"); return 0; }
+int main() { puts("init"); fflush(stdout); init_lv(); puts("inited"); test_t9(); test_lifecycle(); test_wifi_scan(); test_wifi_button_selection(); test_apps_manager(); test_apps_menu(); test_sd(); puts("ui regression: PASS"); return 0; }

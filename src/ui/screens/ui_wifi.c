@@ -28,8 +28,10 @@ static int          s_last_count  = -1;
 static bool         s_scan_done   = false;
 static bool         s_scan_active = false;  // true from start_scan() until complete/stopped
 static bool         s_was_saved   = false;  // true while connecting to a saved network
+static int          s_focus_index = -1;
+static bool         s_focus_rescan = false;
 
-// ── Focused row: physical A button connects this ──
+// ── Highlighted row: joystick selects this; physical A activates it ──
 static struct {
     char    ssid[64];
     uint8_t saved;
@@ -47,6 +49,14 @@ typedef struct {
     uint8_t encrypted;
     int     pct;
 } wifi_row_t;
+typedef struct {
+    lv_obj_t *obj;
+    wifi_row_t *data; /* Borrowed; NULL explicitly identifies Rescan. */
+} wifi_focus_slot_t;
+static wifi_focus_slot_t *s_focus_slots = NULL;
+static int s_focus_count = 0;
+static int s_focus_capacity = 0;
+static char s_attempt_ssid[64] = "";
 
 // ── qsort key for AP list: connected > saved > signal ──
 static const char * s_sort_cur_ssid = "";
@@ -97,6 +107,78 @@ static void _wifi_show_toast(const char * msg, lv_color_t color)
     lv_obj_move_foreground(s_toast);
 }
 
+static void _wifi_clear_focus_slots(void)
+{
+    free(s_focus_slots);
+    s_focus_slots = NULL;
+    s_focus_count = s_focus_capacity = 0;
+    s_focus_index = -1;
+}
+
+static void _wifi_register_focus_slot(lv_obj_t *obj, wifi_row_t *data)
+{
+    if(!s_focus_slots || s_focus_count >= s_focus_capacity) return;
+    s_focus_slots[s_focus_count++] = (wifi_focus_slot_t){obj, data};
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_color(obj, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(obj, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+}
+
+static void _wifi_select_slot(int index, lv_anim_enable_t animate)
+{
+    if(index < 0 || index >= s_focus_count) return;
+    s_focus_index = index;
+    wifi_row_t *data = s_focus_slots[index].data;
+    s_focus_rescan = data == NULL;
+    if(data) {
+        strncpy(s_focused.ssid, data->ssid, sizeof(s_focused.ssid) - 1);
+        s_focused.ssid[sizeof(s_focused.ssid) - 1] = '\0';
+        s_focused.saved = data->saved;
+        s_focused.encrypted = data->encrypted;
+    } else {
+        s_focused.ssid[0] = '\0';
+        s_focused.saved = s_focused.encrypted = 0;
+    }
+    for(int i = 0; i < s_focus_count; i++) {
+        if(i == index) lv_obj_add_state(s_focus_slots[i].obj, LV_STATE_FOCUSED);
+        else lv_obj_clear_state(s_focus_slots[i].obj, LV_STATE_FOCUSED);
+    }
+    lv_obj_update_layout(ui_wifi_list);
+    lv_obj_scroll_to_view(s_focus_slots[index].obj, animate);
+}
+
+static void _wifi_restore_focus(void)
+{
+    int selected = -1;
+    for(int i = 0; i < s_focus_count; i++) {
+        wifi_row_t *data = s_focus_slots[i].data;
+        if((s_focus_rescan && !data) ||
+           (!s_focus_rescan && data && s_focused.ssid[0] &&
+            strcmp(data->ssid, s_focused.ssid) == 0)) {
+            selected = i;
+            break;
+        }
+    }
+    if(selected < 0 && s_focus_count) selected = 0;
+    if(selected >= 0) _wifi_select_slot(selected, LV_ANIM_OFF);
+}
+
+static int _wifi_slot_for_object(lv_obj_t *obj)
+{
+    for(int i = 0; i < s_focus_count; i++)
+        if(s_focus_slots[i].obj == obj) return i;
+    return -1;
+}
+
+static bool _wifi_input_blocked(void)
+{
+    lv_disp_t *disp = lv_disp_get_default();
+    return !ui_wifi || lv_scr_act() != ui_wifi ||
+           (disp && disp->scr_to_load != NULL) || s_menu ||
+           s_scan_active || s_conn_timer ||
+           ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING;
+}
+
 // ── Start / restart AP scan (safe to call repeatedly) ──
 static void _wifi_start_scan(void)
 {
@@ -124,6 +206,7 @@ static void _forget_cb(lv_event_t * e)
     ui_wifi_bridge_forget(s_menu_ssid);
     _hide_menu();
     s_focused.ssid[0] = '\0';
+    s_focus_rescan = false;
     _wifi_build_list();
 }
 
@@ -210,26 +293,22 @@ static void _show_menu(const wifi_row_t * row)
 }
 
 // ── Row click / long-press ──
-static void _row_click_cb(lv_event_t * e)
+static void _row_click_cb(lv_event_t *e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    wifi_row_t * row = (wifi_row_t*)lv_event_get_user_data(e);
-    if(!row) return;
-
-    strncpy(s_focused.ssid, row->ssid, sizeof(s_focused.ssid) - 1);
-    s_focused.ssid[sizeof(s_focused.ssid) - 1] = '\0';
-    s_focused.saved     = row->saved;
-    s_focused.encrypted = row->encrypted;
-
-    _do_connect(row->ssid, row->saved, row->encrypted);
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED || _wifi_input_blocked()) return;
+    int index = _wifi_slot_for_object(lv_event_get_target(e));
+    if(index < 0) return;
+    _wifi_select_slot(index, LV_ANIM_ON);
+    ui_wifi_connect_focused();
 }
 
 static void _row_longpress_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+    if(_wifi_input_blocked()) return;
     wifi_row_t * row = (wifi_row_t*)lv_event_get_user_data(e);
     if(!row) return;
-    lv_indev_wait_release(lv_indev_get_act());
+    if(lv_indev_get_act()) lv_indev_wait_release(lv_indev_get_act());
     _show_menu(row);
 }
 
@@ -237,6 +316,15 @@ static void _row_longpress_cb(lv_event_t * e)
 static void _do_connect(const char * ssid, bool saved, bool encrypted)
 {
     if(!ssid || ssid[0] == '\0') return;
+    if(ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING) return;
+    if(ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTED &&
+       strcmp(ui_wifi_bridge_get_current_ssid(), ssid) == 0) {
+        _wifi_show_toast("Already connected", THEME_LV(THEME_OK));
+        return;
+    }
+
+    strncpy(s_attempt_ssid, ssid, sizeof(s_attempt_ssid) - 1);
+    s_attempt_ssid[sizeof(s_attempt_ssid) - 1] = '\0';
 
     if(saved) {
         ui_wifi_bridge_stop_scan();
@@ -270,11 +358,13 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
 }
 
 // ── Rescan row ──
-static void _rescan_cb(lv_event_t * e)
+static void _rescan_cb(lv_event_t *e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _wifi_start_scan();
-    _wifi_build_list();
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED || _wifi_input_blocked()) return;
+    int index = _wifi_slot_for_object(lv_event_get_target(e));
+    if(index < 0) return;
+    _wifi_select_slot(index, LV_ANIM_ON);
+    ui_wifi_connect_focused();
 }
 
 static void _wifi_add_rescan_row(void)
@@ -301,6 +391,7 @@ static void _wifi_add_rescan_row(void)
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 24, 0);
 
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    _wifi_register_focus_slot(row, NULL);
     lv_obj_add_event_cb(row, _rescan_cb, LV_EVENT_CLICKED, NULL);
 }
 
@@ -308,6 +399,7 @@ static void _wifi_add_rescan_row(void)
 static void _wifi_build_list(void)
 {
     if(!ui_wifi_list) return;
+    _wifi_clear_focus_slots();
     lv_obj_clean(ui_wifi_list);
     if(s_toast) lv_obj_move_foreground(s_toast);
 
@@ -318,6 +410,7 @@ static void _wifi_build_list(void)
 
     // Scanning spinner row — show whenever scan was triggered and not yet done
     if(s_scan_active && !s_scan_done) {
+        s_focus_index = -1;
         lv_obj_t * row = lv_obj_create(ui_wifi_list);
         lv_obj_set_size(row, lv_pct(100), 38);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -339,7 +432,16 @@ static void _wifi_build_list(void)
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 28, 0);
 
-        if(n == 0) return;  // still scanning, no results to show yet
+        return;  // Never expose stale scan rows for activation.
+    }
+
+    if(n < 0) n = 0;
+    s_focus_capacity = n + 1;
+    s_focus_slots = (wifi_focus_slot_t*)calloc((size_t)s_focus_capacity, sizeof(*s_focus_slots));
+    if(!s_focus_slots) {
+        s_focus_capacity = 0;
+        _wifi_show_toast("Not enough memory for Wi-Fi list", lv_color_hex(0xFF5555));
+        return;
     }
 
     // "No networks found" only after scan actually completed with zero results
@@ -356,12 +458,16 @@ static void _wifi_build_list(void)
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
         _wifi_add_rescan_row();
+        _wifi_restore_focus();
         return;
     }
 
     if(n == 0) {
         /* Switch is off or scan not yet started — show prompt */
         if(!s_scan_active) {
+            s_focus_index = -1;
+            s_focus_rescan = false;
+            s_focused.ssid[0] = '\0';
             lv_obj_t * row = lv_obj_create(ui_wifi_list);
             lv_obj_set_size(row, lv_pct(100), 38);
             lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -390,7 +496,11 @@ static void _wifi_build_list(void)
 
     // Collect into temp array for sorting
     wifi_row_t * aps = (wifi_row_t*)malloc((size_t)n * sizeof(wifi_row_t));
-    if(!aps) return;
+    if(!aps) {
+        if(s_scan_done) _wifi_add_rescan_row();
+        _wifi_restore_focus();
+        return;
+    }
 
     for(int i = 0; i < n; i++) {
         bool sv = false;
@@ -424,7 +534,6 @@ static void _wifi_build_list(void)
         lv_obj_set_style_radius(row, 4, 0);
         lv_obj_set_style_pad_all(row, 2, 0);
         lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
         // Lock icon (default font has LVGL symbols)
         lv_obj_t * lock = lv_label_create(row);
         lv_label_set_text(lock, aps[i].encrypted ? LV_SYMBOL_EYE_CLOSE : " ");
@@ -486,11 +595,13 @@ static void _wifi_build_list(void)
         lv_obj_add_event_cb(row, _row_click_cb,     LV_EVENT_CLICKED,      data);
         lv_obj_add_event_cb(row, _row_longpress_cb, LV_EVENT_LONG_PRESSED, data);
         lv_obj_add_event_cb(row, _row_delete_cb,    LV_EVENT_DELETE,       data);
+        _wifi_register_focus_slot(row, data);
     }
 
     free(aps);
 
     if(s_scan_done) _wifi_add_rescan_row();
+    _wifi_restore_focus();
 }
 
 // ── Connection status poll (500 ms, list-page connects) ──
@@ -535,8 +646,8 @@ static void _conn_poll_cb(lv_timer_t * t)
             _wifi_show_toast("Connection failed; check settings", lv_color_hex(0xFF5555));
             char saved_pass[65] = {};
             ui_wifi_bridge_get_saved_pass(saved_pass, sizeof(saved_pass));
-            ui_wifi_bridge_set_pending_ssid(s_focused.ssid);
-            ui_t9_keyboard_prepare_for_wifi(s_focused.ssid);
+            ui_wifi_bridge_set_pending_ssid(s_attempt_ssid);
+            ui_t9_keyboard_prepare_for_wifi(s_attempt_ssid);
             if(saved_pass[0]) ui_t9_keyboard_set_prefill(saved_pass);
             s_conn_timer = lv_timer_create(_nav_to_t9_cb, 1200, NULL);
             lv_timer_set_repeat_count(s_conn_timer, 1);
@@ -614,6 +725,8 @@ void ui_event_wifi(lv_event_t * e)
         if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
         s_scan_active = false;
+        _hide_menu();
+        s_focus_index = -1;
         return;
     }
     if(code == LV_EVENT_SCREEN_LOADED) {
@@ -636,13 +749,34 @@ void ui_event_wifi(lv_event_t * e)
 // ── Public: physical A button connects focused row ──
 void ui_wifi_connect_focused(void)
 {
-    if(!s_focused.ssid[0]) return;
-    _do_connect(s_focused.ssid, s_focused.saved != 0, s_focused.encrypted != 0);
+    if(_wifi_input_blocked() || s_focus_index < 0 || s_focus_index >= s_focus_count) return;
+    wifi_row_t *data = s_focus_slots[s_focus_index].data;
+    if(!data) { _wifi_start_scan(); _wifi_build_list(); return; }
+    _do_connect(data->ssid, data->saved != 0, data->encrypted != 0);
+}
+
+void ui_wifi_focus_step(int direction)
+{
+    if(!direction || _wifi_input_blocked() || !s_focus_count) return;
+    int next = s_focus_index < 0 ? 0 : s_focus_index + (direction < 0 ? -1 : 1);
+    if(next < 0) next = s_focus_count - 1;
+    if(next >= s_focus_count) next = 0;
+    _wifi_select_slot(next, LV_ANIM_ON);
+}
+
+bool ui_wifi_handle_back(void)
+{
+    if(!s_menu) return false;
+    _hide_menu();
+    return true;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 void ui_wifi_screen_init(void)
 {
+    _wifi_clear_focus_slots();
+    s_attempt_ssid[0] = '\0';
+    s_focused.saved = s_focused.encrypted = 0;
     s_scan_timer    = NULL;
     s_conn_timer    = NULL;
     s_toast         = NULL;
@@ -651,6 +785,8 @@ void ui_wifi_screen_init(void)
     s_scan_active   = false;
     s_was_saved     = false;
     s_focused.ssid[0] = '\0';
+    s_focus_index = -1;
+    s_focus_rescan = false;
     s_menu          = NULL;
 
     ui_wifi = lv_obj_create(NULL);
@@ -825,6 +961,9 @@ void ui_wifi_screen_destroy(void)
 {
     if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
     if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+    _wifi_clear_focus_slots();
+    s_focused.ssid[0] = s_attempt_ssid[0] = '\0';
+    s_focus_rescan = false;
     if(ui_wifi)      lv_obj_del(ui_wifi);
 
     ui_wifi                = NULL;
