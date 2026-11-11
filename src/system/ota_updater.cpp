@@ -9,9 +9,11 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_heap_caps.h>
 #include <esp_http_client.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
+#include <esp_tls.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
 #include <algorithm>
@@ -76,6 +78,10 @@ int verifyDates(void* context, mbedtls_x509_crt* certificate, int depth, uint32_
     if (now < EarliestClock || !gmtime_r(&now, &utc)) return MBEDTLS_ERR_X509_FATAL_ERROR;
     if (compareUtc(utc, certificate->valid_from) < 0) *flags |= MBEDTLS_X509_BADCERT_FUTURE;
     if (compareUtc(utc, certificate->valid_to) > 0) *flags |= MBEDTLS_X509_BADCERT_EXPIRED;
+    if (result != 0 || *flags != 0) {
+        Serial.printf("[OTA] certificate depth=%d verify=%d flags=0x%lx utc=%lld\n",
+                      depth, result, (unsigned long)*flags, (long long)now);
+    }
     return result;
 }
 
@@ -106,21 +112,59 @@ public:
         cfg.event_handler = &onEvent;
         cfg.user_data = this;
         _http = esp_http_client_init(&cfg);
-        if (!_http || esp_http_client_set_header(_http, "Accept-Encoding", "identity") != ESP_OK ||
-            esp_http_client_open(_http, 0) != ESP_OK) return -1;
+        if (!_http) {
+            _error = "HTTPS setup failed";
+            return -1;
+        }
+        if (esp_http_client_set_header(_http, "Accept-Encoding", "identity") != ESP_OK) {
+            _error = "HTTPS header setup failed";
+            return -1;
+        }
+        constexpr uint32_t internalRam = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        const size_t free = heap_caps_get_free_size(internalRam);
+        const size_t largest = heap_caps_get_largest_free_block(internalRam);
+        const esp_err_t open_rc = esp_http_client_open(_http, 0);
+        if (open_rc != ESP_OK) {
+            if (_tlsError == ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME) _error = "OTA server DNS lookup failed";
+            else if (_tlsError == ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT) _error = "OTA server connection timed out";
+            else if (_tlsCode == -MBEDTLS_ERR_X509_CERT_VERIFY_FAILED || _tlsFlags) _error = "OTA certificate check failed";
+            else if (_tlsError == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED) _error = "OTA TLS handshake failed";
+            else _error = "Could not connect to OTA server";
+            Serial.printf("[OTA] open=%s errno=%d tls=0x%x code=%d flags=0x%x RAM=%u largest=%u\n",
+                          esp_err_to_name(open_rc), esp_http_client_get_errno(_http), (unsigned)_tlsError,
+                          _tlsCode, (unsigned)_tlsFlags, (unsigned)free, (unsigned)largest);
+            return -1;
+        }
         const int64_t length = esp_http_client_fetch_headers(_http);
-        if (esp_http_client_get_status_code(_http) != 200 ||
-            esp_http_client_is_chunked_response(_http) || _encoded) return -1;
-        return length;
+        const int status = esp_http_client_get_status_code(_http);
+        const bool encoded = esp_http_client_is_chunked_response(_http) || _encoded;
+        if (status == 200 && length > 0 && !encoded) return length;
+
+        if (status == 0) _error = "No response from OTA server";
+        else if (status != 200) _error = "OTA server returned HTTP error";
+        else if (encoded) _error = "Unsupported OTA response format";
+        else _error = "OTA response length missing";
+        Serial.printf("[OTA] HTTP status=%d size=%lld encoded=%d\n", status, (long long)length, encoded);
+        return -1;
     }
 
     int read(char* out, int length) { return esp_http_client_read(_http, out, length); }
     bool complete() const { return esp_http_client_is_complete_data_received(_http); }
+    const char* error() const { return _error; }
 
 private:
     static esp_err_t onEvent(esp_http_client_event_t* event) {
-        if (event->event_id != HTTP_EVENT_ON_HEADER || !event->header_key) return ESP_OK;
+        if (!event->user_data) return ESP_OK;
         auto& response = *static_cast<Response*>(event->user_data);
+        if (event->event_id == HTTP_EVENT_ERROR || event->event_id == HTTP_EVENT_DISCONNECTED) {
+            // ESP-IDF 4.4 passes the transport error handle for these events.
+            if (event->data && response._tlsError == ESP_OK) {
+                response._tlsError = esp_tls_get_and_clear_last_error(
+                    static_cast<esp_tls_error_handle_t>(event->data), &response._tlsCode, &response._tlsFlags);
+            }
+            return ESP_OK;
+        }
+        if (event->event_id != HTTP_EVENT_ON_HEADER || !event->header_key) return ESP_OK;
         if (strcasecmp(event->header_key, "Transfer-Encoding") == 0 ||
             (strcasecmp(event->header_key, "Content-Encoding") == 0 &&
              (!event->header_value || strcasecmp(event->header_value, "identity") != 0))) {
@@ -131,6 +175,10 @@ private:
 
     esp_http_client_handle_t _http = nullptr;
     bool _encoded = false;
+    const char* _error = "HTTPS request failed";
+    esp_err_t _tlsError = ESP_OK;
+    int _tlsCode = 0;
+    int _tlsFlags = 0;
 };
 
 // An OTA handle is consumed by esp_ota_end() even if image validation fails.
@@ -197,8 +245,8 @@ Result runCheck() {
     snprintf(url, sizeof(url), "%sota.json", BaseUrl);
     Response response;
     const int64_t length = response.open(url);
-    if (length <= 0 || length > int64_t(ota_manifest::MaxBytes))
-        return {State::Failed, "Could not read OTA feed over HTTPS"};
+    if (length < 0) return {State::Failed, response.error()};
+    if (length > int64_t(ota_manifest::MaxBytes)) return {State::Failed, "OTA feed is too large"};
 
     char json[ota_manifest::MaxBytes];
     int received = 0;
@@ -226,7 +274,12 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
     char url[128];
     snprintf(url, sizeof(url), "%sgrumpykitty-%s-firmware.bin", BaseUrl, manifest.version);
     Response response;
-    if (response.open(url) != manifest.size) return {State::Failed, "Firmware unavailable or wrong size"};
+    const int64_t length = response.open(url);
+    if (length < 0) return {State::Failed, response.error()};
+    if (length != manifest.size) {
+        Serial.printf("[OTA] firmware size expected=%u actual=%lld\n", (unsigned)manifest.size, (long long)length);
+        return {State::Failed, "Firmware size mismatch"};
+    }
     if (cancelRequested) return {State::Idle, "Cancelled"};
 
     Digest digest;

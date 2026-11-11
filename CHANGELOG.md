@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.1.6-grumpy] - 2026-11-10
+
+### Fixed
+- FW Update redraws only when status, hint, or displayed progress changes, with a complete-frame sprite path to prevent screen flicker.
+- FW Update reports clearer DNS, connection, TLS, and HTTP failures; if OTA cannot complete, use the USB browser flasher to install the release.
+
 ## [0.1.5-grumpy] - 2026-11-10
 
 ### Fixed

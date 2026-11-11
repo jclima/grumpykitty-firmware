@@ -8,6 +8,7 @@
 #include "../../bsp/config.h"
 
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <cstdio>
 #include <cstring>
@@ -45,7 +46,8 @@ uint16_t stateColor(ota_updater::State state) {
 
 namespace MOONCAKE::APPS {
 
-AppFirmwareUpdate::AppFirmwareUpdate(DEVICES* device) : _device(device) {
+AppFirmwareUpdate::AppFirmwareUpdate(DEVICES* device)
+    : _device(device), _frame(&device->Lcd) {
     setAppInfo().name = "FW Update";
 }
 
@@ -53,11 +55,18 @@ void AppFirmwareUpdate::onOpen() {
     ota_updater::cancel();
     _hint = nullptr;
     _lastDraw = 0;
+    _frameReady = false;
+    _frame.setColorDepth(16);
+    _frame.setPsram(true);
+    // LovyanGFX falls back to internal DMA memory when PSRAM is full.
+    // Reserve that internal memory for Wi-Fi and TLS instead.
+    constexpr size_t frameBytes = hp::W * hp::H * sizeof(uint16_t) + 4;
+    _frameUsable = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) >= frameBytes &&
+                   _frame.createSprite(hp::W, hp::H);
 
     auto& b = _device->button;
     b.update();
     _prevA = b.A.state() == Button_Class::PRESSED;
-    hp::drawChrome(_device->Lcd);
     _draw();
 }
 
@@ -70,14 +79,14 @@ void AppFirmwareUpdate::onClose() {
     // This cancels an in-flight worker and discards an unactivated staged image.
     // It deliberately does not activate or otherwise change the boot slot.
     ota_updater::cancel();
+    _frame.deleteSprite();
+    _frameUsable = false;
+    _frameReady = false;
 }
 
-void AppFirmwareUpdate::_draw() {
-    const ota_updater::Status st = ota_updater::status();
-    auto& lcd = _device->Lcd;
-    hp::clearContent(lcd);
+void AppFirmwareUpdate::_drawFull(lgfx::LGFXBase& lcd, const ota_updater::Status& st) {
+    hp::drawChrome(lcd);
     hp::drawHeader(lcd, "FW UPDATE", stateName(st.state), stateColor(st.state));
-
     char line[64];
     snprintf(line, sizeof(line), "Installed: v%s", GK_VERSION);
     put(lcd, 10, 34, line, hp::COL_FG);
@@ -107,6 +116,26 @@ void AppFirmwareUpdate::_draw() {
     else if (st.state == ota_updater::State::Staged) left = "A Restart";
     else if (st.state == ota_updater::State::Checking || st.state == ota_updater::State::Downloading) left = "A Wait";
     hp::drawFooter(lcd, left, "Hold B:Exit");
+}
+
+void AppFirmwareUpdate::_draw() {
+    const ota_updater::Status st = ota_updater::status();
+    const char* message = _hint ? _hint : st.message;
+    if (_frameReady && st.state == _lastStatus.state && message == _lastMessage &&
+        st.written / 1024 == _lastStatus.written / 1024 &&
+        st.total / 1024 == _lastStatus.total / 1024 &&
+        strcmp(st.version, _lastStatus.version) == 0) return;
+
+    if (_frameUsable) {
+        // Compose off-screen so the LCD never displays the cleared frame.
+        _drawFull(_frame, st);
+        _frame.pushSprite(0, 0);
+    } else {
+        _drawFull(_device->Lcd, st);
+    }
+    _lastStatus = st;
+    _lastMessage = message;
+    _frameReady = true;
 }
 
 void AppFirmwareUpdate::onRunning() {
