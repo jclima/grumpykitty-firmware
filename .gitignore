@@ -28,3 +28,5 @@ src/app/app_03/vu_meter_assets.h
 
 # Generated art previews (tools/art)
 tools/art/out/
+# Locally installed personal SD packages (Boat Dash is private and never shipped).
+personal-apps/boat-dash/

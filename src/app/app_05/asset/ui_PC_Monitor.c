@@ -108,7 +108,7 @@ void ui_pc_monitor_init(void) {
 }
 void ui_pc_monitor_status(const char *text, bool live) {
     if (!status_label) return;
-    if (live) { lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN); return; }
+    (void)live;
     lv_obj_clear_flag(status_label, LV_OBJ_FLAG_HIDDEN);
     if (strcmp(lv_label_get_text(status_label), text)) lv_label_set_text(status_label, text);
 }

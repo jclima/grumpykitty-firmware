@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.7-grumpy] - 2026-11-10
+
+### Added
+- Apps -> Manage keeps a stable order and visibility for built-in and personal apps.
+- Personal apps can be installed from supported Lua packages on microSD and use the Signal K bridge.
+
+### Changed
+- Dino is excluded from the public firmware build, and Boat Dash is maintained as a separate private personal app.
+- Apps management, SD recovery, and related UI flows are clearer and more resilient.
+- OTA clock synchronization allows a longer SNTP wait before reporting failure.
+
 ## [0.1.6-grumpy] - 2026-11-10
 
 ### Fixed

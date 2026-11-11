@@ -65,4 +65,7 @@ class Client {
   Shared* sh_ = nullptr;
 };
 
+/// True while a stopped worker still owns shared transport state.
+bool workerCleanupPending();
+
 }  // namespace sk

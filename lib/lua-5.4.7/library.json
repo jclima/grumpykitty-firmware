@@ -1,0 +1,8 @@
+{
+  "name": "lua",
+  "version": "5.4.7",
+  "description": "Lua runtime for sandboxed personal SD applications",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "build": {"srcDir": "src", "includeDir": "src", "srcFilter": ["+<*.c>", "-<lua.c>", "-<luac.c>"]}
+}

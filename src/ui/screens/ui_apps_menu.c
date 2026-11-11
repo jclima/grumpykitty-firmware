@@ -15,24 +15,29 @@ static lv_obj_t * _scroll_cont = NULL;
 /* ── Dynamic selection state ─────────────────────────────────────── */
 static AppMenuEntry_t s_entries[APPS_MENU_MAX_APPS];
 static int            s_entry_count = 0;
+static int            s_focus = 0;
 static char           s_selected_id[32] = "";
+static void manager_click(lv_event_t *e) { strncpy(s_selected_id, "__manager", sizeof(s_selected_id)-1); }
 static lv_obj_t *     s_btn[APPS_MENU_MAX_APPS];
 static lv_obj_t *     s_lbl[APPS_MENU_MAX_APPS];
 
 #define ROW_PITCH      105
-#define GRID_TOP       30
+#define GRID_TOP       8
 #define GRID_BOTTOM_PAD 20
 
 /* 3 fixed column X positions */
 static const lv_coord_t _col_x[3] = { 35, 125, 215 };
 
 static void _build_grid(void);
+static void _apply_focus(void);
 
 static void on_app_click(lv_event_t * e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     int idx = (int)(uintptr_t)lv_event_get_user_data(e);
     if (idx >= 0 && idx < s_entry_count) {
+        s_focus = idx;
+        _apply_focus();
         strncpy(s_selected_id, s_entries[idx].id, sizeof(s_selected_id) - 1);
         s_selected_id[sizeof(s_selected_id) - 1] = '\0';
     }
@@ -50,13 +55,44 @@ void ui_apps_menu_clear_selected(void)
 
 void ui_apps_menu_load_apps(const AppMenuEntry_t * entries, int count)
 {
-    if (!entries || count <= 0) return;
+    char previous[sizeof(s_selected_id)];
+    strncpy(previous, s_entry_count > 0 && s_focus >= 0 ? s_entries[s_focus].id : "", sizeof(previous));
+    if (count < 0 || (count > 0 && !entries)) return;
     if (count > APPS_MENU_MAX_APPS) count = APPS_MENU_MAX_APPS;
-    memcpy(s_entries, entries, sizeof(AppMenuEntry_t) * (size_t)count);
+    if (count) memcpy(s_entries, entries, sizeof(AppMenuEntry_t) * (size_t)count);
     s_entry_count = count;
+    s_focus = count ? 0 : -1;
+    for (int i=0; i<count; ++i) if (previous[0] && !strcmp(previous,s_entries[i].id)) s_focus=i;
     s_selected_id[0] = '\0';
 
     _build_grid();
+}
+
+void ui_apps_menu_focus_step(int dir)
+{
+    if (s_entry_count <= 0) return;
+    if (dir != 0) {
+    s_focus += dir;
+    if (s_focus < 0) s_focus = s_entry_count - 1;
+    if (s_focus >= s_entry_count) s_focus = 0;
+    }
+    _apply_focus();
+}
+
+static void _apply_focus(void)
+{
+    if (s_focus >= 0 && s_focus < s_entry_count && s_btn[s_focus]) lv_obj_scroll_to_view(s_btn[s_focus], LV_ANIM_ON);
+    for (int i=0; i<s_entry_count; ++i) if (s_btn[i]) {
+        if (i == s_focus) lv_obj_add_state(s_btn[i], LV_STATE_FOCUSED);
+        else lv_obj_clear_state(s_btn[i], LV_STATE_FOCUSED);
+    }
+}
+
+void ui_apps_menu_activate_focused(void)
+{
+    if (s_focus < 0 || s_focus >= s_entry_count) return;
+    strncpy(s_selected_id, s_entries[s_focus].id, sizeof(s_selected_id) - 1);
+    s_selected_id[sizeof(s_selected_id) - 1] = '\0';
 }
 
 /* ── Grid construction ───────────────────────────────────────────── */
@@ -93,10 +129,18 @@ static void _build_grid(void)
         lv_obj_set_style_outline_width(btn, 10, LV_PART_MAIN | LV_STATE_PRESSED);
         lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_PRESSED);
         lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_outline_width(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-        lv_obj_set_style_outline_pad(btn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_width(btn, 3, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_pad(btn, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
+        lv_obj_set_style_outline_color(btn, THEME_LV(THEME_ACCENT), LV_STATE_FOCUSED);
         lv_obj_add_event_cb(btn, on_app_click, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
         s_btn[i] = btn;
+        if (!s_entries[i].icon) {
+            lv_obj_t *glyph = lv_label_create(btn);
+            lv_label_set_text(glyph, LV_SYMBOL_FILE);
+            lv_obj_set_style_text_font(glyph, &lv_font_montserrat_14, 0);
+            lv_obj_set_style_text_color(glyph, THEME_LV(THEME_ACCENT), 0);
+            lv_obj_center(glyph);
+        }
 
         lv_obj_t * lbl = lv_label_create(_scroll_cont);
         lv_obj_set_width(lbl, 86);
@@ -106,11 +150,13 @@ static void _build_grid(void)
         lv_label_set_text(lbl, s_entries[i].name);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
         lv_obj_set_style_text_opa(lbl, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-        lv_obj_set_style_text_font(lbl, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
         /* Center label horizontally below button */
         lv_obj_align_to(lbl, btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
         s_lbl[i] = lbl;
     }
+    if (s_entry_count > 0) ui_apps_menu_focus_step(0);
+    else { lv_obj_t *empty=lv_label_create(_scroll_cont); lv_label_set_text(empty,"No apps visible\nPress Manage to restore an app"); lv_obj_center(empty); }
 }
 
 void ui_apps_menu_scroll_step(int dir)
@@ -135,11 +181,14 @@ void ui_event_apps_menu(lv_event_t * e)
 
 void ui_apps_menu_screen_init(void)
 {
+    if (ui_apps_menu) return;
     ui_apps_menu = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(ui_apps_menu, THEME_LV(THEME_BG), 0);
     lv_obj_clear_flag(ui_apps_menu, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
     ui_apps_menu_bg = lv_img_create(ui_apps_menu);
     lv_img_set_src(ui_apps_menu_bg, &ui_img_background_v_png);
+    lv_obj_add_flag(ui_apps_menu_bg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_width(ui_apps_menu_bg, LV_SIZE_CONTENT);   /// 320
     lv_obj_set_height(ui_apps_menu_bg, LV_SIZE_CONTENT);    /// 241
     lv_obj_set_x(ui_apps_menu_bg, 0);
@@ -157,12 +206,19 @@ void ui_apps_menu_screen_init(void)
     lv_obj_add_flag(ui_left, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_left, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
     lv_img_set_angle(ui_left, -900);
+    lv_obj_add_flag(ui_left, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_t *manage = lv_btn_create(ui_apps_menu);
+    lv_obj_set_size(manage, 62, 24); lv_obj_set_pos(manage, 250, 3);
+    lv_obj_set_style_bg_color(manage, THEME_LV(THEME_SURFACE), 0);
+    lv_obj_set_style_text_font(manage, &lv_font_montserrat_12, 0);
+    lv_obj_add_event_cb(manage, manager_click, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *ml = lv_label_create(manage); lv_label_set_text(ml, "Manage"); lv_obj_center(ml);
 
     /* Transparent full-screen scrollable container for the app grid.
      * Background/navigation edge below show through the transparent bg. */
     _scroll_cont = lv_obj_create(ui_apps_menu);
-    lv_obj_set_pos(_scroll_cont, 0, 0);
-    lv_obj_set_size(_scroll_cont, 320, 240);
+    lv_obj_set_pos(_scroll_cont, 0, 32);
+    lv_obj_set_size(_scroll_cont, 320, 184);
     lv_obj_set_style_bg_opa(_scroll_cont,     LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(_scroll_cont, 0, 0);
     lv_obj_set_style_pad_all(_scroll_cont,    0, 0);
@@ -175,7 +231,16 @@ void ui_apps_menu_screen_init(void)
     lv_obj_set_style_bg_opa(_scroll_cont, 255,
                              LV_PART_SCROLLBAR | LV_STATE_DEFAULT);
 
-    if (s_entry_count > 0) _build_grid();
+    _build_grid();
+    lv_obj_t *heading = lv_label_create(ui_apps_menu);
+    lv_label_set_text(heading, "Apps"); lv_obj_set_pos(heading, 12, 7);
+    lv_obj_set_style_text_font(heading, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(heading, THEME_LV(THEME_TEXT), 0);
+    lv_obj_t *hint = lv_label_create(ui_apps_menu);
+    lv_label_set_text(hint, "Up/Down  A Open  < Manage  B Home");
+    lv_obj_set_pos(hint, 8, 222);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(hint, THEME_LV(THEME_TEXT_DIM), 0);
 
     lv_obj_add_event_cb(ui_apps_menu, ui_event_apps_menu, LV_EVENT_ALL, NULL);
 }

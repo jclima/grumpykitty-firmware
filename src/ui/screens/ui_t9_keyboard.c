@@ -109,8 +109,8 @@ static void _refresh_labels(void)
         static const char * upr[9] = {"ABC","DEF","GHI","JKL","MNO","PQRS","TUV","WXYZ"," "};
         const char ** t = s_upper ? upr : lwr;
         for(int i = 0; i < 9; i++) lv_label_set_text(s_key_labels[i], t[i]);
-        /* Space key (index 8): white background */
-        lv_obj_set_style_img_recolor(ui_matrix_9, lv_color_white(), 0);
+        /* Space key uses the same quiet surface as the other keys. */
+        lv_obj_set_style_img_recolor(ui_matrix_9, THEME_LV(THEME_SURFACE_ALT), 0);
         lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_COVER, 0);
         /* control_2: shift icon only, no text label */
         lv_img_set_src(ui_control_2, &ui_img_functional_control_keys_bg_png);
@@ -122,12 +122,13 @@ static void _refresh_labels(void)
     } else if(s_mode == MODE_NUMBER) {
         for(int i = 0; i < 9; i++) lv_label_set_text(s_key_labels[i], number_map[i]);
         /* Restore space-key to normal image (shows "9" in number mode) */
-        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_img_recolor(ui_matrix_9, THEME_LV(THEME_SURFACE_ALT), 0);
+        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_COVER, 0);
         /* control_2: alphanumeric bg (same as 1–9), "0" with black text */
         lv_img_set_src(ui_control_2, &ui_img_alphanumeric_keypad_bg_png);
         if(s_lbl_ctrl2) {
             lv_obj_set_style_text_color(s_lbl_ctrl2, lv_color_hex(0x000000), 0);
-            lv_obj_set_style_text_font(s_lbl_ctrl2, &ui_font_name_24, 0);
+            lv_obj_set_style_text_font(s_lbl_ctrl2, &lv_font_montserrat_14, 0);
             lv_obj_set_align(s_lbl_ctrl2, LV_ALIGN_CENTER);
             lv_obj_clear_flag(s_lbl_ctrl2, LV_OBJ_FLAG_HIDDEN);
         }
@@ -139,7 +140,8 @@ static void _refresh_labels(void)
         const char ** sym = sym_pages[s_sym_page % SYM_PAGE_COUNT];
         for(int i = 0; i < 9; i++) lv_label_set_text(s_key_labels[i], sym[i]);
         /* Restore space-key background */
-        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_img_recolor(ui_matrix_9, THEME_LV(THEME_SURFACE_ALT), 0);
+        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_COVER, 0);
         /* control_2: dark bg, switch icon for page toggle — no pg text */
         lv_img_set_src(ui_control_2, &ui_img_functional_control_keys_bg_png);
         if(s_lbl_ctrl2) lv_obj_add_flag(s_lbl_ctrl2, LV_OBJ_FLAG_HIDDEN);
@@ -222,8 +224,8 @@ static void _show_err(const char * msg)
     lv_label_set_long_mode(s_err_label, LV_LABEL_LONG_CLIP);
     lv_obj_set_width(s_err_label, 288);
     lv_obj_set_style_text_color(s_err_label, lv_color_hex(0xFF5555), 0);
-    lv_obj_set_style_text_font(s_err_label, &ui_font_name_14, 0);
-    lv_obj_set_pos(s_err_label, 16, 43);
+    lv_obj_set_style_text_font(s_err_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(s_err_label, 16, 47);
     lv_obj_move_foreground(s_err_label);
 }
 
@@ -327,14 +329,14 @@ static void _overlay_show(void)
         lv_label_set_text(ssid_lbl, buf);
     }
     lv_obj_set_style_text_color(ssid_lbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(ssid_lbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(ssid_lbl, &lv_font_montserrat_14, 0);
     lv_obj_align(ssid_lbl, LV_ALIGN_CENTER, 0, 18);
 
     /* ── Status line ───────────────────────────────────────── */
     s_overlay_status = lv_label_create(card);
     lv_label_set_text(s_overlay_status, "Connecting...");
     lv_obj_set_style_text_color(s_overlay_status, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(s_overlay_status, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(s_overlay_status, &lv_font_montserrat_14, 0);
     lv_obj_align(s_overlay_status, LV_ALIGN_CENTER, 0, 34);
 
     /* ── Poll timer ────────────────────────────────────────── */
@@ -503,7 +505,7 @@ void ui_t9_keyboard_screen_init(void)
     /* ── Root screen ──────────────────────────────────────────── */
     ui_t9_keyboard = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_t9_keyboard, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(ui_t9_keyboard, lv_color_black(), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_color(ui_t9_keyboard, THEME_LV(THEME_SURFACE), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(ui_t9_keyboard, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     /* ── Background image ─────────────────────────────────────── */
@@ -514,17 +516,29 @@ void ui_t9_keyboard_screen_init(void)
     lv_obj_set_align(ui_t9_keyboard_bg, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_t9_keyboard_bg, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_t9_keyboard_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_t9_keyboard_bg, LV_OBJ_FLAG_HIDDEN);
 
     /* ── Text input bar (decorative image) ────────────────────── */
     ui_text_input = _img(ui_t9_keyboard, &ui_img_text_input_png, 10, 2);
+    lv_obj_add_flag(ui_text_input, LV_OBJ_FLAG_HIDDEN);
 
     /* ── Backspace button ─────────────────────────────────────── */
-    ui_backspace__keybg = _img(ui_t9_keyboard, &ui_img_backspace_key_png, 265, 11);
+    ui_backspace__keybg = lv_btn_create(ui_t9_keyboard);
+    lv_obj_set_pos(ui_backspace__keybg, 265, 11);
+    lv_obj_set_size(ui_backspace__keybg, 46, 46);
+    lv_obj_set_style_radius(ui_backspace__keybg, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(ui_backspace__keybg, THEME_LV(THEME_ACCENT), 0);
+    lv_obj_t *backspace_label = lv_label_create(ui_backspace__keybg);
+    lv_label_set_text(backspace_label, LV_SYMBOL_BACKSPACE);
+    lv_obj_set_style_text_font(backspace_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(backspace_label, THEME_LV(THEME_SURFACE), 0);
+    lv_obj_center(backspace_label);
     _make_clickable(ui_backspace__keybg);
     lv_obj_add_event_cb(ui_backspace__keybg, _backspace_cb, LV_EVENT_CLICKED, NULL);
 
     /* ── Key matrix background ────────────────────────────────── */
     ui_matrix_bg = _img(ui_t9_keyboard, &ui_img_t9_bg_png, 10, 61);
+    lv_obj_add_flag(ui_matrix_bg, LV_OBJ_FLAG_HIDDEN);
 
     /* ── 9 alphanumeric keys ──────────────────────────────────── */
     /*  Row 1 (y=66):  col1→(16)  col2→(90)  col3→(163)          */
@@ -546,25 +560,45 @@ void ui_t9_keyboard_screen_init(void)
     ui_control_2 = _img(ui_t9_keyboard, &ui_img_functional_control_keys_bg_png, 237, 121);
     ui_control_3 = _img(ui_t9_keyboard, &ui_img_functional_control_keys_bg_png, 237, 176);
 
+    /* Retain bitmap geometry and hit targets while quieting the lime artwork. */
+    {
+        lv_obj_t * keys[] = {ui_matrix_1, ui_matrix_2, ui_matrix_3,
+                             ui_matrix_4, ui_matrix_5, ui_matrix_6,
+                             ui_matrix_7, ui_matrix_8, ui_matrix_9};
+        for(size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+            lv_obj_set_style_img_recolor(keys[i], THEME_LV(THEME_SURFACE_ALT), 0);
+            lv_obj_set_style_img_recolor_opa(keys[i], LV_OPA_COVER, 0);
+        }
+        lv_obj_t * controls[] = {ui_control_1, ui_control_2, ui_control_3};
+        for(size_t i = 0; i < sizeof(controls) / sizeof(controls[0]); i++) {
+            lv_obj_set_style_img_recolor(controls[i], THEME_LV(THEME_SURFACE_ALT), 0);
+            lv_obj_set_style_img_recolor_opa(controls[i], LV_OPA_COVER, 0);
+        }
+    }
+
     /* ── Icon overlays on control keys ───────────────────────── */
     /* control_1: "Send" text label (yellow) */
     ui_send = lv_label_create(ui_control_1);
     lv_label_set_text(ui_send, "Send");
     lv_obj_set_style_text_color(ui_send, THEME_LV(THEME_ACCENT), 0);
-    lv_obj_set_style_text_font(ui_send, &ui_font_name_24, 0);
+    lv_obj_set_style_text_font(ui_send, &lv_font_montserrat_14, 0);
     lv_obj_set_align(ui_send, LV_ALIGN_CENTER);
 
     /* control_2: shift icon (letter) / "0" key (number) / page icon (symbol) */
     ui_capital = _img(ui_t9_keyboard, &ui_img_capital_png, 254, 133);
+    lv_obj_set_style_img_recolor(ui_capital, THEME_LV(THEME_ACCENT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_capital, LV_OPA_COVER, 0);
     s_lbl_ctrl2 = lv_label_create(ui_control_2);
     lv_label_set_text(s_lbl_ctrl2, "0");
-    lv_obj_set_style_text_color(s_lbl_ctrl2, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(s_lbl_ctrl2, &ui_font_name_24, 0);
+    lv_obj_set_style_text_color(s_lbl_ctrl2, THEME_LV(THEME_TEXT), 0);
+    lv_obj_set_style_text_font(s_lbl_ctrl2, &lv_font_montserrat_14, 0);
     lv_obj_set_align(s_lbl_ctrl2, LV_ALIGN_CENTER);
     lv_obj_add_flag(s_lbl_ctrl2, LV_OBJ_FLAG_HIDDEN);
 
     /* control_3: mode-switch icon (image) */
     ui_switch = _img(ui_t9_keyboard, &ui_img_switch_png, 251, 185);
+    lv_obj_set_style_img_recolor(ui_switch, THEME_LV(THEME_ACCENT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_switch, LV_OPA_COVER, 0);
 
     /* ── Reset keyboard state ─────────────────────────────────── */
     s_mode         = MODE_LETTER;
@@ -597,7 +631,13 @@ void ui_t9_keyboard_screen_init(void)
     lv_obj_set_style_border_width(ui_input_textarea, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(ui_input_textarea, 0, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_input_textarea, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(ui_input_textarea, &ui_font_name_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ui_input_textarea, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui_input_textarea, THEME_LV(THEME_SURFACE_ALT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ui_input_textarea, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(ui_input_textarea, 6, LV_PART_MAIN);
+    lv_obj_set_style_border_color(ui_input_textarea, THEME_LV(THEME_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui_input_textarea, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(ui_input_textarea, 12, LV_PART_MAIN);
     lv_obj_set_style_text_color(ui_input_textarea, lv_color_hex(0xFFFFFF),
                                  LV_PART_MAIN | LV_STATE_FOCUSED);
     lv_obj_set_style_pad_left(ui_input_textarea, 6, LV_PART_MAIN);
@@ -618,7 +658,7 @@ void ui_t9_keyboard_screen_init(void)
     s_reveal_label = lv_label_create(s_reveal_button);
     lv_label_set_text(s_reveal_label, "Show");
     lv_obj_set_style_text_color(s_reveal_label, THEME_LV(THEME_ACCENT), 0);
-    lv_obj_set_style_text_font(s_reveal_label, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(s_reveal_label, &lv_font_montserrat_14, 0);
     lv_obj_center(s_reveal_label);
     lv_obj_add_event_cb(s_reveal_button, _reveal_cb, LV_EVENT_CLICKED, NULL);
 
@@ -645,18 +685,19 @@ void ui_t9_keyboard_screen_init(void)
             s_key_labels[i] = lv_label_create(mats[i]);
             lv_label_set_text(s_key_labels[i], init_lbls[i]);
             lv_obj_set_align(s_key_labels[i], LV_ALIGN_CENTER);
-            lv_obj_set_style_text_color(s_key_labels[i], lv_color_hex(0x000000), 0);
-            lv_obj_set_style_text_font(s_key_labels[i], &ui_font_name_24, 0);
+            lv_obj_set_style_text_color(s_key_labels[i], THEME_LV(THEME_TEXT), 0);
+            lv_obj_set_style_text_font(s_key_labels[i], &lv_font_montserrat_14, 0);
             lv_obj_add_event_cb(mats[i], _key_cb, LV_EVENT_CLICKED, NULL);
         }
         /* Space key (index 8 = ui_matrix_9): start transparent, _refresh_labels sets it white */
         lv_obj_set_style_img_recolor(ui_matrix_9, lv_color_white(), 0);
-        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_img_recolor(ui_matrix_9, THEME_LV(THEME_SURFACE_ALT), 0);
+        lv_obj_set_style_img_recolor_opa(ui_matrix_9, LV_OPA_COVER, 0);
         /* Space bar indicator: thin black horizontal bar, non-clickable (clicks fall through) */
         s_space_bar = lv_obj_create(ui_matrix_9);
         lv_obj_set_size(s_space_bar, 28, 4);
         lv_obj_align(s_space_bar, LV_ALIGN_BOTTOM_MID, 0, -6);
-        lv_obj_set_style_bg_color(s_space_bar, lv_color_hex(0x111111), 0);
+        lv_obj_set_style_bg_color(s_space_bar, THEME_LV(THEME_ACCENT), 0);
         lv_obj_set_style_bg_opa(s_space_bar, LV_OPA_COVER, 0);
         lv_obj_set_style_radius(s_space_bar, 2, 0);
         lv_obj_set_style_border_width(s_space_bar, 0, 0);

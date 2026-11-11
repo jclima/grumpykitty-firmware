@@ -18,7 +18,7 @@ extern lv_obj_t * ui_apps_menu;
 extern lv_obj_t * ui_apps_menu_bg;
 extern lv_obj_t * ui_left;
 /* ── Dynamic app loading API ─────────────────────────────────────── */
-#define APPS_MENU_MAX_APPS  24
+#define APPS_MENU_MAX_APPS  48
 
 typedef struct {
     char         id[32];
@@ -31,6 +31,8 @@ extern const char *ui_apps_menu_get_selected_id(void);
 extern void        ui_apps_menu_clear_selected(void);
 /* Scroll the grid one row: dir > 0 = down (reveal later rows), dir < 0 = up. */
 extern void        ui_apps_menu_scroll_step(int dir);
+extern void        ui_apps_menu_focus_step(int dir);
+extern void        ui_apps_menu_activate_focused(void);
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

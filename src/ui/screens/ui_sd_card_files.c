@@ -147,7 +147,7 @@ static void _visit_entry(const char * name, int is_dir)
     lv_obj_t * lbl = lv_label_create(btn);
     lv_label_set_text(lbl, display_name);
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_align(lbl, LV_ALIGN_LEFT_MID);
     lv_obj_set_width(lbl, 250);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
@@ -187,7 +187,7 @@ static void _build_file_list(void)
         lv_label_set_text(lbl, unsupported ? "Unsupported card format - use FAT32 (MBR)"
                                            : (ui_sd_state() == UI_SD_OK ? "Unable to read folder" : "(No SD card)"));
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(lbl,  &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(lbl,  &lv_font_montserrat_14, 0);
         if (unsupported) {
             lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
             lv_obj_set_width(lbl, 200);
@@ -227,7 +227,7 @@ static void _load_tick(lv_timer_t *t)
         lv_obj_t *lbl = lv_label_create(_file_list);
         lv_label_set_text(lbl, _load_error == -2 ? "Name too long" : (_load_error == -3 ? "Out of memory" : (_load_error ? "Unable to read folder" : "(Empty)")));
         lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_set_pos(lbl, 60, 50);
     }
     if (_page_prev) {
@@ -299,6 +299,8 @@ void ui_sd_card_files_screen_init(void)
 
     ui_sd_card_files = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_sd_card_files, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_set_style_bg_color(ui_sd_card_files, THEME_LV(THEME_SURFACE), 0);
+    lv_obj_set_style_bg_opa(ui_sd_card_files, LV_OPA_COVER, 0);
 
     ui_sd_card_files_bg = lv_img_create(ui_sd_card_files);
     lv_img_set_src(ui_sd_card_files_bg, &ui_img_background_v_png);
@@ -309,6 +311,7 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_align(ui_sd_card_files_bg, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_sd_card_files_bg, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_sd_card_files_bg, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_add_flag(ui_sd_card_files_bg, LV_OBJ_FLAG_HIDDEN);
 
     ui_down = lv_img_create(ui_sd_card_files);
     lv_img_set_src(ui_down, &ui_img_navigation_edge_png);
@@ -319,6 +322,7 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_add_flag(ui_down, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_down, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
     lv_img_set_angle(ui_down, -1800);
+    lv_obj_add_flag(ui_down, LV_OBJ_FLAG_HIDDEN);
 
     ui_sd_header_bg = lv_img_create(ui_sd_card_files);
     lv_img_set_src(ui_sd_header_bg, &ui_img_header_png);
@@ -328,6 +332,7 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_y(ui_sd_header_bg, 3);
     lv_obj_add_flag(ui_sd_header_bg, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_sd_header_bg, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_add_flag(ui_sd_header_bg, LV_OBJ_FLAG_HIDDEN);
 
     ui_list_border = lv_img_create(ui_sd_card_files);
     lv_img_set_src(ui_list_border, &ui_img_border_png);
@@ -337,14 +342,17 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_y(ui_list_border, 47);
     lv_obj_add_flag(ui_list_border, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_list_border, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_add_flag(ui_list_border, LV_OBJ_FLAG_HIDDEN);
 
     /* Scrollable file list — transparent, 5 px inset inside ui_list_border */
     _file_list = lv_obj_create(ui_sd_card_files);
     lv_obj_set_x(_file_list, 15);
     lv_obj_set_y(_file_list, 52);
     lv_obj_set_size(_file_list, 290, 120);
-    lv_obj_set_style_bg_opa(_file_list,     LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(_file_list, 0, 0);
+    lv_obj_set_style_bg_color(_file_list, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_bg_opa(_file_list,     LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(_file_list, THEME_LV(THEME_BORDER), 0);
+    lv_obj_set_style_border_width(_file_list, 1, 0);
     lv_obj_set_style_pad_all(_file_list,    0, 0);
     lv_obj_set_style_radius(_file_list,     0, 0);
     lv_obj_set_scroll_dir(_file_list, LV_DIR_VER);
@@ -362,6 +370,7 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_y(ui_key_prompts_bg, 204);
     lv_obj_add_flag(ui_key_prompts_bg, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_key_prompts_bg, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
+    lv_obj_add_flag(ui_key_prompts_bg, LV_OBJ_FLAG_HIDDEN);
 
     /* A key — NOT clickable; physical A → Home via launcher handlePhysicalNav */
     ui_key_a_bg = lv_img_create(ui_sd_card_files);
@@ -385,6 +394,10 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_add_flag(ui_key_b_bg, LV_OBJ_FLAG_ADV_HITTEST | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(ui_key_b_bg, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(ui_key_b_bg, _on_key_b_click, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_img_recolor(ui_key_a_bg, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_key_a_bg, LV_OPA_COVER, 0);
+    lv_obj_set_style_img_recolor(ui_key_b_bg, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_key_b_bg, LV_OPA_COVER, 0);
 
     ui_sd_header_label = lv_label_create(ui_sd_card_files);
     lv_obj_set_width(ui_sd_header_label, LV_SIZE_CONTENT);   /// 1
@@ -394,44 +407,49 @@ void ui_sd_card_files_screen_init(void)
     lv_obj_set_x(ui_sd_header_label, 40);
     lv_obj_set_y(ui_sd_header_label, 14);
     lv_label_set_text(ui_sd_header_label, "SD Card Files");
-    lv_obj_set_style_text_color(ui_sd_header_label, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_sd_header_label, THEME_LV(THEME_TEXT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_sd_header_label, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_sd_header_label, &ui_font_name_24, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_sd_header_label, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_key_a_enter = lv_label_create(ui_sd_card_files);
     lv_obj_set_width(ui_key_a_enter, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_key_a_enter, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_key_a_enter, 175);
     lv_obj_set_y(ui_key_a_enter, 210);
-    lv_label_set_text(ui_key_a_enter, "Refresh");
+    lv_label_set_text(ui_key_a_enter, "A Refresh");
     lv_obj_add_flag(ui_key_a_enter, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(ui_key_a_enter, _on_key_a_click, LV_EVENT_CLICKED, NULL);
-    lv_obj_set_style_text_color(ui_key_a_enter, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(ui_key_a_enter, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_key_a_enter, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_key_a_enter, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_key_a_enter, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_key_b_back = lv_label_create(ui_sd_card_files);
     lv_obj_set_width(ui_key_b_back, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_key_b_back, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_key_b_back, 267);
     lv_obj_set_y(ui_key_b_back, 210);
-    lv_label_set_text(ui_key_b_back, "Back");
+    lv_label_set_text(ui_key_b_back, "B Back");
 
     _page_prev = lv_btn_create(ui_sd_card_files);
     lv_obj_set_size(_page_prev, 34, 20); lv_obj_set_pos(_page_prev, 15, 176);
+    lv_obj_set_style_bg_color(_page_prev, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_text_color(_page_prev, THEME_LV(THEME_ACCENT), 0);
     lv_obj_add_event_cb(_page_prev, _page_prev_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *pl = lv_label_create(_page_prev); lv_label_set_text(pl, "<"); lv_obj_center(pl);
     _page_next = lv_btn_create(ui_sd_card_files);
     lv_obj_set_size(_page_next, 34, 20); lv_obj_set_pos(_page_next, 271, 176);
+    lv_obj_set_style_bg_color(_page_next, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_text_color(_page_next, THEME_LV(THEME_ACCENT), 0);
     lv_obj_add_event_cb(_page_next, _page_next_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *nl = lv_label_create(_page_next); lv_label_set_text(nl, ">"); lv_obj_center(nl);
     _page_label = lv_label_create(ui_sd_card_files);
     lv_label_set_text_fmt(_page_label, "page %lu", (unsigned long)(_page + 1));
     lv_obj_set_pos(_page_label, 140, 178);
-    lv_obj_set_style_text_font(_page_label, &ui_font_name_14, 0);
-    lv_obj_set_style_text_color(ui_key_b_back, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(_page_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(_page_label, THEME_LV(THEME_TEXT_DIM), 0);
+    lv_obj_set_style_text_color(ui_key_b_back, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_opa(ui_key_b_back, 255, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_key_b_back, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_key_b_back, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     _build_file_list();
     _media_timer = lv_timer_create(_media_tick, 1000, NULL);

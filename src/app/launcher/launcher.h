@@ -21,6 +21,8 @@
 #include "../../system/mk_events.h"
 #include "../../ui/ui.h"
 #include <string>
+#include <vector>
+#include "../personal_apps/personal_apps.h"
 
 class Launcher
 {
@@ -42,6 +44,13 @@ private:
     bool _ui_ready       = false;   /* UI screens exist (stays true after buildUI) */
     bool _app_running    = false;
     int  _running_app_id = -1;
+    std::vector<int> _native_handles;
+    std::vector<personal_apps::Package> _packages;
+    int _personal_handle = -1;
+    std::string _personal_id;
+    bool _personal_drain = false;
+    std::string _manager_confirm_id;
+    int _manager_confirm_action = -1;
 
     /* SD card (mounted via SD_MMC native API) */
 
@@ -57,4 +66,8 @@ private:
     void handleNavigationEvent(mk_event_t evt);
     void updateStatusBar();
     void returnToUI();      /* invalidate + reload LVGL screen after app exit */
+    void refreshAppManager();
+    void renderAppManager();
+    std::vector<std::string> catalogIds() const;
+    void handleAppManager();
 };

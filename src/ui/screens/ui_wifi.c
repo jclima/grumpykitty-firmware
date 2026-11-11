@@ -93,7 +93,7 @@ static void _wifi_show_toast(const char * msg, lv_color_t color)
     lv_obj_t * lbl = lv_label_create(s_toast);
     lv_label_set_text(lbl, msg);
     lv_obj_set_style_text_color(lbl, color, 0);
-    lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_move_foreground(s_toast);
 }
 
@@ -177,7 +177,7 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_set_width(title, 180);
     lv_label_set_text(title, row->ssid);
     lv_obj_set_style_text_color(title, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(title, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
     // Forget button
@@ -191,7 +191,7 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_t * flbl = lv_label_create(fbtn);
     lv_label_set_text(flbl, "Forget Network");
     lv_obj_set_style_text_color(flbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(flbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(flbl, &lv_font_montserrat_14, 0);
     lv_obj_align(flbl, LV_ALIGN_CENTER, 0, 0);
 
     // Cancel button
@@ -205,7 +205,7 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_t * clbl = lv_label_create(cbtn);
     lv_label_set_text(clbl, "Cancel");
     lv_obj_set_style_text_color(clbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(clbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(clbl, &lv_font_montserrat_14, 0);
     lv_obj_align(clbl, LV_ALIGN_CENTER, 0, 0);
 }
 
@@ -297,7 +297,7 @@ static void _wifi_add_rescan_row(void)
     lv_obj_t * lbl = lv_label_create(row);
     lv_label_set_text(lbl, "Rescan");
     lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 24, 0);
 
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -336,7 +336,7 @@ static void _wifi_build_list(void)
         lv_obj_t * lbl = lv_label_create(row);
         lv_label_set_text(lbl, "Scanning...");
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
-        lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 28, 0);
 
         if(n == 0) return;  // still scanning, no results to show yet
@@ -353,7 +353,7 @@ static void _wifi_build_list(void)
         lv_obj_t * lbl = lv_label_create(row);
         lv_label_set_text(lbl, "No networks found");
         lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
-        lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
         _wifi_add_rescan_row();
         return;
@@ -378,7 +378,7 @@ static void _wifi_build_list(void)
             lv_obj_t * lbl = lv_label_create(row);
             lv_label_set_text(lbl, "Toggle switch above to scan");
             lv_obj_set_style_text_color(lbl, lv_color_hex(0x555555), 0);
-            lv_obj_set_style_text_font(lbl, &ui_font_name_14, 0);
+            lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
             lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 24, 0);
         }
         return;
@@ -451,10 +451,10 @@ static void _wifi_build_list(void)
          * Left at LV_SIZE_CONTENT the label grows instead, wrapping a long
          * SSID onto a second line that the 38 px row then clips. Pin it to a
          * single line so the text is truncated horizontally as intended. */
-        lv_obj_set_height(ssid_lbl, lv_font_get_line_height(&ui_font_name_14));
+        lv_obj_set_height(ssid_lbl, lv_font_get_line_height(&lv_font_montserrat_14));
         lv_label_set_text(ssid_lbl, aps[i].ssid);
         lv_obj_set_style_text_color(ssid_lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(ssid_lbl, &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(ssid_lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(ssid_lbl, LV_ALIGN_LEFT_MID, ssid_x, 0);
 
         // Signal color: ≥70% green, 40–69% white, <40% gray
@@ -479,7 +479,7 @@ static void _wifi_build_list(void)
         lv_obj_t * right_lbl = lv_label_create(row);
         lv_label_set_text(right_lbl, right_buf);
         lv_obj_set_style_text_color(right_lbl, sig_color, 0);
-        lv_obj_set_style_text_font(right_lbl, &ui_font_name_14, 0);
+        lv_obj_set_style_text_font(right_lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(right_lbl, LV_ALIGN_RIGHT_MID, -4, 0);
 
         lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
@@ -655,6 +655,8 @@ void ui_wifi_screen_init(void)
 
     ui_wifi = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_wifi, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(ui_wifi, THEME_LV(THEME_SURFACE), 0);
+    lv_obj_set_style_bg_opa(ui_wifi, LV_OPA_COVER, 0);
 
     ui_wifi_bg = lv_img_create(ui_wifi);
     lv_img_set_src(ui_wifi_bg, &ui_img_background_v_png);
@@ -665,6 +667,7 @@ void ui_wifi_screen_init(void)
     lv_obj_set_align(ui_wifi_bg, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_wifi_bg, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_wifi_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_wifi_bg, LV_OBJ_FLAG_HIDDEN);
 
     ui_wifi_header_bg = lv_img_create(ui_wifi);
     lv_img_set_src(ui_wifi_header_bg, &ui_img_header_png);
@@ -674,6 +677,8 @@ void ui_wifi_screen_init(void)
     lv_obj_set_y(ui_wifi_header_bg, 3);
     lv_obj_add_flag(ui_wifi_header_bg, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_wifi_header_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_img_recolor(ui_wifi_header_bg, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_wifi_header_bg, LV_OPA_COVER, 0);
 
     ui_wifi_list_border = lv_img_create(ui_wifi);
     lv_img_set_src(ui_wifi_list_border, &ui_img_border_png);
@@ -683,6 +688,7 @@ void ui_wifi_screen_init(void)
     lv_obj_set_y(ui_wifi_list_border, 47);
     lv_obj_add_flag(ui_wifi_list_border, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_wifi_list_border, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_wifi_list_border, LV_OBJ_FLAG_HIDDEN);
 
     ui_wifi_key_prompts_bg = lv_img_create(ui_wifi);
     lv_img_set_src(ui_wifi_key_prompts_bg, &ui_img_key_prompts_bg_png);
@@ -692,6 +698,7 @@ void ui_wifi_screen_init(void)
     lv_obj_set_y(ui_wifi_key_prompts_bg, 204);
     lv_obj_add_flag(ui_wifi_key_prompts_bg, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_clear_flag(ui_wifi_key_prompts_bg, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_wifi_key_prompts_bg, LV_OBJ_FLAG_HIDDEN);
 
     ui_wifi_key_a_bg = lv_img_create(ui_wifi);
     lv_img_set_src(ui_wifi_key_a_bg, &ui_img_key_a_png);
@@ -712,6 +719,10 @@ void ui_wifi_screen_init(void)
     lv_obj_add_flag(ui_wifi_key_b_bg, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(ui_wifi_key_b_bg, LV_OBJ_FLAG_ADV_HITTEST);
     lv_obj_add_event_cb(ui_wifi_key_b_bg, _key_b_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_set_style_img_recolor(ui_wifi_key_a_bg, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_wifi_key_a_bg, LV_OPA_COVER, 0);
+    lv_obj_set_style_img_recolor(ui_wifi_key_b_bg, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_img_recolor_opa(ui_wifi_key_b_bg, LV_OPA_COVER, 0);
 
     ui_wifi_header_label = lv_label_create(ui_wifi);
     lv_obj_set_width(ui_wifi_header_label, LV_SIZE_CONTENT);
@@ -719,8 +730,8 @@ void ui_wifi_screen_init(void)
     lv_obj_set_x(ui_wifi_header_label, 80);
     lv_obj_set_y(ui_wifi_header_label, 14);
     lv_label_set_text(ui_wifi_header_label, "WLAN Setup");
-    lv_obj_set_style_text_color(ui_wifi_header_label, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(ui_wifi_header_label, &ui_font_name_24, 0);
+    lv_obj_set_style_text_color(ui_wifi_header_label, THEME_LV(THEME_TEXT), 0);
+    lv_obj_set_style_text_font(ui_wifi_header_label, &lv_font_montserrat_14, 0);
 
     // Wi-Fi on/off switch (child of header_bg)
     ui_wifi_scan_switch = lv_switch_create(ui_wifi_header_bg);
@@ -752,8 +763,10 @@ void ui_wifi_screen_init(void)
     lv_obj_set_size(ui_wifi_list, 290, 152);
     lv_obj_set_x(ui_wifi_list, 15);
     lv_obj_set_y(ui_wifi_list, 52);
-    lv_obj_set_style_bg_opa(ui_wifi_list, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(ui_wifi_list, 0, 0);
+    lv_obj_set_style_bg_color(ui_wifi_list, THEME_LV(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_bg_opa(ui_wifi_list, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(ui_wifi_list, THEME_LV(THEME_BORDER), 0);
+    lv_obj_set_style_border_width(ui_wifi_list, 1, 0);
     lv_obj_set_style_pad_all(ui_wifi_list, 0, 0);
     lv_obj_set_style_pad_row(ui_wifi_list, 0, 0);
     lv_obj_set_scroll_dir(ui_wifi_list, LV_DIR_VER);
@@ -764,9 +777,9 @@ void ui_wifi_screen_init(void)
     ui_wifi_key_a_home = lv_label_create(ui_wifi);
     lv_obj_set_width(ui_wifi_key_a_home, LV_SIZE_CONTENT);
     lv_obj_set_height(ui_wifi_key_a_home, LV_SIZE_CONTENT);
-    lv_label_set_text(ui_wifi_key_a_home, "Connect");
-    lv_obj_set_style_text_color(ui_wifi_key_a_home, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_wifi_key_a_home, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(ui_wifi_key_a_home, "A Connect");
+    lv_obj_set_style_text_color(ui_wifi_key_a_home, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_wifi_key_a_home, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align_to(ui_wifi_key_a_home, ui_wifi_key_a_bg, LV_ALIGN_CENTER, 0, 0);
 
     ui_wifi_key_b_back = lv_label_create(ui_wifi);
@@ -774,9 +787,9 @@ void ui_wifi_screen_init(void)
     lv_obj_set_height(ui_wifi_key_b_back, LV_SIZE_CONTENT);
     lv_obj_set_x(ui_wifi_key_b_back, 267);
     lv_obj_set_y(ui_wifi_key_b_back, 210);
-    lv_label_set_text(ui_wifi_key_b_back, "Back");
-    lv_obj_set_style_text_color(ui_wifi_key_b_back, lv_color_hex(0x000000), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_text_font(ui_wifi_key_b_back, &ui_font_name_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(ui_wifi_key_b_back, "B Back");
+    lv_obj_set_style_text_color(ui_wifi_key_b_back, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(ui_wifi_key_b_back, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_add_event_cb(ui_wifi, ui_event_wifi, LV_EVENT_ALL, NULL);
 

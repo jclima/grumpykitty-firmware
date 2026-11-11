@@ -33,6 +33,7 @@ extern "C" {
 
 #include "screens/ui_home.h"
 #include "screens/ui_apps_menu.h"
+#include "screens/ui_apps_manager.h"
 #include "screens/ui_clock.h"
 #include "screens/ui_manual.h"
 #include "screens/ui_set_date.h"

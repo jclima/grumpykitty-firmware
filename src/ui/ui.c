@@ -39,6 +39,7 @@ void ui_init(void)
      * This cuts boot time and saves ~50KB+ of RAM at startup. */
     ui_home_screen_init();
     ui_apps_menu_screen_init();
+    ui_apps_manager_screen_init();
 
     ui____initial_actions0 = lv_obj_create(NULL);
     lv_disp_load_scr(ui_home);
@@ -48,6 +49,7 @@ void ui_destroy(void)
 {
     ui_home_screen_destroy();
     ui_apps_menu_screen_destroy();
+    ui_apps_manager_screen_destroy();
     ui_clock_screen_destroy();
     ui_manual_screen_destroy();
     ui_sd_card_files_screen_destroy();

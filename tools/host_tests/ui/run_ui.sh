@@ -8,7 +8,7 @@ else
   OUT=$(mktemp -d /tmp/meowkit-ui-build.XXXXXX)
   CLEAN=1
 fi
-cleanup() { [ "$CLEAN" -eq 1 ] && rm -rf "$OUT"; }
+cleanup() { if [ "$CLEAN" -eq 1 ]; then rm -rf "$OUT"; fi; }
 trap cleanup EXIT
 CC=${CC:-cc}; CXX=${CXX:-c++}
 SAN=${SAN:-}
@@ -17,7 +17,7 @@ for f in $(find "$ROOT/lib/lvgl/src" -name '*.c' | sort); do
   o="$OUT/$(basename "$f" .c).o"
   "$CC" -std=c11 -O0 -g $SAN $INC -c "$f" -o "$o"
 done
-for f in "$ROOT/src/ui/screens/ui_t9_keyboard.c" "$ROOT/src/ui/screens/ui_wifi.c" "$ROOT/src/ui/screens/ui_sd_card_files.c" "$ROOT/src/ui/ui_helpers.c" "$ROOT/tools/host_tests/ui/bridge_stub.c" "$ROOT/tools/host_tests/ui/host_arduino.c" $(find "$ROOT/src/ui/images" "$ROOT/src/ui/fonts" -name '*.c' | sort); do
+for f in "$ROOT/src/ui/screens/ui_t9_keyboard.c" "$ROOT/src/ui/screens/ui_wifi.c" "$ROOT/src/ui/screens/ui_sd_card_files.c" "$ROOT/src/ui/screens/ui_apps_menu.c" "$ROOT/src/ui/screens/ui_apps_manager.c" "$ROOT/src/ui/ui_helpers.c" "$ROOT/tools/host_tests/ui/bridge_stub.c" "$ROOT/tools/host_tests/ui/host_arduino.c" $(find "$ROOT/src/ui/images" "$ROOT/src/ui/fonts" -name '*.c' | sort); do
   o="$OUT/$(basename "$f" .c)-ui.o"
   "$CC" -std=c11 -O0 -g $SAN $INC -c "$f" -o "$o"
 done

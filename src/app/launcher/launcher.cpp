@@ -44,6 +44,7 @@
  */
 #include "launcher.h"
 #include "../app.h"
+#include "app_preferences.h"
 #include "../app_03/vu_meter.h"
 #include "../../bsp/porting/lv_port_disp.h"
 #include "../../bsp/porting/lv_port_indev.h"
@@ -65,6 +66,8 @@
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <Preferences.h>
+#include <algorithm>
 
 /* ────────────────────────────────────────────────────── */
 
@@ -344,6 +347,13 @@ void Launcher::onLoop()
        the shared audio pins. */
     MOONCAKE::APPS::AppVoiceRecorder::serviceDeferredClose(_device);
     MOONCAKE::APPS::App03::serviceDeferredClose(_device);
+    if (_personal_drain && personal_apps::cleanupPending()) {
+        _mooncake.update();
+    } else if (_personal_drain) {
+        if (_personal_handle >= 0) _mooncake.uninstallApp(_personal_handle);
+        _mooncake.update(); // finish destruction before any new install can reuse the ID
+        _personal_handle = -1; _personal_id.clear(); _personal_drain = false;
+    }
 
     /* Flush dirty settings to NVS after debounce — ~0 cost when clean */
     settings_tick();
@@ -374,6 +384,7 @@ void Launcher::onLoop()
 
         uint32_t next_ms = lv_timer_handler();
         handleAppSelection();
+        if (ui_apps_manager && lv_scr_act() == ui_apps_manager) handleAppManager();
 
         /* Detect touchscreen activity → reset sleep timer + restore screen. */
         {
@@ -467,6 +478,11 @@ void Launcher::onLoop()
         }
 
         _mooncake.update();
+        if (_personal_handle >= 0 && _mooncake.getAppCurrentState(_personal_handle) == mooncake::AppAbility::StateSleeping) {
+            _app_running = false; _running_app_id = -1; s_in_app = false;
+            _personal_drain = true;
+            returnToUI();
+        }
     }
 }
 
@@ -507,7 +523,18 @@ void Launcher::initSD()
 void Launcher::installApps()
 {
     Serial.println("[Launcher] Installing native apps...");
-    registerAllApps(_mooncake, _device);
+    _native_handles.clear();
+    _native_handles.reserve(APP_REGISTRY_COUNT);
+    for (const AppReg &r : APP_REGISTRY) {
+        const int handle = _mooncake.installApp(r.make(_device));
+        _native_handles.push_back(handle); /* never infer handles from display names */
+    }
+    auto scan = personal_apps::scan();
+    _packages = std::move(scan.packages);
+    _packages.erase(std::remove_if(_packages.begin(), _packages.end(), [](const auto &p) {
+        for (int i=0;i<APP_REGISTRY_COUNT;i++) if (p.id == APP_REGISTRY[i].id) return true;
+        return false;
+    }), _packages.end());
 }
 
 /* ── LVGL one-time init ────────────────────────────── */
@@ -549,6 +576,136 @@ void Launcher::buildUI()
     _ui_ready = true;
 }
 
+std::vector<std::string> Launcher::catalogIds() const
+{
+    std::vector<std::string> ids;
+    for (const auto& native : APP_REGISTRY) ids.emplace_back(native.id);
+    for (const auto& package : _packages) {
+        if (std::find(ids.begin(), ids.end(), package.id) == ids.end()) ids.push_back(package.id);
+    }
+    return ids;
+}
+
+void Launcher::renderAppManager()
+{
+    ui_apps_manager_screen_init();
+    const auto catalog = app_preferences::load();
+    static AppManagerEntry_t rows[APPS_MENU_MAX_APPS];
+    memset(rows, 0, sizeof(rows));
+    int count = 0;
+    for (const auto& id : catalog.sorted(catalogIds())) {
+        if (count >= APPS_MENU_MAX_APPS) break;
+        auto& row = rows[count++];
+        strncpy(row.id, id.c_str(), sizeof(row.id) - 1);
+        row.installed = true;
+        row.visible = catalog.visible(id);
+        bool native = false;
+        for (const auto& entry : APP_REGISTRY) if (id == entry.id) {
+            strncpy(row.name, entry.name, sizeof(row.name) - 1);
+            strncpy(row.version, entry.version, sizeof(row.version) - 1);
+            strncpy(row.description, entry.description, sizeof(row.description) - 1);
+            strncpy(row.prerequisites, entry.prerequisites, sizeof(row.prerequisites) - 1);
+            row.compatible = true;
+            native = true;
+            break;
+        }
+        if (native) continue;
+        for (const auto& package : _packages) if (id == package.id) {
+            strncpy(row.name, package.name.empty() ? id.c_str() : package.name.c_str(), sizeof(row.name) - 1);
+            strncpy(row.version, package.version.c_str(), sizeof(row.version) - 1);
+            strncpy(row.description, package.error.empty() ? package.description.c_str() : package.error.c_str(), sizeof(row.description) - 1);
+            strncpy(row.prerequisites, "SD card", sizeof(row.prerequisites) - 1);
+            row.compatible = package.compatible;
+            row.removable = true;
+            break;
+        }
+    }
+    ui_apps_manager_load(rows, count);
+}
+
+void Launcher::refreshAppManager()
+{
+    ui_apps_manager_screen_init();
+    if (_app_running || _personal_drain || personal_apps::cleanupPending() ||
+        MOONCAKE::APPS::AppVoiceRecorder::closePending() || MOONCAKE::APPS::App03::closePending()) {
+        renderAppManager();
+        ui_apps_manager_set_status("Previous app is still closing");
+        return;
+    }
+    auto result = personal_apps::scan();
+    // Keep known packages on transient card/USB errors; launch revalidates them.
+    if (result.error.empty()) {
+        _packages = std::move(result.packages);
+        _packages.erase(std::remove_if(_packages.begin(), _packages.end(), [](const auto& p) {
+            for (const auto& entry : APP_REGISTRY) if (p.id == entry.id) return true;
+            return false;
+        }), _packages.end());
+    }
+    renderAppManager();
+    loadAppsMenu();
+    ui_apps_manager_set_status(!result.error.empty() ? result.error.c_str() :
+        (!result.warning.empty() ? result.warning.c_str() : "SD apps refreshed"));
+}
+
+void Launcher::handleAppManager()
+{
+    const std::string id = ui_apps_manager_focus_id();
+    if (!_manager_confirm_id.empty() && _manager_confirm_id != id) {
+        _manager_confirm_id.clear();
+        _manager_confirm_action = -1;
+        ui_apps_manager_set_status("");
+    }
+    const int action = ui_apps_manager_take_action();
+    if (action < 0) return;
+    const bool removing = action == UI_APPS_MANAGER_REMOVE || action == UI_APPS_MANAGER_REMOVE_DATA;
+    if (!removing) { _manager_confirm_id.clear(); _manager_confirm_action = -1; }
+    if (action == UI_APPS_MANAGER_BACK) {
+        _ui_screen_change(&ui_apps_menu, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, &ui_apps_menu_screen_init);
+        return;
+    }
+    if (_app_running || _personal_drain || personal_apps::cleanupPending() ||
+        MOONCAKE::APPS::AppVoiceRecorder::closePending() || MOONCAKE::APPS::App03::closePending()) {
+        ui_apps_manager_set_status("Previous app is still closing"); return;
+    }
+    if (action == UI_APPS_MANAGER_REFRESH) { refreshAppManager(); return; }
+    if (id.empty()) return;
+    auto catalog = app_preferences::load();
+    const auto available = catalogIds();
+    catalog.hidden.erase(std::remove_if(catalog.hidden.begin(), catalog.hidden.end(), [&](const auto& hidden) {
+        return std::find(available.begin(), available.end(), hidden) == available.end();
+    }), catalog.hidden.end());
+    std::string error;
+    if (action == UI_APPS_MANAGER_HIDE_SHOW) {
+        if (id == "firmware-update") { ui_apps_manager_set_status("FW Update stays available"); return; }
+        catalog.toggle(id);
+        if (!app_preferences::save(catalog, error)) { ui_apps_manager_set_status(error.c_str()); return; }
+        loadAppsMenu(); renderAppManager();
+        ui_apps_manager_set_status(catalog.visible(id) ? "Shown in Apps" : "Hidden from Apps");
+        return;
+    }
+    if (action == UI_APPS_MANAGER_MOVE_UP || action == UI_APPS_MANAGER_MOVE_DOWN) {
+        catalog.order = catalog.sorted(catalogIds());
+        auto current = std::find(catalog.order.begin(), catalog.order.end(), id);
+        if (current == catalog.order.end()) return;
+        if (action == UI_APPS_MANAGER_MOVE_UP && current != catalog.order.begin()) std::iter_swap(current, current - 1);
+        if (action == UI_APPS_MANAGER_MOVE_DOWN && current + 1 != catalog.order.end()) std::iter_swap(current, current + 1);
+        if (!app_preferences::save(catalog, error)) { ui_apps_manager_set_status(error.c_str()); return; }
+        loadAppsMenu(); renderAppManager(); ui_apps_manager_set_status("Order saved"); return;
+    }
+    if (!removing) return;
+    auto package = std::find_if(_packages.begin(), _packages.end(), [&](const auto& p) { return p.id == id; });
+    if (package == _packages.end()) { ui_apps_manager_set_status("Built-in app: use Hide"); return; }
+    if (_manager_confirm_id != id || _manager_confirm_action != action) {
+        _manager_confirm_id = id; _manager_confirm_action = action;
+        ui_apps_manager_set_status(action == UI_APPS_MANAGER_REMOVE_DATA ? "Again: remove app AND data" : "Again: remove app; keep data");
+        return;
+    }
+    const bool removed = personal_apps::remove(*package, action == UI_APPS_MANAGER_REMOVE_DATA, error);
+    _manager_confirm_id.clear(); _manager_confirm_action = -1;
+    refreshAppManager(); // Partial removals must no longer appear runnable.
+    ui_apps_manager_set_status(removed ? "Personal app removed" : error.c_str());
+}
+
 /* ── Close running app (long-press B and critical shutdown) ── */
 
 void Launcher::closeRunningApp()
@@ -575,6 +732,7 @@ void Launcher::closeRunningApp()
     _running_app_id = -1;
     _app_running    = false;
     s_in_app        = false;
+    if (_personal_handle >= 0) _personal_drain = true;
     Serial.printf("[Launcher] App closed in %lu ms\n", (unsigned long)(millis() - t0));
 }
 
@@ -610,22 +768,22 @@ void Launcher::returnToUI()
 
 void Launcher::loadAppsMenu()
 {
-    auto allInfo = _mooncake.getAllAppInfo();
-    int count = (int)allInfo.size();
-    if (count > APPS_MENU_MAX_APPS) count = APPS_MENU_MAX_APPS;
-
-    /* Use static to avoid 5KB stack allocation (AppMenuEntry_t × 24 = ~5KB)
-     * Stack HWM is only ~6KB at this point — would overflow. */
+    const auto catalog = app_preferences::load();
     static AppMenuEntry_t entries[APPS_MENU_MAX_APPS];
     memset(entries, 0, sizeof(entries));
-
-    /* Icons come from APP_REGISTRY in app.h (same table that installs apps). */
-    for (int i = 0; i < count; i++) {
-        strncpy(entries[i].id,   allInfo[i].name.c_str(), sizeof(entries[i].id)   - 1);
-        strncpy(entries[i].name, allInfo[i].name.c_str(), sizeof(entries[i].name) - 1);
-        entries[i].icon = (i < APP_REGISTRY_COUNT) ? APP_REGISTRY[i].icon : nullptr;
+    int count = 0;
+    for (const auto& id : catalog.sorted(catalogIds())) {
+        if (count >= APPS_MENU_MAX_APPS || !catalog.visible(id)) continue;
+        const char* name = nullptr;
+        const void* icon = nullptr;
+        for (const auto& entry : APP_REGISTRY) if (id == entry.id) { name = entry.name; icon = entry.icon; break; }
+        if (!name) for (const auto& package : _packages) if (id == package.id && package.compatible) { name = package.name.c_str(); break; }
+        if (!name) continue;
+        auto& entry = entries[count++];
+        strncpy(entry.id, id.c_str(), sizeof(entry.id) - 1);
+        strncpy(entry.name, name, sizeof(entry.name) - 1);
+        entry.icon = icon;
     }
-
     ui_apps_menu_load_apps(entries, count);
 }
 
@@ -684,7 +842,7 @@ void Launcher::updateStatusBar()
 void Launcher::handleAppSelection()
 {
     const char* selId = ui_apps_menu_get_selected_id();
-    if (MOONCAKE::APPS::AppVoiceRecorder::closePending() || MOONCAKE::APPS::App03::closePending()) {
+    if (_personal_drain || personal_apps::cleanupPending() || MOONCAKE::APPS::AppVoiceRecorder::closePending() || MOONCAKE::APPS::App03::closePending()) {
         /* Selection is kept so the launch proceeds once the close finishes;
          * tell the user why nothing happens (at most every 3 s). */
         static uint32_t s_last_closing_toast = 0;
@@ -698,14 +856,23 @@ void Launcher::handleAppSelection()
     if (!selId || selId[0] == '\0') return;
 
     Serial.printf("[Launcher] Selected: %s\n", selId);
+    if (strcmp(selId, "__manager") == 0) {
+        ui_apps_menu_clear_selected(); refreshAppManager();
+        _ui_screen_change(&ui_apps_manager, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, &ui_apps_manager_screen_init);
+        return;
+    }
 
-    /* Find mooncake app by name match */
-    auto allInfo = _mooncake.getAllAppInfo();
-    for (int i = 0; i < (int)allInfo.size(); i++) {
-        if (allInfo[i].name == selId) {
+    /* Resolve by immutable catalog id, then use the captured install handle. */
+    for (int i = 0; i < APP_REGISTRY_COUNT; i++) {
+        if (strcmp(APP_REGISTRY[i].id, selId) == 0 && i < (int)_native_handles.size()) {
             /* Enter app — LVGL screens stay in memory, just pause rendering */
-            _running_app_id = i;
-            _mooncake.openApp(i);
+            _running_app_id = _native_handles[i];
+            if (!_mooncake.openApp(_running_app_id)) {
+                _running_app_id = -1;
+                ui_apps_menu_clear_selected();
+                _show_toast("Could not open app", 0x555555);
+                return;
+            }
             _app_running = true;
             s_in_app     = true;
 
@@ -713,6 +880,14 @@ void Launcher::handleAppSelection()
             Serial.printf("[Launcher] Opened app id=%d (LVGL paused)\n", i);
             return;
         }
+    }
+    for (const auto &package : _packages) if (package.id == selId) {
+        if (!package.compatible || _personal_drain) { ui_apps_menu_clear_selected(); return; }
+        auto app = personal_apps::makeApp(_device, package);
+        if (!app) { ui_apps_menu_clear_selected(); _show_toast("App unavailable. Refresh in Manage", 0x555555); return; }
+        _personal_handle = _mooncake.installApp(std::move(app)); _personal_id = package.id;
+        if (_personal_handle < 0 || !_mooncake.openApp(_personal_handle)) { if (_personal_handle >= 0) { _mooncake.uninstallApp(_personal_handle); _mooncake.update(); } _personal_handle=-1; _personal_id.clear(); ui_apps_menu_clear_selected(); return; }
+        _running_app_id=_personal_handle; _app_running=true; s_in_app=true; ui_apps_menu_clear_selected(); return;
     }
 
     /* Not found — clear selection */
@@ -846,9 +1021,18 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
 
     /* ── Cross sub-screens: reverse joystick → Home ── */
     if (cur == ui_apps_menu) {
-        if (right) { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_LEFT,   500, 0, &ui_home_screen_init); return; }
-        if (up)    { ui_apps_menu_scroll_step(-1); return; }
-        if (down)  { ui_apps_menu_scroll_step(1);  return; }
+        if (a)    { ui_apps_menu_activate_focused(); return; }
+        if (left) { refreshAppManager(); _ui_screen_change(&ui_apps_manager, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, &ui_apps_manager_screen_init); return; }
+        if (right || b) { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_LEFT,   500, 0, &ui_home_screen_init); return; }
+        if (up)    { ui_apps_menu_focus_step(-1); return; }
+        if (down)  { ui_apps_menu_focus_step(1);  return; }
+    } else if (cur == ui_apps_manager) {
+        if (b) { _manager_confirm_id.clear(); _manager_confirm_action = -1; _ui_screen_change(&ui_apps_menu, LV_SCR_LOAD_ANIM_FADE_ON, 250, 0, &ui_apps_menu_screen_init); return; }
+        if (up) { ui_apps_manager_focus_step(-1); return; }
+        if (down) { ui_apps_manager_focus_step(1); return; }
+        if (left) { ui_apps_manager_action_step(-1); return; }
+        if (right) { ui_apps_manager_action_step(1); return; }
+        if (a) { ui_apps_manager_activate_focused(); return; }
     } else if (cur == ui_settings) {
         if (left)  { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_home_screen_init); return; }
     } else if (cur == ui_sd_card_files) {

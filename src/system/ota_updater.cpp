@@ -14,6 +14,7 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 #include <esp_tls.h>
+#include <lwip/apps/sntp.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
 #include <algorithm>
@@ -28,7 +29,9 @@ extern "C" esp_err_t esp_crt_bundle_attach(void* config);
 namespace ota_updater {
 namespace {
 constexpr char BaseUrl[] = "https://jclima.github.io/grumpykitty-firmware/flash/";
-constexpr uint32_t ClockWaitMs = 12000;
+// IDF's SNTP receive timeout is 15 s per configured server; allow both servers
+// to be tried, plus a small scheduling margin, without restarting an active client.
+constexpr uint32_t ClockWaitMs = 35000;
 constexpr uint32_t TransferLimitMs = 300000;
 constexpr time_t EarliestClock = 1704067200; // 2024-01-01
 enum class Job { Check, Download };
@@ -46,7 +49,7 @@ bool powerOkay() {
 
 bool waitClock() {
     if (time(nullptr) >= EarliestClock) return true;
-    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    if (!sntp_enabled()) configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     const uint32_t started = millis();
     while (!cancelRequested && millis() - started < ClockWaitMs) {
         if (time(nullptr) >= EarliestClock) return true;

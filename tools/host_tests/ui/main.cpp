@@ -8,6 +8,8 @@
 #include "../../../src/ui/ui_wifi_bridge.h"
 #include "../../../src/ui/screens/ui_sd_card_files.h"
 #include "../../../src/ui/ui_sd_bridge.h"
+#include "../../../src/ui/screens/ui_apps_manager.h"
+#include "../../../src/ui/screens/ui_apps_menu.h"
 
 extern "C" void host_advance_ms(uint32_t);
 extern "C" void host_wifi_reset(void);
@@ -80,4 +82,58 @@ static void test_sd() {
     render("sd-page"); host_sd_mode(UI_SD_UNSUPPORTED); lv_event_send(ui_sd_card_files,LV_EVENT_SCREEN_LOADED,nullptr); assert(children(ui_sd_card_files)>0); render("sd-unsupported");
     int opened=host_sd_open_count(); lv_event_send(ui_sd_card_files,LV_EVENT_SCREEN_UNLOADED,nullptr); assert(host_sd_close_count()>=opened); park_screen(); ui_sd_card_files_screen_destroy();
 }
-int main() { puts("init"); fflush(stdout); init_lv(); puts("inited"); test_t9(); test_lifecycle(); test_wifi_scan(); test_sd(); puts("ui regression: PASS"); return 0; }
+static void test_apps_manager() {
+    puts("apps manager start");
+    ui_apps_manager_screen_init(); lv_scr_load(ui_apps_manager);
+    ui_apps_manager_load(nullptr, 0);
+    assert(ui_apps_manager_focus() == -1 && ui_apps_manager_take_action() == -1);
+    AppManagerEntry_t rows[2] = {};
+    strcpy(rows[0].id, "radio-scanner"); strcpy(rows[0].name, "Radio Scanner");
+    strcpy(rows[0].version, "1.0"); strcpy(rows[0].description, "Scan nearby Wi-Fi and Bluetooth devices");
+    strcpy(rows[0].prerequisites, "Wi-Fi + Bluetooth");
+    rows[0].installed=1; rows[0].compatible=1; rows[0].visible=1;
+    strcpy(rows[1].id, "personal-utility"); strcpy(rows[1].name, "Personal Utility");
+    strcpy(rows[1].version, "1.0.0"); strcpy(rows[1].description, "A separately installed personal dashboard");
+    strcpy(rows[1].prerequisites, "SD card");
+    rows[1].installed=1; rows[1].compatible=1; rows[1].removable=1; rows[1].visible=1;
+    ui_apps_manager_load(rows,2);
+    assert(!strcmp(ui_apps_manager_focus_id(),"radio-scanner"));
+    click(lv_obj_get_parent(find_text(ui_apps_manager,"Hide")));
+    assert(ui_apps_manager_take_action()==0 && ui_apps_manager_take_action()==-1);
+    ui_apps_manager_focus_step(1);
+    assert(!strcmp(ui_apps_manager_focus_id(),"personal-utility"));
+    std::swap(rows[0],rows[1]); ui_apps_manager_load(rows,2);
+    assert(!strcmp(ui_apps_manager_focus_id(),"personal-utility") && ui_apps_manager_focus()==0);
+    click(lv_obj_get_parent(find_text(ui_apps_manager,"App + data")));
+    assert(ui_apps_manager_take_action()==UI_APPS_MANAGER_REMOVE_DATA);
+    ui_apps_manager_set_status("Again: remove app AND data");
+    render("apps-manager");
+    ui_apps_manager_action_step(1); ui_apps_manager_activate_focused();
+    assert(ui_apps_manager_take_action()==UI_APPS_MANAGER_BACK);
+    click(lv_obj_get_parent(find_text(ui_apps_manager,"Next")));
+    assert(!strcmp(ui_apps_manager_focus_id(),"radio-scanner"));
+    assert(lv_obj_has_state(lv_obj_get_parent(find_text(ui_apps_manager,"Remove")), LV_STATE_DISABLED));
+    park_screen(); ui_apps_manager_screen_destroy();
+}
+static void test_apps_menu() {
+    puts("apps menu start");
+    ui_apps_menu_screen_init(); lv_scr_load(ui_apps_menu);
+    AppMenuEntry_t rows[3] = {};
+    strcpy(rows[0].id,"radio-scanner"); strcpy(rows[0].name,"Radio Scanner"); rows[0].icon=&ui_img_radarscan_png;
+    strcpy(rows[1].id,"infrared"); strcpy(rows[1].name,"Infrared"); rows[1].icon=&ui_img_infrared_png;
+    strcpy(rows[2].id,"personal-utility"); strcpy(rows[2].name,"Personal Utility");
+    ui_apps_menu_load_apps(rows,3); ui_apps_menu_activate_focused();
+    assert(!strcmp(ui_apps_menu_get_selected_id(),"radio-scanner")); ui_apps_menu_clear_selected();
+    ui_apps_menu_focus_step(1); ui_apps_menu_activate_focused();
+    assert(!strcmp(ui_apps_menu_get_selected_id(),"infrared"));
+    std::swap(rows[0],rows[1]); ui_apps_menu_load_apps(rows,3); ui_apps_menu_activate_focused();
+    assert(!strcmp(ui_apps_menu_get_selected_id(),"infrared"));
+    render("apps-menu");
+    click(lv_obj_get_parent(find_text(ui_apps_menu,"Manage")));
+    assert(!strcmp(ui_apps_menu_get_selected_id(),"__manager"));
+    ui_apps_menu_load_apps(nullptr,0); ui_apps_menu_activate_focused();
+    assert(ui_apps_menu_get_selected_id()==nullptr);
+    assert(find_text(ui_apps_menu,"No apps visible")); render("apps-menu-empty");
+    park_screen(); ui_apps_menu_screen_destroy();
+}
+int main() { puts("init"); fflush(stdout); init_lv(); puts("inited"); test_t9(); test_lifecycle(); test_wifi_scan(); test_apps_manager(); test_apps_menu(); test_sd(); puts("ui regression: PASS"); return 0; }

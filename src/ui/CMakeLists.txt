@@ -1,5 +1,6 @@
 SET(SOURCES screens/ui_home.c
     screens/ui_apps_menu.c
+    screens/ui_apps_manager.c
     screens/ui_clock.c
     screens/ui_sd_card_files.c
     screens/ui_settings.c

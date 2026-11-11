@@ -25,6 +25,7 @@
 namespace sk {
 
 namespace {
+std::atomic<unsigned> gWorkers{0};
 
 constexpr uint32_t kStackBytes = 12288;
 constexpr uint32_t kConnectTimeoutMs = 2000;
@@ -513,6 +514,7 @@ void taskEntry(void* arg) {
   run(*sh);
   xSemaphoreGive(sh->done);  // last touch of anything the UI side may free
   if (sh->refs.fetch_sub(1) == 1) delete sh;
+  gWorkers.fetch_sub(1);
   vTaskDelete(nullptr);
 }
 
@@ -525,13 +527,17 @@ bool Client::start(const Config& cfg) {
   if (!sh->ok()) { delete sh; return false; }
   sh->cfg = cfg;
   sh->tracker.begin(sh->cfg);  // after the copy: the Tracker keeps a pointer into the heap Shared
+  gWorkers.fetch_add(1);
   if (xTaskCreatePinnedToCore(taskEntry, "sk_client", kStackBytes, sh, 1, &sh->task, 0) != pdPASS) {
+    gWorkers.fetch_sub(1);
     delete sh;
     return false;
   }
   sh_ = sh;
   return true;
 }
+
+bool workerCleanupPending() { return gWorkers.load() != 0; }
 
 void Client::stop(uint32_t waitMs) {
   if (!sh_) return;

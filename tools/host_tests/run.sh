@@ -41,5 +41,15 @@ done
 python3 tools/host_tests/test_ir_parser.py
 echo "ir_parser: PASS"
 
+tools/host_tests/run_lua_sandbox.sh
+
+$CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
+  tools/host_tests/test_app_preferences.cpp -o "$OUT/app_preferences"
+"$OUT/app_preferences"
+python3 -B tools/host_tests/test_personal_app_install.py
+$CXX -std=c++17 -Wall -Wextra -I lib/ArduinoJson/src \
+  tools/host_tests/test_personal_apps_validation.cpp -o "$OUT/personal_apps_validation"
+"$OUT/personal_apps_validation"
+
 tools/host_tests/ui/run_ui.sh
 echo "host tests: PASS"

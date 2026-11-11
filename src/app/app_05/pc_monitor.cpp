@@ -5,12 +5,12 @@ extern "C" {
 }
 
 namespace MOONCAKE::APPS {
-PCMonitor::PCMonitor(DEVICES*) { setAppInfo().name = "PCMonitor"; }
+PCMonitor::PCMonitor(DEVICES*) { setAppInfo().name = "PC Monitor"; }
 void PCMonitor::onOpen() {
     _parser.reset(); _hasData = false; _stale = false; _lastDataMs = 0;
     _previousScreen = lv_scr_act();
     ui_pc_monitor_init(); render(pc_monitor::Frame());
-    ui_pc_monitor_status("", false);
+    ui_pc_monitor_status("Waiting for PC client...", false);
 }
 void PCMonitor::onRunning() {
     bool updated = false;

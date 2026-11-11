@@ -35,10 +35,15 @@
 
 namespace MOONCAKE::APPS {
 
+// Only the app's own connect attempt may be cancelled.  The WiFi bridge is
+// shared with Settings and other apps, so a connection that already existed
+// (or appeared while this screen was open) must remain untouched.
+static bool s_app04OwnsConnectionAttempt = false;
+
 // ─── palette (RGB888) ────────────────────────────────────────────────────────
-static constexpr uint32_t C_BG    = 0x0C1400;  // very dark green
+static constexpr uint32_t C_BG    = THEME_SURFACE;      // quiet charcoal
 static constexpr uint32_t C_FG    = THEME_ACCENT;  // amber accent (system color)
-static constexpr uint32_t C_DIM   = 0x384600;  // dim accent
+static constexpr uint32_t C_DIM   = THEME_TEXT_DIM;     // readable secondary text
 static constexpr uint32_t C_SCRN  = 0x040800;  // TV screen bg (near-black)
 static constexpr uint32_t C_ERR   = 0xFF3333;  // error red
 
@@ -273,6 +278,7 @@ App04::~App04()
 void App04::onOpen()
 {
     _isClosing = false;   // reset for re-open after a previous close
+    s_app04OwnsConnectionAttempt = false;
     Serial.println("\n[App04] === Retro TV ===");
 
     // Load saved WiFi SSID from NVS (shared with Settings > WLAN Setup)
@@ -319,8 +325,16 @@ void App04::onRunning()
                     lcd.setTextColor(C_ERR, C_BG);
                     lcd.setCursor(20, ty + 22);
                     lcd.printf("No saved WiFi - go to Settings > WiFi");
+                } else if (ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING) {
+                    // Another screen owns the in-flight attempt; observe it
+                    // without replacing or claiming that shared operation.
+                    s_app04OwnsConnectionAttempt = false;
+                    _state = State::CONNECTING;
+                    _connectStart = millis();
+                    _drawAll();
                 } else {
                     Serial.printf("[App04] Connecting to \"%s\"...\n", _savedSsid);
+                    s_app04OwnsConnectionAttempt = true;
                     ui_wifi_bridge_connect_saved(_savedSsid);
                     _state        = State::CONNECTING;
                     _connectStart = millis();
@@ -342,6 +356,9 @@ void App04::onRunning()
                 _drawAll();
             } else if (status == WIFI_BRIDGE_FAILED || elapsed > 15000) {
                 Serial.println("[App04] Connection failed / timeout");
+                if (s_app04OwnsConnectionAttempt && !ui_wifi_bridge_is_connected())
+                    ui_wifi_bridge_disconnect();
+                s_app04OwnsConnectionAttempt = false;
                 _state = State::IDLE;
                 _drawAll();
             } else {
@@ -365,7 +382,11 @@ void App04::onRunning()
             }
 
             if (btnB) {
-                // Cancel: go back to IDLE (WiFi keeps trying in background)
+                // Cancel only an attempt started by this app.  If another
+                // owner connected in the meantime, leave that shared link up.
+                if (s_app04OwnsConnectionAttempt && !ui_wifi_bridge_is_connected())
+                    ui_wifi_bridge_disconnect();
+                s_app04OwnsConnectionAttempt = false;
                 _state = State::IDLE;
                 _drawAll();
             }
@@ -409,6 +430,9 @@ void App04::onClose()
     if (_isClosing) return;
     _isClosing = true;
     Serial.println("[App04] closed");
+    if (s_app04OwnsConnectionAttempt && !ui_wifi_bridge_is_connected())
+        ui_wifi_bridge_disconnect();
+    s_app04OwnsConnectionAttempt = false;
     _stopReceiver();
     /* Launcher is responsible for its own screen redraw — no fillScreen here. */
 }

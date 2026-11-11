@@ -15,10 +15,25 @@
 #include <cmath>
 #include <algorithm>
 #include "../../system/system_sound.h"
+#include "../../ui/ui_theme.h"
 
 namespace MOONCAKE::APPS
 {
 static App03* s_app03 = nullptr;
+static bool s_vuRetryASeen = false;
+
+static void drawFailureScreen(DEVICES* device, const char* message)
+{
+    auto& lcd = device->Lcd;
+    lcd.fillScreen(TFT_BLACK);
+    lcd.setTextFont(2);
+    lcd.setTextColor(TFT_RED, TFT_BLACK);
+    lcd.drawCentreString(message, 160, 94);
+    lcd.setTextColor(THEME_TEXT_565, TFT_BLACK);
+    lcd.drawCentreString("A: Retry", 160, 132);
+    lcd.setTextColor(THEME_ACCENT_565, TFT_BLACK);
+    lcd.drawCentreString("Hold B: Exit", 160, 158);
+}
 
 /* ══════════════════════════════════════════════════════════════════
  *  Constants
@@ -95,10 +110,7 @@ void App03::onOpen()
 {
     serviceDeferredClose(_device);
     if (_closePending || _capActive.load(std::memory_order_acquire)) {
-        _device->Lcd.fillScreen(TFT_BLACK);
-        _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
-        _device->Lcd.setTextFont(2);
-        _device->Lcd.drawCentreString("Audio busy", 160, 110);
+        drawFailureScreen(_device, "Audio busy");
         _initState = InitState::Failed;
         return;
     }
@@ -108,10 +120,7 @@ void App03::onOpen()
         /* Audio ownership is still held by the system sound task.  Do not
          * touch I2S or the codec; onClose can safely call resume() and a
          * later open will retry the handoff. */
-        _device->Lcd.fillScreen(TFT_BLACK);
-        _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
-        _device->Lcd.setTextFont(2);
-        _device->Lcd.drawCentreString("Audio busy", 160, 110);
+        drawFailureScreen(_device, "Audio busy");
         _initState = InitState::Failed;
         return;
     }
@@ -137,10 +146,7 @@ void App03::_doHeavyInit()
     auto fail = [&](const char* msg) {
         _releaseResources();
         _finishClose();
-        _device->Lcd.fillScreen(TFT_BLACK);
-        _device->Lcd.setTextColor(TFT_RED, TFT_BLACK);
-        _device->Lcd.setTextFont(2);
-        _device->Lcd.drawCentreString(msg, 160, 110);
+        drawFailureScreen(_device, msg);
         _initState = InitState::Failed;
     };
 
@@ -314,7 +320,16 @@ void App03::onRunning()
         _doHeavyInit();
         return;
     }
-    if (_initState == InitState::Failed || !_bgPatch || !_workSpr) return;
+    if (_initState == InitState::Failed) {
+        const bool retryPressed = _device->button.A.pressed();
+        if (!retryPressed) s_vuRetryASeen = false;
+        if (retryPressed && !s_vuRetryASeen) {
+            s_vuRetryASeen = true;
+            onOpen();
+        }
+        return;
+    }
+    if (!_bgPatch || !_workSpr) return;
 
     float    ang = _latestAngle.load();
     uint32_t now = millis();
