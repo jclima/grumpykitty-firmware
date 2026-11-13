@@ -25,6 +25,7 @@
 #include "../app_common/mk_tui.h"
 #include "ui_theme.h"
 #include "../../system/persist.h"
+#include "../../system/settings_bridge.h"
 #include <cmath>
 #include <new>
 #include <WiFi.h>
@@ -159,6 +160,22 @@ static void _drawFooter(LGFX_Class& lcd, App04::State st)
 
 // ─── _drawAll ────────────────────────────────────────────────────────────────
 
+// One-line error under the status block (error colour, within 320 px).
+void App04::_drawMsg(LGFX_Class& lcd, int y)
+{
+    if (!_msg[0]) return;
+    lcd.setFont(&fonts::efontCN_16);
+    lcd.setTextColor(C_ERR, C_BG);
+    lcd.setCursor(20, y);
+    lcd.printf("%.36s", _msg);
+}
+
+void App04::_setMsg(const char* text)
+{
+    strncpy(_msg, text ? text : "", sizeof(_msg) - 1);
+    _msg[sizeof(_msg) - 1] = '\0';
+}
+
 void App04::_drawAll()
 {
     auto& lcd = _device->Lcd;
@@ -187,6 +204,7 @@ void App04::_drawAll()
                 lcd.printf("Saved: %.26s", _savedSsid);
             else
                 lcd.printf("No saved WiFi - go to Settings > WiFi");
+            _drawMsg(lcd, ty + 44);
             break;
         }
 
@@ -214,6 +232,7 @@ void App04::_drawAll()
             lcd.setTextColor(C_DIM, C_BG);
             lcd.setCursor(20, ty + 22);
             lcd.printf("Press [A] to start stream");
+            _drawMsg(lcd, ty + 44);
             break;
         }
 
@@ -284,6 +303,7 @@ void App04::onOpen()
     // Load saved WiFi SSID from NVS (shared with Settings > WLAN Setup)
     persist_get_str(PKEY_WIFI_SSID, _savedSsid, sizeof(_savedSsid), "");
     memset(_ip, 0, sizeof(_ip));
+    _msg[0] = '\0';
 
     if (ui_wifi_bridge_is_connected()) {
         ui_wifi_bridge_get_ip(_ip, sizeof(_ip));
@@ -312,12 +332,17 @@ void App04::onRunning()
             // cancelled CONNECTING), silently advance to READY.
             if (ui_wifi_bridge_is_connected()) {
                 ui_wifi_bridge_get_ip(_ip, sizeof(_ip));
+                _msg[0] = '\0';
                 _state = State::READY;
                 _drawAll();
                 break;
             }
             if (btnA) {
-                if (_savedSsid[0] == '\0') {
+                _msg[0] = '\0';   // a new attempt clears the previous failure line
+                if (!settings_get_wifi_en()) {
+                    _setMsg("WiFi is off - enable in Settings");
+                    _drawAll();
+                } else if (_savedSsid[0] == '\0') {
                     auto& lcd = _device->Lcd;
                     lcd.setFont(&fonts::efontCN_16);
                     int ty = TV_TY + TV_BH + 10 + 16;
@@ -352,6 +377,7 @@ void App04::onRunning()
             if (status == WIFI_BRIDGE_CONNECTED) {
                 ui_wifi_bridge_get_ip(_ip, sizeof(_ip));
                 Serial.printf("[App04] Connected — IP=%s\n", _ip);
+                _msg[0] = '\0';
                 _state = State::READY;
                 _drawAll();
             } else if (status == WIFI_BRIDGE_FAILED || elapsed > 15000) {
@@ -359,6 +385,8 @@ void App04::onRunning()
                 if (s_app04OwnsConnectionAttempt && !ui_wifi_bridge_is_connected())
                     ui_wifi_bridge_disconnect();
                 s_app04OwnsConnectionAttempt = false;
+                _setMsg(status == WIFI_BRIDGE_FAILED ? "WiFi connect failed - try again"
+                                                     : "WiFi connect timed out");
                 _state = State::IDLE;
                 _drawAll();
             } else {
@@ -396,8 +424,13 @@ void App04::onRunning()
         // ── READY: WiFi connected, waiting for [A] to start stream ─────
         case State::READY:
             if (btnA) {
+                _msg[0] = '\0';
                 _startReceiver();
-                if (!_recv) break;
+                if (!_recv) {
+                    _setMsg("Stream start failed (memory/port)");
+                    _drawAll();
+                    break;
+                }
                 _state = State::RUNNING;
                 // Receiver draws full-screen — just update footer
                 _drawFooter(_device->Lcd, _state);
@@ -423,6 +456,10 @@ void App04::onRunning()
             }
             break;
     }
+
+    // The launcher's app loop does not yield between updates; the idle,
+    // connecting and ready screens have no other delay.
+    if (_state != State::RUNNING) delay(5);
 }
 
 void App04::onClose()

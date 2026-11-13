@@ -94,7 +94,9 @@ void AppVoiceRecorder::onOpen() {
 
 void AppVoiceRecorder::onClose() {
     _closing = true;
-    if (_recording) _stopRecording("", hp::COL_FG);
+    /* Same card-access rule as the run loop: never touch the SD while USB mass
+     * storage owns it. */
+    if (_recording) _stopRecording("", hp::COL_FG, !usb_msc_is_active());
     if (_draining && _capActive.load(std::memory_order_acquire)) {
         _closePending = true;
         return;
@@ -114,8 +116,11 @@ void AppVoiceRecorder::_finishClose() {
         _device->io_exp.digitalWrite(HAL_IOEXP_PA_EN, LOW);
         _device->speaker.end();                  // resume() calls begin() without end()
     }
-    if (!system_sound_resume())
-        Serial.println("[VoiceRec] failed to restore system audio");
+    if (!system_sound_resume()) {
+        delay(50);                               // codec/I2S may still be settling: retry once
+        if (!system_sound_resume())
+            Serial.println("[VoiceRec] failed to restore system audio");
+    }
     _closePending = false; _closing = false; _draining = false;
 }
 

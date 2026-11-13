@@ -37,6 +37,14 @@ uint32_t lastSend = 0, startedAt = 0;
 unsigned seenEpoch = 0;
 Item queue[QUEUE_LEN] = {};
 unsigned head = 0, tail = 0;
+// App-task only (begin/end/tick). pendingRelease[k]: a press of kind k went out
+// and its release has not. needNeutral[k]: that release was thrown away (link not
+// ready, e.g. host suspend while still connected), so the host may still hold the
+// key: send a neutral report as soon as kind k is ready again.
+bool pendingRelease[2] = {false, false}, needNeutral[2] = {false, false};
+void abandon(unsigned kind) {
+    if (pendingRelease[kind]) { pendingRelease[kind] = false; needNeutral[kind] = true; }
+}
 
 uint16_t serviceUuid[] = {0x1812, 0x180A};
 uint16_t primary = 0x2800, declaration = 0x2803;
@@ -291,6 +299,7 @@ bool begin() {
     active = true; linked = false; secure = false; subscribed = false; bootSubscribed = false;
     mediaSubscribed = false; assumedKey = false; assumedMedia = false; suspended = false; congested = false; error = false;
     services = 0; advReady = 0; iface = ESP_GATT_IF_NONE; head = tail = 0;
+    pendingRelease[0] = pendingRelease[1] = needNeutral[0] = needNeutral[1] = false;
     startedAt = millis(); lastSend = startedAt; seenEpoch = epoch.load();
     databases();
     adv = {}; adv.adv_int_min = 0x30; adv.adv_int_max = 0x60;
@@ -325,6 +334,7 @@ void end() {
     active = false; linked = false; secure = false; subscribed = false;
     bootSubscribed = false; mediaSubscribed = false; iface = ESP_GATT_IF_NONE;
     head = tail = 0;
+    pendingRelease[0] = pendingRelease[1] = needNeutral[0] = needNeutral[1] = false;
 }
 bool connected() { return active && linked; }
 bool ready() { return linkReady(); }
@@ -336,9 +346,35 @@ bool failed() {
 bool tapKey(uint8_t usage, uint8_t mods) { return enqueueTap(0, mods, usage); }
 bool tapMedia(uint16_t bits) { return enqueueTap(1, 0, bits); }
 void tick() {
-    if (seenEpoch != epoch.load()) { seenEpoch = epoch.load(); head = tail = 0; }
-    if (!baseReady()) { head = tail = 0; return; }
-    if (head != tail && millis() - lastSend >= 10 && send(queue[head])) {
+    if (seenEpoch != epoch.load()) {
+        // New connection (or disconnect): the host state is fresh, nothing to release.
+        seenEpoch = epoch.load(); head = tail = 0;
+        pendingRelease[0] = pendingRelease[1] = needNeutral[0] = needNeutral[1] = false;
+    }
+    if (!baseReady()) {
+        // Remember presses whose release is being thrown away.
+        abandon(0); abandon(1);
+        head = tail = 0;
+        return;
+    }
+    // A key or media bit may still be held on the host: neutral report first.
+    for (unsigned k = 0; k < 2; ++k) {
+        if (needNeutral[k] && (k == 0 ? keyReady() : mediaReportReady())) {
+            if (send({static_cast<uint8_t>(k), 0, 0}, true)) needNeutral[k] = false;
+            lastSend = millis();
+            return;
+        }
+    }
+    if (head == tail) return;
+    const Item it = queue[head];
+    if (!(it.kind == 0 ? keyReady() : mediaReportReady())) {
+        // This kind lost its subscription: drop the item, keep the other kind going.
+        abandon(it.kind);
+        head = (head + 1) % QUEUE_LEN;
+        return;
+    }
+    if (millis() - lastSend >= 10 && send(it)) {
+        pendingRelease[it.kind] = it.value != 0;
         head = (head + 1) % QUEUE_LEN; lastSend = millis();
     }
 }

@@ -268,9 +268,21 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
                 _addSample(int8_t(WiFi.RSSI(i)), now);
             }
         }
-        const int keep = std::min(n, MAX_WIFI);
-        for (int i = 0; i < keep; ++i) {
-            WifiRow& w = _r->wifi[i];
+        /* Keep the MAX_WIFI strongest networks: once the table is full, a
+         * stronger result replaces the weakest kept row. */
+        int keep = 0;
+        for (int i = 0; i < scanned; ++i) {
+            const int8_t rssi = int8_t(WiFi.RSSI(i));
+            int slot = keep;
+            if (keep >= MAX_WIFI) {
+                int weakest = 0;
+                for (int k = 1; k < keep; ++k) if (_r->wifi[k].rssi < _r->wifi[weakest].rssi) weakest = k;
+                if (rssi <= _r->wifi[weakest].rssi) continue;
+                slot = weakest;
+            } else {
+                ++keep;
+            }
+            WifiRow& w = _r->wifi[slot];
             const String ssid = WiFi.SSID(i);
             if (ssid.length() == 0) strcpy(w.ssid, "<hidden>");
             else {
@@ -280,7 +292,7 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
             const uint8_t* bs = WiFi.BSSID(i);
             if (bs) memcpy(w.bssid, bs, 6); else memset(w.bssid, 0, 6);
             w.ch = uint8_t(WiFi.channel(i));
-            w.rssi = int8_t(WiFi.RSSI(i));
+            w.rssi = rssi;
             w.auth = uint8_t(WiFi.encryptionType(i));
         }
         WiFi.scanDelete();

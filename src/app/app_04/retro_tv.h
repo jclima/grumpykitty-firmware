@@ -31,7 +31,10 @@ namespace MOONCAKE::APPS
         char         _savedSsid[33] = {};
         char         _ip[20]        = {};
 
+        char         _msg[40]      = {};   // one-line error under the status block
         void _drawAll();
+        void _drawMsg(LGFX_Class& lcd, int y);
+        void _setMsg(const char* text);
         void _startReceiver();
         void _stopReceiver();
         bool         _bLatched     = false;
