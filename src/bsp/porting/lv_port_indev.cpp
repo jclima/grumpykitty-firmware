@@ -176,12 +176,46 @@ static void touchpad_init(void)
     /* Already initialized in DEVICES::init() — nothing to do here */
 }
 
+/* Screen-off wake gating.
+ *  - While the backlight is off the pointer always reports RELEASED, so the
+ *    tap that wakes the screen is never delivered to a widget.
+ *  - After waking, the pointer stays RELEASED until the finger is lifted
+ *    (s_touch_swallow), so the wake touch cannot turn into a click later.
+ *  - s_touch_raw mirrors the panel state on every poll so the launcher can
+ *    still detect the wake touch without a second I2C read. */
+static volatile bool s_screen_off    = false;
+static bool          s_touch_swallow = false;
+static volatile bool s_touch_raw     = false;
+
+void lv_port_indev_set_screen_off(bool off)
+{
+    if (s_screen_off && !off) s_touch_swallow = true;   /* until next release */
+    s_screen_off = off;
+}
+
+bool lv_port_indev_touch_active(void)
+{
+    return s_touch_raw;
+}
+
 /*Will be called by the library to read the touchpad*/
 static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
     static int x_pos = 0;
     static int y_pos = 0;
-    if(_ctp && _ctp->isTouched() && _ctp->getPos(x_pos, y_pos)) {
+    const bool touched = _ctp && _ctp->isTouched() && _ctp->getPos(x_pos, y_pos);
+    s_touch_raw = touched;
+
+    if (s_screen_off) {
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+    if (s_touch_swallow) {
+        if (!touched) s_touch_swallow = false;
+        data->state = LV_INDEV_STATE_REL;
+        return;
+    }
+    if (touched) {
         // Serial0.printf("X:%d Y:%d\n", x_pos, y_pos);
         data->point.x = x_pos;
         data->point.y = y_pos;

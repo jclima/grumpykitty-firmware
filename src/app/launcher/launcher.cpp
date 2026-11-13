@@ -96,6 +96,15 @@ static void _update_system_key_sound(DEVICES* dev)
 /* True when the backlight has been turned off due to idle timeout. */
 static bool s_screen_off = false;
 
+/* Single place that changes the screen-off flag, so the touch indev always
+ * knows about it: while off the pointer reports RELEASED and, after waking,
+ * keeps doing so until the finger lifts (the wake touch must not also click). */
+static void _set_screen_off(bool off)
+{
+    s_screen_off = off;
+    lv_port_indev_set_screen_off(off);
+}
+
 static bool _screen_transition_active()
 {
     lv_disp_t* disp = lv_disp_get_default();
@@ -386,21 +395,16 @@ void Launcher::onLoop()
         handleAppSelection();
         if (ui_apps_manager && lv_scr_act() == ui_apps_manager) handleAppManager();
 
-        /* Detect touchscreen activity → reset sleep timer + restore screen. */
-        {
-            lv_indev_t* indev = lv_indev_get_next(NULL);
-            while (indev) {
-                if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER &&
-                    indev->proc.state == LV_INDEV_STATE_PRESSED) {
-                    power_reset_sleep_timer();
-                    if (s_screen_off) {
-                        _device->Lcd.setBrightness(
-                            (uint8_t)(sys_get_brightness() * 255 / 100));
-                        s_screen_off = false;
-                    }
-                    break;
-                }
-                indev = lv_indev_get_next(indev);
+        /* Detect touchscreen activity → reset sleep timer + restore screen.
+         * Uses the raw panel state: while the screen is off the LVGL pointer
+         * reports RELEASED (see lv_port_indev.cpp), so the wake touch only
+         * wakes the screen and never reaches a widget. */
+        if (lv_port_indev_touch_active()) {
+            power_reset_sleep_timer();
+            if (s_screen_off) {
+                _device->Lcd.setBrightness(
+                    (uint8_t)(sys_get_brightness() * 255 / 100));
+                _set_screen_off(false);
             }
         }
 
@@ -420,7 +424,7 @@ void Launcher::onLoop()
             if (!s_screen_off && disp_to > 0 && idle_s >= (uint32_t)disp_to
                 && !usb_msc_is_active()) {
                 _device->Lcd.setBrightness(0);
-                s_screen_off = true;
+                _set_screen_off(true);
                 Serial.printf("[Launcher] Screen off (idle %lus)\n",
                               (unsigned long)idle_s);
             }
@@ -457,8 +461,15 @@ void Launcher::onLoop()
         _update_system_key_sound(_device);
         _device->button.tick();   /* must tick for long-press B detection */
 
+        /* A still-held B (e.g. the press that opened this app) must not close
+         * it on the first loop: long-press B is accepted only after B has been
+         * seen released since the app opened. */
+        if (_device->button.B.state() == Button_Class::RELEASED) {
+            _b_released_since_open = true;
+        }
+
         /* Long-press B → exit app, return to persistent UI */
-        if (_device->button.B.isLongPress()) {
+        if (_b_released_since_open && _device->button.B.isLongPress()) {
             Serial.printf("[Launcher] Long-press B — closing app %d\n",
                           _running_app_id);
 
@@ -482,6 +493,27 @@ void Launcher::onLoop()
             _app_running = false; _running_app_id = -1; s_in_app = false;
             _personal_drain = true;
             returnToUI();
+        } else if (_app_running && _running_app_id >= 0 && _running_app_id != _personal_handle) {
+            /* A built-in app may close itself. openApp() sets StateGoOpen
+             * synchronously, so a freshly opened app is never GoClose/Sleeping
+             * here, and closeRunningApp() clears _app_running before it returns,
+             * so this cannot fire mid-open or during shutdown. */
+            const auto st = _mooncake.getAppCurrentState(_running_app_id);
+            if (st == mooncake::AppAbility::StateGoClose) {
+                /* onClose() runs on the next update and may delete the app's
+                 * screen: make the persistent menu active first, as
+                 * closeRunningApp() does. */
+                if (ui_apps_menu && lv_scr_act() != ui_apps_menu) {
+                    lv_disp_load_scr(ui_apps_menu);
+                    lv_obj_invalidate(ui_apps_menu);
+                    lv_timer_handler();
+                }
+            } else if (st == mooncake::AppAbility::StateSleeping) {
+                /* onClose() has run: leave without calling closeApp() again. */
+                Serial.printf("[Launcher] App %d closed itself — returning to UI\n", _running_app_id);
+                _app_running = false; _running_app_id = -1; s_in_app = false;
+                returnToUI();
+            }
         }
     }
 }
@@ -745,8 +777,17 @@ void Launcher::returnToUI()
     /* Restore backlight if an app left the screen off */
     if (s_screen_off) {
         _device->Lcd.setBrightness((uint8_t)(sys_get_brightness() * 255 / 100));
-        s_screen_off = false;
+        _set_screen_off(false);
     }
+
+    /* Drop button edges that arrived while the app owned the input, so they
+     * are not replayed as navigation on the UI screen. */
+    _device->button.A.pressed();
+    _device->button.B.pressed();
+    _device->button.Up.pressed();
+    _device->button.Down.pressed();
+    _device->button.Left.pressed();
+    _device->button.Right.pressed();
 
     /* Force LVGL full redraw — app may have written directly to LCD */
     if (ui_apps_menu) {
@@ -875,6 +916,7 @@ void Launcher::handleAppSelection()
             }
             _app_running = true;
             s_in_app     = true;
+            _b_released_since_open = false;   /* long-press B armed only after a release */
 
             ui_apps_menu_clear_selected();
             Serial.printf("[Launcher] Opened app id=%d (LVGL paused)\n", i);
@@ -887,7 +929,7 @@ void Launcher::handleAppSelection()
         if (!app) { ui_apps_menu_clear_selected(); _show_toast("App unavailable. Refresh in Manage", 0x555555); return; }
         _personal_handle = _mooncake.installApp(std::move(app)); _personal_id = package.id;
         if (_personal_handle < 0 || !_mooncake.openApp(_personal_handle)) { if (_personal_handle >= 0) { _mooncake.uninstallApp(_personal_handle); _mooncake.update(); } _personal_handle=-1; _personal_id.clear(); ui_apps_menu_clear_selected(); return; }
-        _running_app_id=_personal_handle; _app_running=true; s_in_app=true; ui_apps_menu_clear_selected(); return;
+        _running_app_id=_personal_handle; _app_running=true; s_in_app=true; _b_released_since_open=false; ui_apps_menu_clear_selected(); return;
     }
 
     /* Not found — clear selection */
@@ -951,11 +993,13 @@ void Launcher::handlePhysicalNav()
         return;
     }
 
-    /* Any physical press resets idle timer and wakes the screen. */
+    /* Any physical press resets idle timer and wakes the screen. The press
+     * that wakes a dark screen only wakes it: it must not also act. */
     power_reset_sleep_timer();
     if (s_screen_off) {
         _device->Lcd.setBrightness((uint8_t)(sys_get_brightness() * 255 / 100));
-        s_screen_off = false;
+        _set_screen_off(false);
+        return;
     }
 
     if (_screen_transition_active()) {
@@ -1105,6 +1149,12 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         return;
     }
     if (cur == ui_tabview) {
+        if (ui_tabview_reset_dialog_open()) {
+            /* Factory Reset confirmation is up: B cancels it; A and the joystick
+             * must not navigate away (or change tabs) behind an armed dialog. */
+            if (b) ui_tabview_reset_dialog_cancel();
+            return;
+        }
         if (a)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_home_screen_init); return; }
         if (b)    { _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
         if (up)   { uint16_t t = lv_tabview_get_tab_act(ui_tabview_settings); if (t > 0) lv_tabview_set_act(ui_tabview_settings, t-1, LV_ANIM_ON); return; }

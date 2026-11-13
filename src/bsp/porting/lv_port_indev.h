@@ -35,6 +35,19 @@ void lv_port_indev_init(CTP_Class* CTP_Class);
  */
 lv_group_t* lv_port_indev_get_group(void);
 
+/**
+ * @brief Tell the touch indev whether the backlight is off. While off the
+ *        pointer reports RELEASED; after switching back on it keeps reporting
+ *        RELEASED until the finger is lifted, so the wake touch never clicks.
+ */
+void lv_port_indev_set_screen_off(bool off);
+
+/**
+ * @brief True while the touch panel itself reports a finger down (updated on
+ *        every indev poll, independent of the screen-off suppression).
+ */
+bool lv_port_indev_touch_active(void);
+
 #ifdef __cplusplus
 } /*extern "C"*/
 

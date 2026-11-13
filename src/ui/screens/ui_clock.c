@@ -21,6 +21,11 @@ lv_obj_t * ui_week;
 lv_obj_t * ui_date;
 lv_obj_t * ui_time;
 
+/* 1 Hz RTC timer. Created once in ui_clock_screen_init(); paused whenever the
+ * screen is not the active one so it does not poll the RTC inside apps or on
+ * other screens. */
+static lv_timer_t * s_tick = NULL;
+
 /* ── RTC tick: update week/date/time labels every second ── */
 static void clock_tick_cb(lv_timer_t * t)
 {
@@ -47,6 +52,17 @@ static uint32_t s_last_tap_ms = 0;
 void ui_event_clock(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
+
+    /* Resume (with an immediate refresh) when shown, pause once left */
+    if (event_code == LV_EVENT_SCREEN_LOAD_START) {
+        if (s_tick) lv_timer_resume(s_tick);
+        clock_tick_cb(NULL);
+        return;
+    }
+    if (event_code == LV_EVENT_SCREEN_UNLOADED) {
+        if (s_tick) lv_timer_pause(s_tick);
+        return;
+    }
 
     /* Swipe UP → Home (MOVE_TOP: screens push upward) */
     if (event_code == LV_EVENT_GESTURE &&
@@ -146,7 +162,6 @@ void ui_clock_screen_init(void)
     lv_obj_set_style_text_font(edit_hint, &ui_font_name_14, 0);
 
     /* 1Hz RTC timer — persists for lifetime of screen, created once */
-    static lv_timer_t * s_tick = NULL;
     if (!s_tick) {
         s_tick = lv_timer_create(clock_tick_cb, 1000, NULL);
     }

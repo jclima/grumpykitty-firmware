@@ -62,6 +62,22 @@ static lv_obj_t  * s_sys_bat_status  = NULL;
 static lv_obj_t  * s_sys_bat_fill    = NULL;
 static lv_timer_t * s_sys_bat_timer  = NULL;
 
+/* ── Widgets refreshed on every visit (values can change while away) ── */
+static lv_obj_t * s_sl_bright   = NULL;
+static lv_obj_t * s_lbl_bright  = NULL;
+static lv_obj_t * s_sl_led      = NULL;
+static lv_obj_t * s_lbl_led     = NULL;
+static lv_obj_t * s_sl_vol      = NULL;
+static lv_obj_t * s_lbl_vol     = NULL;
+static lv_obj_t * s_sw_key      = NULL;
+static lv_obj_t * s_sw_ble      = NULL;
+static lv_obj_t * s_sw_wifi     = NULL;
+static lv_obj_t * s_lbl_ssid    = NULL;
+static lv_obj_t * s_lbl_wifi_st = NULL;
+
+/* Factory-reset confirmation dialog (NULL when closed) */
+static lv_obj_t * s_reset_dialog = NULL;
+
 // ── Callbacks ─────────────────────────────────────────────────────────────
 
 static void slider_pct_cb(lv_event_t * e)
@@ -128,6 +144,7 @@ static void tab_key_b_cb(lv_event_t * e)
 static void tab_reboot_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    settings_flush();   /* push any debounced setting to NVS before restarting */
     esp_restart();
 }
 
@@ -135,6 +152,7 @@ static void _fr_msgbox_cb(lv_event_t * e)
 {
     lv_obj_t * mbox = lv_event_get_current_target(e);
     /* Button index 0 = "Reset", 1 = "Cancel" */
+    s_reset_dialog = NULL;
     if (lv_msgbox_get_active_btn(mbox) == 0) {
         lv_msgbox_close(mbox);
         recovery_factory_reset();   /* erase NVS + restart — does not return */
@@ -143,9 +161,29 @@ static void _fr_msgbox_cb(lv_event_t * e)
     }
 }
 
+static void _fr_msgbox_delete_cb(lv_event_t * e)
+{
+    /* Dialog destroyed by any path (parent screen deleted, etc.) */
+    if (s_reset_dialog == lv_event_get_target(e)) s_reset_dialog = NULL;
+}
+
+bool ui_tabview_reset_dialog_open(void)
+{
+    return s_reset_dialog != NULL;
+}
+
+void ui_tabview_reset_dialog_cancel(void)
+{
+    if (!s_reset_dialog) return;
+    lv_obj_t * d = s_reset_dialog;
+    s_reset_dialog = NULL;
+    lv_msgbox_close(d);
+}
+
 static void tab_factory_reset_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(s_reset_dialog) return;   /* already showing */
     static const char * btns[] = {"Reset", "Cancel", ""};
     lv_obj_t * mbox = lv_msgbox_create(lv_scr_act(),
         "Factory Reset",
@@ -156,6 +194,8 @@ static void tab_factory_reset_cb(lv_event_t * e)
     lv_obj_set_style_border_width(mbox, 2,                      LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_center(mbox);
     lv_obj_add_event_cb(mbox, _fr_msgbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(mbox, _fr_msgbox_delete_cb, LV_EVENT_DELETE, NULL);
+    s_reset_dialog = mbox;
 }
 
 // ── NVS persist callbacks — called on LV_EVENT_VALUE_CHANGED ─────────────
@@ -520,6 +560,8 @@ static void build_tab_display(lv_obj_t * page)
     mk_lbl(c1, "LCD Backlight", 0, 2, TV_TEXT, &ui_font_name_14);
     lv_obj_t * sl_bl = mk_display_slider(c1, 36, cur_bright, lbl_bl_val);
     lv_obj_add_event_cb(sl_bl, tab_bright_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sl_bright  = sl_bl;
+    s_lbl_bright = lbl_bl_val;
 
     // ── Card 2: LED Indicator (y=132, h=72) ─────────────────────────────
     lv_obj_t * c2 = mk_card(page, 132, 72);
@@ -536,6 +578,8 @@ static void build_tab_display(lv_obj_t * page)
     mk_lbl(c2, "LED Indicator", 0, 2, TV_TEXT, &ui_font_name_14);
     lv_obj_t * sl_led = mk_display_slider(c2, 36, cur_led, lbl_led_val);
     lv_obj_add_event_cb(sl_led, tab_led_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sl_led  = sl_led;
+    s_lbl_led = lbl_led_val;
 }
 
 static void build_tab_sound(lv_obj_t * page)
@@ -578,6 +622,8 @@ static void build_tab_sound(lv_obj_t * page)
     mk_lbl(c1, "Speaker Volume", 0, 4, TV_TEXT, &ui_font_name_14);
     lv_obj_t * sl_vol = mk_display_slider(c1, 32, cur_vol, lbl_vol_val);
     lv_obj_add_event_cb(sl_vol, tab_vol_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sl_vol  = sl_vol;
+    s_lbl_vol = lbl_vol_val;
 
     // ── Card 2: Key Tone ────────────────────────────────────────────────
     // h=66 → content area 50 px; subtitle bottom 48 px, switch bottom 41 px
@@ -587,6 +633,7 @@ static void build_tab_sound(lv_obj_t * page)
     mk_lbl(c2, "tap beep", 0, 30, TV_MUTED, &ui_font_name_14);
     lv_obj_t * sw_key = mk_card_switch(c2, CARD_INN - 42, 14, sys_get_key_sound());
     lv_obj_add_event_cb(sw_key, tab_key_snd_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sw_key = sw_key;
 }
 
 static void build_tab_connect(lv_obj_t * page)
@@ -610,18 +657,20 @@ static void build_tab_connect(lv_obj_t * page)
     mk_lbl(page, "Bluetooth", TAB_MARG, 40, TV_MUTED, &ui_font_name_14);
     lv_obj_t * sw_ble = mk_switch(page, 35, settings_get_ble_en());
     lv_obj_add_event_cb(sw_ble, tab_ble_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sw_ble = sw_ble;
 
     mk_lbl(page, "Wi-Fi", TAB_MARG, 78, TV_MUTED, &ui_font_name_14);
     lv_obj_t * sw_wifi = mk_switch(page, 73, settings_get_wifi_en());
     lv_obj_add_event_cb(sw_wifi, tab_wifi_sw_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    s_sw_wifi = sw_wifi;
 
     /* Show saved SSID from NVS; status reflects live connection state */
     char saved_ssid[33] = {};
     persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
     bool wifi_on = ui_wifi_bridge_is_connected();
     mk_lbl(page, "SSID", TAB_MARG, 114, TV_MUTED, &ui_font_name_14);
-    mk_lbl(page, saved_ssid[0] ? saved_ssid : "---", TAB_MARG, 130, TV_TEXT, &ui_font_name_14);
-    mk_lbl_r(page, wifi_on ? "Connected" : "Not connected", 130,
+    s_lbl_ssid = mk_lbl(page, saved_ssid[0] ? saved_ssid : "---", TAB_MARG, 130, TV_TEXT, &ui_font_name_14);
+    s_lbl_wifi_st = mk_lbl_r(page, wifi_on ? "Connected" : "Not connected", 130,
              wifi_on ? TV_LIME : TV_MUTED, &ui_font_name_14);
 }
 
@@ -831,6 +880,67 @@ static void build_tab_system(lv_obj_t * page)
 
 }
 
+// ── Per-visit refresh / timer pause ───────────────────────────────────────
+
+static void _sync_slider(lv_obj_t * sl, lv_obj_t * lbl, int v)
+{
+    if(sl)  lv_slider_set_value(sl, v, LV_ANIM_OFF);   /* does not fire VALUE_CHANGED */
+    if(lbl) lv_label_set_text_fmt(lbl, "%d%%", v);
+}
+
+static void _sync_switch(lv_obj_t * sw, bool on)
+{
+    if(!sw) return;
+    if(on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    else   lv_obj_clear_state(sw, LV_STATE_CHECKED);
+}
+
+/* Same getters the build_tab_* functions use. */
+static void _tabview_refresh_values(void)
+{
+    _sync_slider(s_sl_bright, s_lbl_bright, sys_get_brightness());
+    _sync_slider(s_sl_led,    s_lbl_led,    sys_get_led());
+    _sync_slider(s_sl_vol,    s_lbl_vol,    sys_get_volume());
+    _sync_switch(s_sw_key,  sys_get_key_sound());
+    _sync_switch(s_sw_ble,  settings_get_ble_en());
+    _sync_switch(s_sw_wifi, settings_get_wifi_en());
+
+    if(s_lbl_ssid) {
+        char saved_ssid[33] = {};
+        persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
+        lv_label_set_text(s_lbl_ssid, saved_ssid[0] ? saved_ssid : "---");
+    }
+    if(s_lbl_wifi_st) {
+        bool wifi_on = ui_wifi_bridge_is_connected();
+        lv_label_set_text(s_lbl_wifi_st, wifi_on ? "Connected" : "Not connected");
+        lv_obj_set_style_text_color(s_lbl_wifi_st,
+                                    lv_color_hex(wifi_on ? TV_LIME : TV_MUTED), 0);
+    }
+}
+
+static void _tabview_screen_event(lv_event_t * e)
+{
+    switch(lv_event_get_code(e)) {
+    case LV_EVENT_SCREEN_LOAD_START:
+        _tabview_refresh_values();
+        if(s_time_timer)    lv_timer_resume(s_time_timer);
+        if(s_sys_bat_timer) lv_timer_resume(s_sys_bat_timer);
+        tab_time_refresh(NULL);
+        _sys_bat_refresh(NULL);
+        break;
+    case LV_EVENT_SCREEN_UNLOAD_START:
+        /* An open Factory Reset dialog must not survive leaving the screen */
+        ui_tabview_reset_dialog_cancel();
+        break;
+    case LV_EVENT_SCREEN_UNLOADED:
+        if(s_time_timer)    lv_timer_pause(s_time_timer);
+        if(s_sys_bat_timer) lv_timer_pause(s_sys_bat_timer);
+        break;
+    default:
+        break;
+    }
+}
+
 // ── Screen init / destroy ─────────────────────────────────────────────────
 
 void ui_tabview_screen_init(void)
@@ -939,6 +1049,8 @@ void ui_tabview_screen_init(void)
     lv_label_set_text(ui_tab_key_a_back, "Back");
     lv_obj_set_style_text_color(ui_tab_key_a_back, lv_color_hex(0x000000), 0);
     lv_obj_set_style_text_font(ui_tab_key_a_back,  &ui_font_name_14, 0);
+
+    lv_obj_add_event_cb(ui_tabview, _tabview_screen_event, LV_EVENT_ALL, NULL);
 }
 
 void ui_tabview_screen_destroy(void)
@@ -950,6 +1062,10 @@ void ui_tabview_screen_destroy(void)
     s_sys_bat_pct_lbl = NULL;
     s_sys_bat_status  = NULL;
     s_sys_bat_fill    = NULL;
+    s_sl_bright = s_lbl_bright = s_sl_led = s_lbl_led = NULL;
+    s_sl_vol = s_lbl_vol = s_sw_key = s_sw_ble = s_sw_wifi = NULL;
+    s_lbl_ssid = s_lbl_wifi_st = NULL;
+    s_reset_dialog = NULL;
 
     if(ui_tabview) lv_obj_del(ui_tabview);
 

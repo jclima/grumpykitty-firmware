@@ -61,7 +61,7 @@ private:
     uint8_t  _pin;
     uint16_t _delay;
     bool     _state           = true;   // HIGH = released
-    uint32_t _ignore_until    = 0;
+    uint32_t _last_change_ms  = 0;      // millis() of last accepted edge
     bool     _has_changed     = false;
     uint32_t _press_start     = 0;
     bool     _long_press_detected = false;

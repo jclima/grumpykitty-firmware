@@ -8,6 +8,7 @@
 - Honour the stop flag inside the mic read loop, clamp samples to the destination length, use a 4096-byte task stack, end() the speaker before re-init, free the codec handle on init failure and handle calloc failure in es8311_create.
 - Require each raw data token to end at whitespace or end of string and skip dot-prefixed entries when listing .ir files.
 - Replace busy-wait touch loops with release-edge detection (and button A) in Dino and cap the score, arm B only after the tap is evaluated in Media Remote and Slide Clicker, make the LED pulse pause non-blocking with a clamped speed, wait for a stopped Wi-Fi scan to clear in Radio Scanner and start its deadlines from millis().
+- Launcher and input: button debounce survives the 49.7-day millis() wrap; a still-held B no longer closes the next app; the press or touch that wakes a dark screen only wakes it; Reboot flushes settings first; the Factory Reset dialog closes when you leave Settings and B cancels it (A and the joystick are ignored while it is open); a built-in app that closes itself returns to the Apps menu; clock and settings timers pause off-screen and settings sliders and switches refresh on every visit.
 
 ## [0.1.8-grumpy] - 2026-11-11
 

@@ -21,15 +21,19 @@ void Button_Class::begin()
     delayMicroseconds(10);          // let pull-up settle
     _state = digitalRead(_pin);     // sync with actual level
     _has_changed = false;           // no spurious edge
-    _ignore_until = 0;
+    /* Start with the debounce window already elapsed so an edge right after
+     * boot is not swallowed (millis() may still be < _delay). */
+    _last_change_ms = millis() - _delay;
 }
 
 bool Button_Class::read()
 {
-    if (_ignore_until > millis()) {
+    /* Unsigned subtraction keeps the window correct across the ~49.7 day
+     * millis() wrap (an absolute-time comparison froze the button). */
+    if ((uint32_t)(millis() - _last_change_ms) < _delay) {
         // still inside debounce window — keep current state
     } else if (digitalRead(_pin) != _state) {
-        _ignore_until = millis() + _delay;
+        _last_change_ms = millis();
         _state = !_state;
         _has_changed = true;
     }

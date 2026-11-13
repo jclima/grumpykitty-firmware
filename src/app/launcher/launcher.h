@@ -43,6 +43,7 @@ private:
     bool _lvgl_inited    = false;   /* lv_init + drivers done (one-time) */
     bool _ui_ready       = false;   /* UI screens exist (stays true after buildUI) */
     bool _app_running    = false;
+    bool _b_released_since_open = true;   /* long-press B armed only after B was seen released */
     int  _running_app_id = -1;
     std::vector<int> _native_handles;
     std::vector<personal_apps::Package> _packages;

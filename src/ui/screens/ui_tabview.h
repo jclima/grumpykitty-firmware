@@ -6,6 +6,8 @@
 #ifndef UI_TABVIEW_H
 #define UI_TABVIEW_H
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -13,6 +15,9 @@ extern "C" {
 // SCREEN: ui_tabview
 extern void ui_tabview_screen_init(void);
 extern void ui_tabview_screen_destroy(void);
+/* Factory Reset confirmation dialog: query / close (physical-button navigation) */
+extern bool ui_tabview_reset_dialog_open(void);
+extern void ui_tabview_reset_dialog_cancel(void);
 extern lv_obj_t * ui_tabview;
 extern lv_obj_t * ui_tabview_settings;
 extern lv_obj_t * ui_TabPage1;
