@@ -61,6 +61,9 @@ Lease acquire(Owner who,const char* name,esp_gap_ble_cb_t gap,
     holder=who; current=sequence;
     if (esp_ble_gap_register_callback(gapDispatch)!=ESP_OK ||
         esp_ble_gatts_register_callback(gattsDispatch)!=ESP_OK) {
+        // The app never received this lease (acquire returns 0): do not run its
+        // stop handler for a lease it never held.
+        stopHandler=nullptr;
         release(sequence); fault=true; return 0;
     }
     Serial.printf("[BT] acquire owner=%u session=%lu\n",unsigned(who),static_cast<unsigned long>(sequence));
@@ -85,7 +88,11 @@ void release(Lease lease) {
     current=0; holder=Owner::None;
     gapHandler=nullptr; gattsHandler=nullptr; stopHandler=nullptr;
     linked=false; closing=false;
-    fault=timedOut || esp_bluedroid_get_status()!=ESP_BLUEDROID_STATUS_UNINITIALIZED;
-    Serial.printf("[BT] release session=%lu status=%s\n",static_cast<unsigned long>(lease),fault?"error":"idle");
+    // A slow peer that missed the disconnect/stop deadline is not a fault once
+    // the stack is down: latching it would block Bluetooth for every app until
+    // the user toggled the setting. Only a stack that failed to deinitialise is.
+    fault=esp_bluedroid_get_status()!=ESP_BLUEDROID_STATUS_UNINITIALIZED;
+    Serial.printf("[BT] release session=%lu status=%s%s\n",static_cast<unsigned long>(lease),
+                  fault?"error":"idle",timedOut?" (peer timeout)":"");
 }
 }

@@ -9,6 +9,7 @@
 - Require each raw data token to end at whitespace or end of string and skip dot-prefixed entries when listing .ir files.
 - Replace busy-wait touch loops with release-edge detection (and button A) in Dino and cap the score, arm B only after the tap is evaluated in Media Remote and Slide Clicker, make the LED pulse pause non-blocking with a clamped speed, wait for a stopped Wi-Fi scan to clear in Radio Scanner and start its deadlines from millis().
 - Launcher and input: button debounce survives the 49.7-day millis() wrap; a still-held B no longer closes the next app; the press or touch that wakes a dark screen only wakes it; Reboot flushes settings first; the Factory Reset dialog closes when you leave Settings and B cancels it (A and the joystick are ignored while it is open); a built-in app that closes itself returns to the Apps menu; clock and settings timers pause off-screen and settings sliders and switches refresh on every visit.
+- Power and storage: a failed power-off retries once and then halts in deep sleep instead of returning to a half-closed system; Factory Reset erases the whole NVS partition (Bluetooth bonds and app data included; OTA slots are untouched); the power-chip presence check uses a real I2C read; a Bluetooth release that times out on a slow peer no longer disables Bluetooth until the setting is toggled, and a failed lease setup does not call the app's stop handler.
 
 ## [0.1.8-grumpy] - 2026-11-11
 

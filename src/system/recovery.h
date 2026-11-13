@@ -9,8 +9,9 @@ extern "C" {
 #endif
 
 /**
- * Erase all NVS settings (brightness, volume, WiFi credentials, etc.)
- * then restart.  Settings revert to firmware defaults on next boot.
+ * Erase the whole NVS partition (settings, WiFi credentials, Bluetooth bonds
+ * and every other namespace) then restart.  Everything reverts to firmware
+ * defaults on next boot.  otadata / app slots are not touched.
  */
 void recovery_factory_reset(void);
 

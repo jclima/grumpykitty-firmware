@@ -141,6 +141,23 @@ extern "C" void power_tick(void)
 
 /* ── Shutdown ─────────────────────────────────────────── */
 
+/* powerOFF() is an I2C write and can fail. If the rails do not drop, callers
+ * have already closed apps and must not keep running (or call shutdown again
+ * every second): retry once, then park in deep sleep with no wake source so
+ * the firmware never resumes. */
+static void power_off_or_halt(void)
+{
+    s_pmu->powerOFF();
+    delay(200);                 /* rails normally drop well within this */
+    Serial.println("[Power] powerOFF did not take effect — retrying");
+    Serial.flush();
+    s_pmu->powerOFF();
+    delay(200);
+    Serial.println("[Power] powerOFF failed — halting in deep sleep");
+    Serial.flush();
+    esp_deep_sleep_start();     /* no wake source configured: never returns */
+}
+
 extern "C" void power_shutdown(void)
 {
     if (!s_pmu) return;
@@ -148,8 +165,8 @@ extern "C" void power_shutdown(void)
     Serial.flush();
     /* pre_shutdown_cb closes a running app first (onClose), flushes settings. */
     if (s_pre_shutdown_cb) s_pre_shutdown_cb();
-    s_pmu->powerOFF();
-    /* AXP173 cuts all rails — MCU loses power immediately */
+    power_off_or_halt();
+    /* AXP173 cuts all rails — MCU loses power immediately; never returns */
 }
 
 /* ── Shipping mode ────────────────────────────────────── */
@@ -163,7 +180,7 @@ extern "C" void power_enter_ship_mode(void)
     Serial.flush();
     delay(200);
     if (s_pre_shutdown_cb) s_pre_shutdown_cb();
-    s_pmu->powerOFF();
+    power_off_or_halt();
 }
 
 /* ── Deep sleep ───────────────────────────────────────── */

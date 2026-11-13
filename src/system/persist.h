@@ -82,6 +82,10 @@ bool persist_set_str(const char* key, const char* val);
 bool persist_erase_key(const char* key);
 bool persist_erase_all(void);
 
+/* Close the "mk_cfg" Preferences handle (needed before nvs_flash_deinit()).
+ * The next persist_* call re-opens it. */
+void persist_deinit(void);
+
 #ifdef __cplusplus
 }
 #endif

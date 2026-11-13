@@ -346,3 +346,10 @@ bool persist_erase_all(void)
     if (!s_open) return false;
     return s_prefs.clear();
 }
+
+void persist_deinit(void)
+{
+    if (!s_open) return;
+    s_prefs.end();
+    s_open = false;
+}

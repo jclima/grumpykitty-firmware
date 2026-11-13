@@ -64,9 +64,10 @@ bool DEVICES::init()
     /* PMU — AXP173 (powers everything, must be first) */
     if (!pmu.begin()) {
         /* begin() may fail on pure-battery boot if REG detection glitches.
-         * Double-check: read REG 0x12 directly — POR default 0x03, never 0xFF. */
-        uint8_t chk = pmu.readRegister8(0x12);
-        if (chk != 0xFF) {
+         * Double-check with a real presence test: readRegister8() returns 0 on
+         * I2C failure (never 0xFF), so use the bool-returning read instead. */
+        uint8_t chk = 0;
+        if (pmu.readRegister(0x12, &chk, 1)) {
             Serial.printf("[PMU] begin() false-neg, REG 0x12=0x%02X — forcing init\n", chk);
             /* Device IS present, continue with configuration */
         } else {
