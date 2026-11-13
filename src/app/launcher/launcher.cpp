@@ -1104,7 +1104,15 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         return;
     }
     if (cur == ui_t9_keyboard) {
-        if (a) { ui_t9_keyboard_send(); return; }
+        if (a || up || down || left || right) {
+            if (ui_t9_keyboard_is_connecting()) return;
+            if (a)          ui_t9_keyboard_press_focused();
+            else if (up)    ui_t9_keyboard_move_focus(0, -1);
+            else if (down)  ui_t9_keyboard_move_focus(0, 1);
+            else if (left)  ui_t9_keyboard_move_focus(-1, 0);
+            else            ui_t9_keyboard_move_focus(1, 0);
+            return;
+        }
         if (b) {
             if (ui_t9_keyboard_is_connecting()) {
                 ui_t9_keyboard_cancel_connect();

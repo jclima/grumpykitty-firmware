@@ -50,6 +50,14 @@ void ui_t9_keyboard_set_prefill(const char * pass);
 /** Programmatically trigger the Send action (calls connect_pending). */
 void ui_t9_keyboard_send(void);
 
+/** Move the key highlight (joystick). dx/dy are -1, 0 or +1; clamped, no wrap.
+ *  Ignored while a connection attempt is running. */
+void ui_t9_keyboard_move_focus(int dx, int dy);
+
+/** Press the highlighted key (physical A) by sending it LV_EVENT_CLICKED.
+ *  Ignored while a connection attempt is running. */
+void ui_t9_keyboard_press_focused(void);
+
 /** True while the connecting overlay is visible (B button should cancel, not navigate). */
 bool ui_t9_keyboard_is_connecting(void);
 
