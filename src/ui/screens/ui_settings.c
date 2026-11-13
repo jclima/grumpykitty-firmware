@@ -35,6 +35,7 @@ lv_obj_t * ui_navigation_right;
 static void ui_event_wifi_status_click(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    ui_wifi_set_return_to_tabview(false);
     _ui_screen_change(&ui_wifi, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_wifi_screen_init);
 }
 

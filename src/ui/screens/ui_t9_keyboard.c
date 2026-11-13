@@ -60,6 +60,16 @@ static lv_obj_t   * s_reveal_label    = NULL;
 
 static const uint32_t kConnTimeoutMs  = 15000;
 
+/* ── Button focus (joystick + A) ────────────────────────────────
+ *  0-8  : matrix keys, visual order (3 cols x 3 rows)
+ *  9-11 : control keys, column 4 (Send, Shift/0/Page, Mode)
+ *  12   : Show/Hide (top row, left of backspace)
+ *  13   : Backspace (top row, above the control column)               */
+#define KBD_FOCUS_SHOW      12
+#define KBD_FOCUS_BACKSPACE 13
+#define KBD_FOCUS_COUNT     14
+static int s_focus_idx = 0;
+
 /* ── T9 letter map ──────────────────────────────────────────── */
 static const char * t9_lower[9][5] = {
     {"a","b","c",  NULL,NULL},   /* 0: abc  */
@@ -195,9 +205,16 @@ static void _reveal_cb(lv_event_t * e)
     if(s_reveal_label) lv_label_set_text(s_reveal_label, reveal ? "Hide" : "Show");
 }
 
+static void _focus_apply(void);
+
 static void _t9_screen_event_cb(lv_event_t * e)
 {
     lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_SCREEN_LOAD_START) {
+        /* The screen object is reused across visits: start on the first key */
+        s_focus_idx = 0;
+        _focus_apply();
+    }
     if(code == LV_EVENT_SCREEN_UNLOAD_START || code == LV_EVENT_SCREEN_UNLOADED) {
         _overlay_hide();
         _commit_pending_tap();
@@ -374,6 +391,73 @@ static void _do_send(void)
         /* Generic text-entry mode: just navigate back */
         _ui_screen_change(&ui_wifi, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_wifi_screen_init);
     }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+ *  Button focus helpers
+ * ═══════════════════════════════════════════════════════════════ */
+
+static lv_obj_t * _focus_obj(int idx)
+{
+    switch(idx) {
+        case 0:  return ui_matrix_4;   /* same visual order as _key_index() */
+        case 1:  return ui_matrix_2;
+        case 2:  return ui_matrix_3;
+        case 3:  return ui_matrix_1;
+        case 4:  return ui_matrix_5;
+        case 5:  return ui_matrix_6;
+        case 6:  return ui_matrix_7;
+        case 7:  return ui_matrix_8;
+        case 8:  return ui_matrix_9;
+        case 9:  return ui_control_1;
+        case 10: return ui_control_2;
+        case 11: return ui_control_3;
+        case 12: return s_reveal_button;
+        case 13: return ui_backspace__keybg;
+        default: return NULL;
+    }
+}
+
+/* Focus index for a touched object (overlay icons map to their key); -1 if none */
+static int _focus_index_of(lv_obj_t * o)
+{
+    if(o == ui_capital) o = ui_control_2;
+    if(o == ui_switch)  o = ui_control_3;
+    for(int i = 0; i < KBD_FOCUS_COUNT; i++) if(o && _focus_obj(i) == o) return i;
+    return -1;
+}
+
+static void _focus_apply(void)
+{
+    for(int i = 0; i < KBD_FOCUS_COUNT; i++) {
+        lv_obj_t * o = _focus_obj(i);
+        if(!o) continue;
+        if(i == s_focus_idx) {
+            /* Amber ring like the Wi-Fi picker's focused row; the backspace
+             * button is itself amber, so it gets a light ring instead. */
+            lv_obj_set_style_outline_color(o, THEME_LV(i == KBD_FOCUS_BACKSPACE ? THEME_TEXT : THEME_ACCENT), 0);
+            lv_obj_set_style_outline_opa(o, LV_OPA_COVER, 0);
+            lv_obj_set_style_outline_width(o, 3, 0);
+            lv_obj_set_style_outline_pad(o, 0, 0);
+            lv_obj_set_style_radius(o, i == KBD_FOCUS_BACKSPACE ? LV_RADIUS_CIRCLE : 8, 0);
+        } else {
+            lv_obj_set_style_outline_width(o, 0, 0);
+        }
+    }
+}
+
+/* True while a Wi-Fi attempt, the overlay or the post-connect hop is active */
+static bool _kbd_busy(void)
+{
+    return s_conn_timer != NULL || s_overlay != NULL || s_nav_timer != NULL;
+}
+
+/* Touch: a press on a key moves the highlight to it */
+static void _focus_press_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_PRESSED) return;
+    int i = _focus_index_of(lv_event_get_current_target(e));
+    if(i >= 0) { s_focus_idx = i; _focus_apply(); }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -733,6 +817,20 @@ void ui_t9_keyboard_screen_init(void)
 
     /* ── Apply initial label state ───────────────────────────── */
     _refresh_labels();
+
+    /* ── Focus highlight: touch moves it, starts on the first key ── */
+    {
+        lv_obj_t * tappable[] = {
+            ui_matrix_1, ui_matrix_2, ui_matrix_3, ui_matrix_4, ui_matrix_5,
+            ui_matrix_6, ui_matrix_7, ui_matrix_8, ui_matrix_9,
+            ui_control_1, ui_control_2, ui_control_3, ui_capital, ui_switch,
+            s_reveal_button, ui_backspace__keybg
+        };
+        for(size_t i = 0; i < sizeof(tappable) / sizeof(tappable[0]); i++)
+            lv_obj_add_event_cb(tappable[i], _focus_press_cb, LV_EVENT_PRESSED, NULL);
+    }
+    s_focus_idx = 0;
+    _focus_apply();
 }
 
 void ui_t9_keyboard_screen_destroy(void)
@@ -765,6 +863,7 @@ void ui_t9_keyboard_screen_destroy(void)
 
     /* Reset WiFi mode for next open */
     s_wifi_mode    = false;
+    s_focus_idx    = 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -829,6 +928,51 @@ void ui_t9_keyboard_set_prefill(const char * pass)
 void ui_t9_keyboard_send(void)
 {
     _do_send();
+}
+
+/* Focus map (col 0-3, row 0-2; Show/Backspace form a top row above them).
+ * Clamped, no wrap — same as the Wi-Fi picker, which does not wrap either. */
+void ui_t9_keyboard_move_focus(int dx, int dy)
+{
+    if(!ui_t9_keyboard || _kbd_busy()) return;
+
+    int prev = s_focus_idx;
+    int f = s_focus_idx;
+
+    if(f == KBD_FOCUS_SHOW) {
+        if(dx > 0)      f = KBD_FOCUS_BACKSPACE;
+        else if(dy > 0) f = 2;                      /* top-right matrix key */
+    } else if(f == KBD_FOCUS_BACKSPACE) {
+        if(dx < 0)      f = KBD_FOCUS_SHOW;
+        else if(dy > 0) f = 9;                      /* Send */
+    } else {
+        int col = (f < 9) ? (f % 3) : 3;
+        int row = (f < 9) ? (f / 3) : (f - 9);
+        if(dy < 0 && row == 0) {
+            f = (col == 3) ? KBD_FOCUS_BACKSPACE : KBD_FOCUS_SHOW;
+        } else {
+            col += (dx > 0) - (dx < 0);
+            row += (dy > 0) - (dy < 0);
+            if(col < 0) col = 0;
+            if(col > 3) col = 3;
+            if(row > 2) row = 2;
+            f = (col < 3) ? (row * 3 + col) : (9 + row);
+        }
+    }
+
+    if(f == prev) return;
+    /* Leaving a key ends any pending multi-tap, like tapping another key. */
+    _commit_pending_tap();
+    s_focus_idx = f;
+    _focus_apply();
+}
+
+void ui_t9_keyboard_press_focused(void)
+{
+    if(!ui_t9_keyboard || _kbd_busy()) return;
+    lv_obj_t * o = _focus_obj(s_focus_idx);
+    /* Reuse the existing CLICKED callbacks (multi-tap, shift, send, ...) */
+    if(o) lv_event_send(o, LV_EVENT_CLICKED, NULL);
 }
 
 bool ui_t9_keyboard_is_connecting(void)

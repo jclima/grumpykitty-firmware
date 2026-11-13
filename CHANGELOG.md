@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- Wi-Fi password keyboard can be typed with the joystick: it moves a highlight over the keys and A presses the highlighted key (Send is now a key).
+
 ### Fixed
 - Reject malformed JPEG input in the Retro TV decoder: check DQT/DHT lengths, DC category and AC zero-run bounds, initialise the block flag, validate SOF0/DRI/SOS segment lengths, reset the decoder object before each frame and report a failed listen socket.
 - Skip SD probe/remount while mass storage is active or draining, ignore the Settings storage button during a screen animation, add usb_msc_is_quiescent() and show a sticky 'Eject on computer first' notice instead of releasing mid-write.
@@ -15,6 +18,8 @@
 - Infrared: import now clamps raw gaps (spaces) longer than 65535 us to 65535 instead of rejecting the signal (an over-long mark is still invalid); the universal remote buttons for Blu-ray/DVD, Digital signage, Fan, LED strip and PC monitor use the names that exist in the shipped .ir files (LED strip has 8 buttons); Learn ignores NEC repeat frames and masks the RC5/RC5X toggle bit so those remotes are saved as protocol signals; appending to an existing file names the new signal `<name>_<n>`.
 - Shared BLE HID remote (Media Remote, Slide Clicker): a key or media press whose release was still queued when the link stopped being ready (for example host suspend) is released with a neutral report once the link is usable again, instead of staying held on the host.
 - Radio Scanner keeps the 40 strongest Wi-Fi networks of a scan instead of the first 40, Voice Recorder closes without touching the SD card while USB storage owns it and retries restoring system audio once, and Retro TV reports Wi-Fi off, connect failure and stream start failure on screen and yields between updates.
+- Settings -> Connect: the SSID row is now a tappable card that opens the Wi-Fi network picker, and B (or swipe right) returns to the Connect tab.
+- Wi-Fi setup shows a short message when A is pressed with nothing to select.
 
 ## [0.1.8-grumpy] - 2026-11-11
 
