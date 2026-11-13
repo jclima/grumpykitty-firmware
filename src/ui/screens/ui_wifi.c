@@ -776,7 +776,11 @@ void ui_event_wifi(lv_event_t * e)
 // ── Public: physical A button connects focused row ──
 void ui_wifi_connect_focused(void)
 {
-    if(_wifi_input_blocked() || s_focus_index < 0 || s_focus_index >= s_focus_count) return;
+    if(_wifi_input_blocked()) return;
+    if(s_focus_index < 0 || s_focus_index >= s_focus_count) {
+        _wifi_show_toast("No network to select", lv_color_hex(0xFFFFFF));
+        return;
+    }
     wifi_row_t *data = s_focus_slots[s_focus_index].data;
     if(!data) { _wifi_start_scan(); _wifi_build_list(); return; }
     _do_connect(data->ssid, data->saved != 0, data->encrypted != 0);
