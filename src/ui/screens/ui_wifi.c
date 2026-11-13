@@ -710,14 +710,37 @@ static void _key_a_cb(lv_event_t * e)
     ui_wifi_connect_focused();
 }
 
-// ── Key B → Settings ──
+/* Where B / swipe-right returns to: Settings by default, the detailed settings
+ * tabview when the picker was opened from its Connect tab. The flag survives the
+ * password-keyboard round trip; ui_wifi_go_back() consumes it and leaving the
+ * picker for any other screen clears it. */
+static bool s_return_to_tabview = false;
+
+void ui_wifi_set_return_to_tabview(bool to_tabview)
+{
+    s_return_to_tabview = to_tabview;
+}
+
+void ui_wifi_go_back(void)
+{
+    lv_disp_t * d = lv_disp_get_default();
+    if(d && d->scr_to_load != NULL) return;   /* transition running: keep the flag, ignore */
+    bool to_tv = s_return_to_tabview;
+    s_return_to_tabview = false;
+    if(to_tv)
+        _ui_screen_change(&ui_tabview, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_tabview_screen_init);
+    else
+        _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_settings_screen_init);
+}
+
+// ── Key B → previous screen ──
 static void _key_b_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_settings_screen_init);
+    ui_wifi_go_back();
 }
 
-// ── Gesture swipe-right → Settings ──
+// ── Gesture swipe-right → previous screen ──
 void ui_event_wifi(lv_event_t * e)
 {
     lv_event_code_t code = lv_event_get_code(e);
@@ -727,6 +750,11 @@ void ui_event_wifi(lv_event_t * e)
         s_scan_active = false;
         _hide_menu();
         s_focus_index = -1;
+        /* Leaving for anything but the password keyboard (e.g. Home) drops the
+         * tabview return target. By UNLOADED the new screen is already active. */
+        if(code == LV_EVENT_SCREEN_UNLOADED &&
+           (ui_t9_keyboard == NULL || lv_scr_act() != ui_t9_keyboard))
+            s_return_to_tabview = false;
         return;
     }
     if(code == LV_EVENT_SCREEN_LOADED) {
@@ -741,8 +769,7 @@ void ui_event_wifi(lv_event_t * e)
     if(code == LV_EVENT_GESTURE &&
        lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_get_act());
-        _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0,
-                          &ui_settings_screen_init);
+        ui_wifi_go_back();
     }
 }
 

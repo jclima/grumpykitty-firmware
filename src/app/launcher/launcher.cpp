@@ -1091,7 +1091,7 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     }
     if (cur == ui_wifi) {
         if (a) { ui_wifi_connect_focused(); return; }
-        if (b) { if (ui_wifi_handle_back()) return; _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
+        if (b) { if (ui_wifi_handle_back()) return; ui_wifi_go_back(); return; }
         if (up) { ui_wifi_focus_step(-1); return; }
         if (down) { ui_wifi_focus_step(1); return; }
         return;

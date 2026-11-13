@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Settings -> Connect: the SSID row is now a tappable card that opens the Wi-Fi network picker, and B (or swipe right) returns to the Connect tab.
+
 ## [0.1.8-grumpy] - 2026-11-11
 
 ### Fixed

@@ -62,6 +62,10 @@ static lv_obj_t  * s_sys_bat_status  = NULL;
 static lv_obj_t  * s_sys_bat_fill    = NULL;
 static lv_timer_t * s_sys_bat_timer  = NULL;
 
+/* Connect tab SSID card labels, refreshed when the screen loads */
+static lv_obj_t * s_lbl_ssid    = NULL;
+static lv_obj_t * s_lbl_wifi_st = NULL;
+
 // ── Callbacks ─────────────────────────────────────────────────────────────
 
 static void slider_pct_cb(lv_event_t * e)
@@ -477,6 +481,15 @@ static void _tab_set_time_cb(lv_event_t * e)
                       &ui_time_picker_screen_init);
 }
 
+#define TAB_SSID_NONE "Tap to choose a network"
+
+static void _tab_ssid_row_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    ui_wifi_set_return_to_tabview(true);
+    _ui_screen_change(&ui_wifi, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_wifi_screen_init);
+}
+
 // ── Tab page builders ─────────────────────────────────────────────────────
 
 static void build_tab_display(lv_obj_t * page)
@@ -619,10 +632,27 @@ static void build_tab_connect(lv_obj_t * page)
     char saved_ssid[33] = {};
     persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
     bool wifi_on = ui_wifi_bridge_is_connected();
-    mk_lbl(page, "SSID", TAB_MARG, 114, TV_MUTED, &ui_font_name_14);
-    mk_lbl(page, saved_ssid[0] ? saved_ssid : "---", TAB_MARG, 130, TV_TEXT, &ui_font_name_14);
-    mk_lbl_r(page, wifi_on ? "Connected" : "Not connected", 130,
-             wifi_on ? TV_LIME : TV_MUTED, &ui_font_name_14);
+    /* Tappable card: opens the network picker (ui_wifi). Page scroll is off, so a
+     * tap cannot turn into a scroll. Child labels are not clickable. */
+    lv_obj_t * ssid_row = mk_card(page, 104, 52);
+    lv_obj_add_flag(ssid_row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(ssid_row, lv_color_hex(TV_TRACK), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_border_opa(ssid_row, LV_OPA_COVER,         LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(ssid_row, _tab_ssid_row_cb, LV_EVENT_CLICKED, NULL);
+
+    mk_lbl(ssid_row, "SSID", 0, 0, TV_MUTED, &ui_font_name_14);
+    s_lbl_ssid = mk_lbl(ssid_row, saved_ssid[0] ? saved_ssid : TAB_SSID_NONE, 0, 18, TV_TEXT, &ui_font_name_14);
+    lv_obj_set_width(s_lbl_ssid, CARD_INN - 22);
+    lv_label_set_long_mode(s_lbl_ssid, LV_LABEL_LONG_DOT);
+    s_lbl_wifi_st = mk_lbl_r_card(ssid_row, wifi_on ? "Connected" : "Not connected", 0,
+                                  wifi_on ? TV_LIME : TV_MUTED, &ui_font_name_14);
+    lv_obj_set_width(s_lbl_wifi_st, CARD_INN - 22);
+
+    lv_obj_t * chev = lv_label_create(ssid_row);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_font(chev, LV_FONT_DEFAULT, 0);
+    lv_obj_set_style_text_color(chev, lv_color_hex(TV_LIME), 0);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
 static void build_tab_time(lv_obj_t * page)
@@ -831,6 +861,23 @@ static void build_tab_system(lv_obj_t * page)
 
 }
 
+// Show the current saved SSID / link state after returning from the picker.
+static void _tabview_screen_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_SCREEN_LOAD_START) return;
+    if(s_lbl_ssid) {
+        char saved_ssid[33] = {};
+        persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
+        lv_label_set_text(s_lbl_ssid, saved_ssid[0] ? saved_ssid : TAB_SSID_NONE);
+    }
+    if(s_lbl_wifi_st) {
+        bool wifi_on = ui_wifi_bridge_is_connected();
+        lv_label_set_text(s_lbl_wifi_st, wifi_on ? "Connected" : "Not connected");
+        lv_obj_set_style_text_color(s_lbl_wifi_st,
+                                    lv_color_hex(wifi_on ? TV_LIME : TV_MUTED), 0);
+    }
+}
+
 // ── Screen init / destroy ─────────────────────────────────────────────────
 
 void ui_tabview_screen_init(void)
@@ -939,6 +986,8 @@ void ui_tabview_screen_init(void)
     lv_label_set_text(ui_tab_key_a_back, "Back");
     lv_obj_set_style_text_color(ui_tab_key_a_back, lv_color_hex(0x000000), 0);
     lv_obj_set_style_text_font(ui_tab_key_a_back,  &ui_font_name_14, 0);
+
+    lv_obj_add_event_cb(ui_tabview, _tabview_screen_event, LV_EVENT_ALL, NULL);
 }
 
 void ui_tabview_screen_destroy(void)
@@ -950,6 +999,8 @@ void ui_tabview_screen_destroy(void)
     s_sys_bat_pct_lbl = NULL;
     s_sys_bat_status  = NULL;
     s_sys_bat_fill    = NULL;
+    s_lbl_ssid        = NULL;
+    s_lbl_wifi_st     = NULL;
 
     if(ui_tabview) lv_obj_del(ui_tabview);
 
