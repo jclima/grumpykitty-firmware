@@ -459,5 +459,13 @@ void bu_ble_release(uint8_t key) {
     transmit();
 }
 void bu_ble_release_all() { clearKeys(); if(bu_ble_connected()) transmit(); }
-void bu_ble_write(uint8_t c) { if(!bu_ble_connected()) return; bu_ble_press(c); bu_ble_release(c); }
-void bu_ble_print(const char* s) { while(s && *s && bu_ble_connected()) bu_ble_write(static_cast<uint8_t>(*s++)); }
+// Text entry is ASCII only: bytes >= 0x80 would otherwise be taken as modifier
+// taps (0x80-0x87) or raw HID usages (>= 0x88) by bu_ble_press, which stays
+// unfiltered because key commands legitimately pass KEY_* codes.
+void bu_ble_write(uint8_t c) { if(c>=0x80 || !bu_ble_connected()) return; bu_ble_press(c); bu_ble_release(c); }
+void bu_ble_print(const char* s) {
+    while(s && *s && bu_ble_connected()) {
+        const uint8_t c=static_cast<uint8_t>(*s++);
+        if(c<0x80) bu_ble_write(c);
+    }
+}

@@ -402,6 +402,75 @@ static const KEntry s_mouseKeys[] = {
 };
 
 /* ================================================================ */
+/*  File-local helpers
+ * ================================================================ */
+
+/* True if the string holds any byte >= 0x80 (UTF-8 / raw HID usage hazard). */
+static bool hasNonAscii(const char* s)
+{
+    for (; s && *s; ++s)
+        if ((uint8_t)*s >= 0x80) return true;
+    return false;
+}
+
+/* Expand Momentum layout modifier bits into _kbdPress modifier codes.
+ * Bit meanings match _kbdWrite: 01 ctrl, 02 shift, 04 alt, 08 gui, 40 ralt. */
+static int layoutModKeys(uint8_t bits, uint8_t* out)
+{
+    int n = 0;
+    if (bits & 0x01) out[n++] = KEY_LEFT_CTRL;
+    if (bits & 0x02) out[n++] = KEY_LEFT_SHIFT;
+    if (bits & 0x04) out[n++] = KEY_LEFT_ALT;
+    if (bits & 0x08) out[n++] = KEY_LEFT_GUI;
+    if (bits & 0x40) out[n++] = KEY_RIGHT_ALT;
+    return n;
+}
+
+/* Create a directory, creating "/badusb" first when it is missing. */
+static void ensureBadusbDir(const char* dir)
+{
+    if (SD_MMC.exists(dir)) return;
+    if (!SD_MMC.exists("/badusb")) SD_MMC.mkdir("/badusb");
+    SD_MMC.mkdir(dir);
+}
+
+/* Directory-entry base name (File::name() may or may not include a path). */
+static const char* entryBaseName(const char* name)
+{
+    const char* slash = name ? strrchr(name, '/') : nullptr;
+    return slash ? slash + 1 : (name ? name : "");
+}
+
+static inline bool defineIdentChar(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '_' || c == '#';
+}
+
+/* Replace whole-token occurrences of 'name' with 'value' in 'ln': a match
+ * counts only when the characters just before and after it are not
+ * [A-Za-z0-9_#]. Returns false if the line grows beyond maxLen. */
+static bool replaceDefineToken(std::string& ln, const std::string& name,
+                               const std::string& value, size_t maxLen)
+{
+    if (name.empty()) return true;
+    size_t pos = 0;
+    while ((pos = ln.find(name, pos)) != std::string::npos) {
+        const size_t end = pos + name.size();
+        const bool beforeOk = (pos == 0) || !defineIdentChar(ln[pos - 1]);
+        const bool afterOk  = (end >= ln.size()) || !defineIdentChar(ln[end]);
+        if (beforeOk && afterOk) {
+            ln.replace(pos, name.size(), value);
+            pos += value.size();
+            if (ln.size() > maxLen) return false;
+        } else {
+            pos++;
+        }
+    }
+    return true;
+}
+
+/* ================================================================ */
 
 namespace MOONCAKE::APPS
 {
@@ -490,10 +559,11 @@ bool AppBadUSB::_bleConnected() const
 /* --- Keyboard layout loader (Momentum .kl: 128 - uint16_le) --- */
 bool AppBadUSB::_loadLayout(const char* name)
 {
-    _layoutLoaded = false;
+    /* On any failure _layout, _layoutName and _layoutLoaded stay unchanged. */
     if (!name || !*name) return false;
-    char path[64];
-    snprintf(path, sizeof(path), "%s/%s.kl", LAYOUT_DIR, name);
+    const std::string wanted(name);   /* 'name' may alias _layoutName */
+    char path[128];
+    snprintf(path, sizeof(path), "%s/%s.kl", LAYOUT_DIR, wanted.c_str());
     File f = SD_MMC.open(path, FILE_READ);
     if (!f) {
         Serial.printf("[BadUSB] Layout not found: %s\n", path);
@@ -506,10 +576,12 @@ bool AppBadUSB::_loadLayout(const char* name)
         Serial.printf("[BadUSB] Layout %s: bad size %u\n", path, (unsigned)n);
         return false;
     }
+    uint16_t tmp[128];
     for (int i = 0; i < 128; i++) {
-        _layout[i] = (uint16_t)buf[i * 2] | ((uint16_t)buf[i * 2 + 1] << 8);
+        tmp[i] = (uint16_t)buf[i * 2] | ((uint16_t)buf[i * 2 + 1] << 8);
     }
-    _layoutName = name;
+    memcpy(_layout, tmp, sizeof(_layout));
+    _layoutName = wanted;
     _layoutLoaded = true;
     Serial.printf("[BadUSB] Layout loaded: %s\n", path);
     return true;
@@ -733,6 +805,7 @@ void AppBadUSB::_enterRunning()
         _bleBegin();
         if (!_bleStarted) {
             _errMsg=bluetooth_manager::enabled() ? "Bluetooth busy/error" : "Enable Bluetooth in Settings";
+            _errLine=0;
             _execState=ExecState::Error;
         }
     }
@@ -871,7 +944,8 @@ void AppBadUSB::_drawRunningDynamic()
             Lcd.setFont(&fonts::efontCN_16);
             Lcd.setTextColor(TFT_RED,BU_BG);
             Lcd.setCursor(4,194);
-            Lcd.printf("L%u: %.32s", unsigned(_errLine), _errMsg.c_str());
+            if (_errLine > 0) Lcd.printf("L%u: %.32s", unsigned(_errLine), _errMsg.c_str());
+            else              Lcd.printf("%.36s", _errMsg.c_str());
         } else if (_lastDrawnState == ExecState::Error) {
             // Restore the layout label after leaving ERROR; don't leave stale text.
             Lcd.fillRect(2,192,316,20,BU_BG);
@@ -1001,6 +1075,7 @@ void AppBadUSB::_updateRunning()
             _stopExec();
             bu_ble_end(); _bleStarted=false;
             _errMsg="Bluetooth stopped. Reopen script.";
+            _errLine=0;
             _execState=ExecState::Error;
         }
     }
@@ -1081,6 +1156,19 @@ void AppBadUSB::_updateRunning()
             (_execState == ExecState::Done || _execState == ExecState::Error))
             _execEndTime = millis();
         if (_device->button.A.pressed()) {
+            /* BLE is only started on page entry: restart it after a failure so
+             * Retry does not wait for a stack that is not up. */
+            if (_mode == BuMode::BLE && !_bleStarted) {
+                _bleBegin();
+                if (!_bleStarted) {
+                    _errMsg = bluetooth_manager::enabled() ? "Bluetooth busy/error"
+                                                           : "Enable Bluetooth in Settings";
+                    _errLine = 0;
+                    _execState = ExecState::Error;
+                    _lastDrawnState = ExecState::Idle;   /* repaint the message */
+                    break;
+                }
+            }
             if (_isConnected()) _startExec();
             else                _execState = ExecState::WaitConnect;
         }
@@ -1106,26 +1194,37 @@ void AppBadUSB::_updateRunning()
         if (now - _lastDraw > 100) { _drawRunningDynamic(); _lastDraw = now; }
         break;
 
-    case ExecState::StringDelay:
+    case ExecState::StringDelay: {
+        /* [A] is checked on every call, i.e. between every typed chunk. */
         if (_device->button.A.pressed()) {
             _kbdReleaseAll();
             _execState   = ExecState::Done;
             _execEndTime = millis();
             break;
         }
-        if (badusb_parse::deadlineReached(now, _delayEnd) && _printPos < _printStr.size()) {
-            char c = _printStr[_printPos];
-            if (c != '\n') {
-                _kbdWrite((uint8_t)c);
-            } else {
-                _kbdPress(KEY_RETURN); delay(2); _kbdRelease(KEY_RETURN);
+        /* ALTSTRING ignores the string-delay settings (as before). */
+        const uint32_t sd = _printAlt ? 0 : (_strDelay > 0 ? _strDelay : _defStrDelay);
+        if (sd > 0) {
+            /* Paced typing: one character each time the deadline passes. */
+            if (badusb_parse::deadlineReached(now, _delayEnd) && _printPos < _printStr.size()) {
+                _typeStrChar();
+                _delayEnd = now + sd;
             }
-            _printPos++;
-            _delayEnd = now + (_strDelay > 0 ? _strDelay : _defStrDelay);
+        } else {
+            /* No delay: type a small chunk (<= 8 chars or ~10 ms) and return so
+             * the launcher can see the long-B exit between updates. */
+            const unsigned long c0 = millis();
+            int typed = 0;
+            while (_printPos < _printStr.size() && typed < 8 && millis() - c0 < 10) {
+                _typeStrChar();
+                typed++;
+            }
         }
         if (_printPos >= _printStr.size()) {
-            _strDelay = 0;
-            if (_defDelay > 0) {
+            if (!_printAlt) _strDelay = 0;   /* one-shot consumed */
+            /* Default delay after the line; under REPEAT only after the last
+             * repetition (same rule as plain commands). */
+            if (_defDelay > 0 && _repeatCnt == 0) {
                 _delayEnd  = millis() + _defDelay;
                 _execState = ExecState::Delay;
             } else {
@@ -1134,6 +1233,7 @@ void AppBadUSB::_updateRunning()
         }
         if (now - _lastDraw > 100) { _drawRunningDynamic(); _lastDraw = now; }
         break;
+    }
 
     case ExecState::Running: {
         /* [A] = stop & abort (afterwards [A] becomes Run again to re-run). */
@@ -1143,8 +1243,10 @@ void AppBadUSB::_updateRunning()
             _execEndTime = millis();
             break;
         }
+        /* Per-frame time budget so Stop and the long-B exit stay responsive. */
+        const unsigned long t0 = millis();
         int batch = 0;
-        while (_execState == ExecState::Running && batch < 20) {
+        while (_execState == ExecState::Running && batch < 20 && millis() - t0 <= 15) {
             batch++;
 
             const char* lineStr = nullptr;
@@ -1154,6 +1256,9 @@ void AppBadUSB::_updateRunning()
                 lineStr = _repeatLine.c_str();
                 _repeatCnt--;
                 fromRepeat = true;
+                /* STRING_DELAY is one-shot per execution but applies to every
+                 * repetition of the line it preceded. */
+                if (_repeatIsStr) _strDelay = _repeatStrDelay;
             } else {
                 if (_lineIdx >= _lines.size()) {
                     _execState   = ExecState::Done;
@@ -1170,14 +1275,18 @@ void AppBadUSB::_updateRunning()
             if (_mode == BuMode::BLE && (!_bleConnected() || bu_ble_failed())) {
                 _stopExec(); bu_ble_end(); _bleStarted=false;
                 _errMsg="Bluetooth stopped. Reopen script.";
+                _errLine=0;
                 _execState=ExecState::Error;
                 break;
             }
 
             if (!fromRepeat && r != -1 && r > -10) {
                 const char* trimmed = _skipWs(lineStr);
-                if (strncmp(trimmed, "REPEAT", 6) != 0)
-                    _repeatLine = trimmed;
+                if (strncmp(trimmed, "REPEAT", 6) != 0) {
+                    _repeatLine     = trimmed;
+                    _repeatIsStr    = (r == -5 && !_printAlt);
+                    _repeatStrDelay = _strDelay;
+                }
             }
 
             if (r > 0) {
@@ -1206,6 +1315,25 @@ void AppBadUSB::_updateRunning()
     }
 }
 
+/* Type one character of _printStr (called from the StringDelay state). */
+void AppBadUSB::_typeStrChar()
+{
+    if (_printPos >= _printStr.size()) return;
+    const char c = _printStr[_printPos];
+    if (_printAlt) {
+        if (c >= ' ' && c <= '~') {
+            char tmp[4];
+            snprintf(tmp, sizeof(tmp), "%u", (unsigned)(uint8_t)c);
+            _altChar(tmp);
+        }
+    } else if (c == '\n') {
+        _kbdPress(KEY_RETURN); delay(2); _releaseUnheld(KEY_RETURN);
+    } else {
+        _kbdWrite((uint8_t)c);
+    }
+    _printPos++;
+}
+
 /* ================================================================ */
 /*  SD card -- scan /badusb/ for scripts
  * ================================================================ */
@@ -1213,9 +1341,7 @@ void AppBadUSB::_scanScripts()
 {
     _scriptFiles.clear();
 
-    if (!SD_MMC.exists(SCRIPT_DIR)) {
-        SD_MMC.mkdir(SCRIPT_DIR);
-    }
+    ensureBadusbDir(SCRIPT_DIR);
 
     File dir = SD_MMC.open(SCRIPT_DIR);
     if (!dir || !dir.isDirectory()) {
@@ -1226,8 +1352,10 @@ void AppBadUSB::_scanScripts()
     File entry;
     while ((entry = dir.openNextFile())) {
         if (!entry.isDirectory()) {
+            /* Skip dot-files (macOS "._name.txt" sidecars etc.). */
+            const char* base = entryBaseName(entry.name());
             String name = entry.name();
-            if (name.endsWith(".txt") || name.endsWith(".TXT"))
+            if (base[0] != '.' && (name.endsWith(".txt") || name.endsWith(".TXT")))
                 _scriptFiles.push_back(std::string(entry.path()));
         }
         entry.close();
@@ -1245,9 +1373,7 @@ void AppBadUSB::_scanLayouts()
 {
     _layoutFiles.clear();
 
-    if (!SD_MMC.exists(LAYOUT_DIR)) {
-        SD_MMC.mkdir(LAYOUT_DIR);
-    }
+    ensureBadusbDir(LAYOUT_DIR);
     File dir = SD_MMC.open(LAYOUT_DIR);
     if (!dir || !dir.isDirectory()) {
         Serial.printf("[BadUSB] Failed to open %s\n", LAYOUT_DIR);
@@ -1256,8 +1382,9 @@ void AppBadUSB::_scanLayouts()
     File entry;
     while ((entry = dir.openNextFile())) {
         if (!entry.isDirectory()) {
+            const char* base = entryBaseName(entry.name());
             String name = entry.name();
-            if (name.endsWith(".kl") || name.endsWith(".KL"))
+            if (base[0] != '.' && (name.endsWith(".kl") || name.endsWith(".KL")))
                 _layoutFiles.push_back(std::string(entry.path()));
         }
         entry.close();
@@ -1391,6 +1518,7 @@ bool AppBadUSB::_loadScript(const char* path)
     _strDelay   = 0;
     _defStrDelay = 0;
     _keyHoldNb  = 0;
+    _heldCnt    = 0;
     _errMsg.clear();
     _errLine    = 0;
 
@@ -1417,7 +1545,9 @@ bool AppBadUSB::_loadScript(const char* path)
         if (_lines.empty() && ln.startsWith("\xEF\xBB\xBF")) ln.remove(0, 3);
         while (ln.length() > 0) {
             char c = ln.charAt(ln.length() - 1);
-            if (c == '\r' || c == ' ' || c == '\t')
+            /* Strip only CR: trailing spaces/tabs are part of STRING payloads
+             * (_parseLine trims them for every other command). */
+            if (c == '\r')
                 ln.remove(ln.length() - 1);
             else break;
         }
@@ -1440,7 +1570,8 @@ bool AppBadUSB::_loadScript(const char* path)
 
     /* ================================================================ DEFINE pre-processor (Momentum) ================================================================
      * "DEFINE NAME value" lines are stripped; remaining occurrences of NAME
-     * are replaced with value in subsequent lines (simple substring sub). */
+     * are replaced with value in subsequent lines (whole tokens only: the
+     * neighbouring characters must not be [A-Za-z0-9_#]). */
     {
         std::vector<std::pair<std::string,std::string>> macros;
         for (auto& ln : _lines) {
@@ -1450,16 +1581,11 @@ bool AppBadUSB::_loadScript(const char* path)
                 /* not a DEFINE line - apply known macros (longest name first
                  * so prefixes never shadow longer names). */
                 for (auto& m : macros) {
-                    size_t pos = 0;
-                    while ((pos = ln.find(m.first, pos)) != std::string::npos) {
-                        ln.replace(pos, m.first.size(), m.second);
-                        pos += m.second.size();
-                        if (ln.size() > kMaxLineLen) {
-                            _errMsg = "DEFINE expands line too long";
-                            _errLine = (int)(&ln - &_lines[0]) + 1;
-                            _lines.clear();
-                            return false;
-                        }
+                    if (!replaceDefineToken(ln, m.first, m.second, kMaxLineLen)) {
+                        _errMsg = "DEFINE expands line too long";
+                        _errLine = (int)(&ln - &_lines[0]) + 1;
+                        _lines.clear();
+                        return false;
                     }
                 }
                 continue;
@@ -1491,8 +1617,12 @@ void AppBadUSB::_startExec()
     _strDelay   = 0;
     _defStrDelay = 0;
     _keyHoldNb  = 0;
+    _heldCnt    = 0;
     _printStr.clear();
     _printPos   = 0;
+    _printAlt   = false;
+    _repeatIsStr    = false;
+    _repeatStrDelay = 0;
     _repeatLine.clear();
     _prevLine.clear();
     _errMsg.clear();
@@ -1625,6 +1755,21 @@ int32_t AppBadUSB::_parseLine(const char* line)
     if (strncmp(line, "BLE_ID", 6) == 0)                  return -1;
 
     uint32_t cl = _cmdLen(line);
+
+    /* Script lines keep trailing spaces/tabs so STRING payloads survive; every
+     * other command is parsed on a trimmed copy. */
+    std::string trimmedLine;
+    if (!((cl == 6 && strncmp(line, "STRING", 6) == 0) ||
+          (cl == 8 && strncmp(line, "STRINGLN", 8) == 0) ||
+          (cl == 9 && strncmp(line, "ALTSTRING", 9) == 0))) {
+        size_t n = strlen(line);
+        while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) n--;
+        if (line[n] != '\0') {
+            trimmedLine.assign(line, n);
+            line = trimmedLine.c_str();
+            cl = _cmdLen(line);
+        }
+    }
     const char* param = badusb_parse::arguments(line, cl);
 
     /* This port deliberately has no deterministic support for these commands.
@@ -1677,34 +1822,28 @@ int32_t AppBadUSB::_parseLine(const char* line)
         return -10;
     }
 
-    /* --- STRINGLN text --- */
+    /* --- STRINGLN text --- (typed by the StringDelay state, then Enter) */
     if (cl == 8 && strncmp(line, "STRINGLN", 8) == 0) {
         const char* text = param;
-        uint32_t sd = _strDelay > 0 ? _strDelay : _defStrDelay;
-        if (sd > 0) {
-            _printStr  = text;
-            _printStr += '\n';
-            _printPos  = 0;
-            _delayEnd  = millis();
-            return -5;
-        }
-        if (*text) _kbdPrint(text);
-        _kbdPress(KEY_RETURN); delay(2); _kbdRelease(KEY_RETURN);
-        return 0;
+        if (hasNonAscii(text)) { _errMsg = "Non-ASCII in STRING"; return -10; }
+        _printStr  = text;
+        _printStr += '\n';
+        _printPos  = 0;
+        _printAlt  = false;
+        _delayEnd  = millis();
+        return -5;
     }
 
-    /* --- STRING text --- */
+    /* --- STRING text --- (typed by the StringDelay state) */
     if (cl == 6 && strncmp(line, "STRING", 6) == 0) {
         const char* text = (strlen(line) > 7) ? param : "";
-        uint32_t sd = _strDelay > 0 ? _strDelay : _defStrDelay;
-        if (sd > 0) {
-            _printStr = text;
-            _printPos = 0;
-            _delayEnd = millis();
-            return -5;
-        }
-        if (*text) _kbdPrint(text);
-        return 0;
+        if (hasNonAscii(text)) { _errMsg = "Non-ASCII in STRING"; return -10; }
+        if (!*text) { _strDelay = 0; return 0; }
+        _printStr = text;
+        _printPos = 0;
+        _printAlt = false;
+        _delayEnd = millis();
+        return -5;
     }
 
     /* --- REPEAT n --- */
@@ -1717,16 +1856,22 @@ int32_t AppBadUSB::_parseLine(const char* line)
     /* --- SYSRQ key --- */
     if (cl == 5 && strncmp(line, "SYSRQ", 5) == 0) {
         const char* kn = _skipWs(param);
-        if (!_keyByName(kn) && !(strlen(kn) == 1 && *kn >= 0x20 && *kn <= 0x7E)) {
+        uint8_t k = _keyByName(kn);
+        char ch = 0;
+        if (!k && !_singleChar(kn, ch)) {
             _errMsg = "SYSRQ: missing/unknown key"; return -10;
         }
-        _kbdPress(KEY_LEFT_ALT);
-        _kbdPress(KEY_PRTSCR);
-        uint8_t k = _keyByName(kn);
-        if (k) _kbdPress(k);
-        else if (strlen(kn) == 1) _kbdPress((uint8_t)kn[0]);
-        delay(10);
-        _kbdReleaseAll();
+        uint8_t seq[10];
+        int n = 0;
+        seq[n++] = KEY_LEFT_ALT;
+        seq[n++] = KEY_PRTSCR;
+        if (k) seq[n++] = k;
+        else {
+            const int m = _charSeq(ch, seq + n);
+            if (m == 0) { _errMsg = "SYSRQ: key not in layout"; return -10; }
+            n += m;
+        }
+        _tapKeys(seq, n, 10);
         return 0;
     }
 
@@ -1741,12 +1886,18 @@ int32_t AppBadUSB::_parseLine(const char* line)
         return 0;
     }
 
-    /* --- ALTSTRING / ALTCODE text --- */
+    /* --- ALTSTRING / ALTCODE text --- (typed by the StringDelay state) */
     if ((cl == 9 && strncmp(line, "ALTSTRING", 9) == 0) ||
         (cl == 7 && strncmp(line, "ALTCODE", 7) == 0)) {
+        const char* text = _skipWs(param);
+        if (hasNonAscii(text)) { _errMsg = "Non-ASCII in STRING"; return -10; }
+        if (!*text) return 0;
         _numlockOn();
-        _altString(_skipWs(param));
-        return 0;
+        _printStr = text;
+        _printPos = 0;
+        _printAlt = true;
+        _delayEnd = millis();
+        return -5;
     }
 
     /* --- HOLD key --- */
@@ -1760,10 +1911,18 @@ int32_t AppBadUSB::_parseLine(const char* line)
         uint8_t mb = _mouseByName(kn);
         if (mb) { _keyHoldNb++; _mousePress(mb); return 0; }
         uint8_t mod = _modByName(kn);
-        if (mod) { _keyHoldNb++; _kbdPress(mod); return 0; }
+        if (mod) { _keyHoldNb++; _kbdPress(mod); _holdAdd(mod); return 0; }
         uint8_t k = _keyByName(kn);
-        if (k) { _keyHoldNb++; _kbdPress(k); return 0; }
-        if (strlen(kn) == 1) { _keyHoldNb++; _kbdPress((uint8_t)kn[0]); return 0; }
+        if (k) { _keyHoldNb++; _kbdPress(k); _holdAdd(k); return 0; }
+        char ch;
+        if (_singleChar(kn, ch)) {
+            uint8_t seq[8];
+            const int n = _charSeq(ch, seq);
+            if (n == 0) { _errMsg = "HOLD: key not in layout"; return -10; }
+            _keyHoldNb++;
+            for (int i = 0; i < n; i++) { _kbdPress(seq[i]); _holdAdd(seq[i]); }
+            return 0;
+        }
         _errMsg = "HOLD: unknown key"; return -10;
     }
 
@@ -1775,10 +1934,18 @@ int32_t AppBadUSB::_parseLine(const char* line)
         uint8_t mb = _mouseByName(kn);
         if (mb) { _keyHoldNb--; _mouseRelease(mb); return 0; }
         uint8_t mod = _modByName(kn);
-        if (mod) { _keyHoldNb--; _kbdRelease(mod); return 0; }
+        if (mod) { _keyHoldNb--; _holdRemove(mod); return 0; }
         uint8_t k = _keyByName(kn);
-        if (k) { _keyHoldNb--; _kbdRelease(k); return 0; }
-        if (strlen(kn) == 1) { _keyHoldNb--; _kbdRelease((uint8_t)kn[0]); return 0; }
+        if (k) { _keyHoldNb--; _holdRemove(k); return 0; }
+        char ch;
+        if (_singleChar(kn, ch)) {
+            uint8_t seq[8];
+            const int n = _charSeq(ch, seq);
+            if (n == 0) { _errMsg = "RELEASE: key not in layout"; return -10; }
+            _keyHoldNb--;
+            for (int i = n - 1; i >= 0; i--) _holdRemove(seq[i]);
+            return 0;
+        }
         _errMsg = "RELEASE: unknown key"; return -10;
     }
 
@@ -1796,12 +1963,17 @@ int32_t AppBadUSB::_parseLine(const char* line)
 
     /* --- GLOBE key (macOS Fn/Globe + key) --- */
     if (cl == 5 && strncmp(line, "GLOBE", 5) == 0) {
+        if (_mode == BuMode::BLE) { _errMsg = "GLOBE unsupported over BLE"; return -10; }
         const char* kn = _skipWs(param);
+        uint8_t seq[8];
+        int n = 0;
         uint8_t k = _keyByName(kn);
-        if (!k && strlen(kn) == 1) k = (uint8_t)kn[0];
-        if (!k) { _errMsg = "GLOBE: unknown key"; return -10; }
+        char ch;
+        if (k) seq[n++] = k;
+        else if (_singleChar(kn, ch)) n = _charSeq(ch, seq);
+        if (n == 0) { _errMsg = "GLOBE: unknown key"; return -10; }
         _consumerPress(CC_FN_GLOBE);
-        _kbdPress(k); _kbdRelease(k);
+        _tapKeys(seq, n, 2);
         _consumerRelease();
         return 0;
     }
@@ -1856,28 +2028,37 @@ int32_t AppBadUSB::_parseLine(const char* line)
 
         if (nMod > 0) {
             p = _skipWs(p);
-            uint8_t k = 0;
+            uint8_t seq[16];
+            int n = 0;
+            for (int i = 0; i < nMod; i++) seq[n++] = mods[i];
             if (*p) {
-                k = _keyByName(p);
-                if (!k && strlen(p) == 1 && *p >= 0x20 && *p <= 0x7E) k = uint8_t(*p);
-                if (!k) { _errMsg = "Unknown combo key"; return -10; }
+                uint8_t k = _keyByName(p);
+                char ch;
+                if (k) seq[n++] = k;
+                else if (_singleChar(p, ch)) {
+                    const int m = _charSeq(ch, seq + n);
+                    if (m == 0) { _errMsg = "Combo key not in layout"; return -10; }
+                    n += m;
+                }
+                else { _errMsg = "Unknown combo key"; return -10; }
             }
-            for (int i = 0; i < nMod; i++) _kbdPress(mods[i]);
-            if (k) _kbdPress(k);
-            delay(10);
-            _kbdReleaseAll();
+            _tapKeys(seq, n, 10);
             return 0;
         }
 
         p = _skipWs(line);
         uint8_t k = _keyByName(p);
         if (k) {
-            _kbdPress(k); delay(10); _kbdRelease(k);
+            _tapKeys(&k, 1, 10);
             return 0;
         }
 
-        if (strlen(p) == 1 && *p >= 0x20 && *p <= 0x7E) {
-            _kbdPress((uint8_t)*p); delay(10); _kbdRelease((uint8_t)*p);
+        char ch;
+        if (_singleChar(p, ch)) {
+            uint8_t seq[8];
+            const int n = _charSeq(ch, seq);
+            if (n == 0) { _errMsg = "Key not in layout"; return -10; }
+            _tapKeys(seq, n, 10);
             return 0;
         }
     }
@@ -1910,9 +2091,12 @@ void AppBadUSB::_kbdRelease(uint8_t k)
 #endif
 }
 
+/* Release everything: keyboard, mouse buttons, consumer key, and forget all
+ * HOLD state. Reserved for stop / done / error / page change / exit. */
 void AppBadUSB::_kbdReleaseAll()
 {
     _keyHoldNb = 0;
+    _heldCnt   = 0;
     if (_mode == BuMode::BLE) { bu_ble_release_all(); return; }
 #if ARDUINO_USB_MODE == 0
     usb_hid_kbd().releaseAll();
@@ -1921,44 +2105,125 @@ void AppBadUSB::_kbdReleaseAll()
 #endif
 }
 
+/* ── Keys held by HOLD (one entry per hold, duplicates allowed) ── */
+bool AppBadUSB::_isHeld(uint8_t k) const
+{
+    for (uint8_t i = 0; i < _heldCnt; i++)
+        if (_heldKeys[i] == k) return true;
+    return false;
+}
+
+void AppBadUSB::_holdAdd(uint8_t k)
+{
+    if (_heldCnt < sizeof(_heldKeys)) _heldKeys[_heldCnt++] = k;
+}
+
+/* Drop one hold of 'k'; the physical key is released only when no other
+ * HOLD still covers it. */
+void AppBadUSB::_holdRemove(uint8_t k)
+{
+    for (uint8_t i = 0; i < _heldCnt; i++) {
+        if (_heldKeys[i] == k) {
+            for (uint8_t j = i + 1; j < _heldCnt; j++) _heldKeys[j - 1] = _heldKeys[j];
+            _heldCnt--;
+            break;
+        }
+    }
+    if (!_isHeld(k)) _kbdRelease(k);
+}
+
+/* Re-press held keys: releasing an ASCII key that needs Shift also clears the
+ * Shift bit, even when SHIFT itself is held. */
+void AppBadUSB::_reassertHeld()
+{
+    for (uint8_t i = 0; i < _heldCnt; i++) _kbdPress(_heldKeys[i]);
+}
+
+/* Release a key a command pressed itself, unless HOLD owns it. */
+void AppBadUSB::_releaseUnheld(uint8_t k)
+{
+    if (_isHeld(k)) return;
+    _kbdRelease(k);
+    if (_heldCnt && k < 0x80) _reassertHeld();
+}
+
+/* Press seq[0..n) in order, hold, release in reverse (skipping HOLD keys). */
+void AppBadUSB::_tapKeys(const uint8_t* seq, int n, uint32_t holdMs)
+{
+    for (int i = 0; i < n; i++) _kbdPress(seq[i]);
+    if (holdMs) delay(holdMs);
+    for (int i = n - 1; i >= 0; i--) _releaseUnheld(seq[i]);
+}
+
+/* ── Layout-aware single character ──
+ * Fills seq with the modifier presses followed by the key itself and returns
+ * the count, or 0 when the layout entry cannot be expressed as a _kbdPress
+ * code. With a layout loaded (USB only, c < 128) the entry is read exactly as
+ * _kbdWrite does: low byte = HID usage (sent as the raw form 0x88 + usage),
+ * high byte = modifier bits; a zero usage falls back to the US ASCII map. */
+int AppBadUSB::_charSeq(char c, uint8_t* seq)
+{
+    const uint8_t u = (uint8_t)c;
+    if (_mode == BuMode::USB && _layoutLoaded && u < 128) {
+        const uint16_t entry = _layout[u];
+        const uint8_t  hid   = entry & 0xFF;
+        if (hid != 0) {
+            if (hid > 0x77) return 0;   /* 0x88 + usage would not fit in a byte */
+            int n = layoutModKeys((uint8_t)(entry >> 8), seq);
+            seq[n++] = (uint8_t)(0x88 + hid);
+            return n;
+        }
+    }
+    seq[0] = u;
+    return 1;
+}
+
+/* True if s is exactly one printable ASCII char (optionally followed by
+ * spaces/tabs). */
+bool AppBadUSB::_singleChar(const char* s, char& ch)
+{
+    if (!s || *s < 0x20 || *s > 0x7E) return false;
+    if (*badusb_parse::skipSpace(s + 1) != '\0') return false;
+    ch = *s;
+    return true;
+}
+
 void AppBadUSB::_kbdPrint(const char* s)
 {
-    if (_mode == BuMode::BLE) { bu_ble_print(s); return; }
-#if ARDUINO_USB_MODE == 0
-    /* Honour active keyboard layout (USB only - BLE has no pressRaw). */
-    if (_layoutLoaded) {
-        for (const char* p = s; p && *p; ++p) _kbdWrite((uint8_t)*p);
-        return;
-    }
-    usb_hid_kbd().print(s);
-#else
-    (void)s;
-#endif
+    /* Per character so the layout and the ASCII filter in _kbdWrite apply
+     * (UTF-8 bytes are never turned into modifiers or raw usages). */
+    for (const char* p = s; p && *p; ++p) _kbdWrite((uint8_t)*p);
 }
 
 void AppBadUSB::_kbdWrite(uint8_t c)
 {
-    if (_mode == BuMode::BLE) { bu_ble_write(c); return; }
+    if (c >= 0x80) return;   /* text path: ASCII only */
+    if (_mode == BuMode::BLE) {
+        bu_ble_write(c);
+        if (_heldCnt) _reassertHeld();
+        return;
+    }
 #if ARDUINO_USB_MODE == 0
     /* Apply keyboard layout when loaded (USB only). */
-    if (_layoutLoaded && c < 128) {
+    if (_layoutLoaded) {
         uint16_t entry = _layout[c];
         uint8_t  hid   = entry & 0xFF;
         uint8_t  mod   = entry >> 8;
         if (hid != 0) {
-            if (mod & 0x01) usb_hid_kbd().press(KEY_LEFT_CTRL);
-            if (mod & 0x02) usb_hid_kbd().press(KEY_LEFT_SHIFT);
-            if (mod & 0x04) usb_hid_kbd().press(KEY_LEFT_ALT);
-            if (mod & 0x08) usb_hid_kbd().press(KEY_LEFT_GUI);
-            if (mod & 0x40) usb_hid_kbd().press(KEY_RIGHT_ALT);
+            uint8_t mk[6];
+            const int nm = layoutModKeys(mod, mk);
+            for (int i = 0; i < nm; i++) usb_hid_kbd().press(mk[i]);
             usb_hid_kbd().pressRaw(hid);
             delay(2);
             usb_hid_kbd().releaseRaw(hid);
-            usb_hid_kbd().releaseAll();
+            /* Release only the modifiers pressed here, never HOLD ones. */
+            for (int i = nm - 1; i >= 0; i--)
+                if (!_isHeld(mk[i])) usb_hid_kbd().release(mk[i]);
             return;
         }
     }
     usb_hid_kbd().write(c);
+    if (_heldCnt) _reassertHeld();
 #else
     (void)c;
 #endif
@@ -2080,7 +2345,7 @@ void AppBadUSB::_altChar(const char* code)
         _numpadPress(*code);
         code++;
     }
-    _kbdRelease(KEY_LEFT_ALT);
+    _releaseUnheld(KEY_LEFT_ALT);
 }
 
 bool AppBadUSB::_altString(const char* param)

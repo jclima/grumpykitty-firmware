@@ -124,9 +124,32 @@ private:
     unsigned long _delayEnd   = 0;
     unsigned long _lastDraw   = 0;
 
-    /* string-delay typing */
+    /* string typing: STRING / STRINGLN / ALTSTRING all run in the StringDelay
+     * state; with an effective delay of 0 it types a small chunk per update. */
     std::string   _printStr;
     size_t        _printPos   = 0;
+    bool          _printAlt   = false;  /* ALTSTRING: type via Alt+numpad */
+    void          _typeStrChar();
+
+    /* REPEAT of a STRING line re-applies the one-shot STRING_DELAY that was
+     * active when the line first ran. */
+    bool          _repeatIsStr    = false;
+    uint32_t      _repeatStrDelay = 0;
+
+    /* Keys currently held by HOLD (one entry per hold); combos and SYSRQ never
+     * release these. */
+    uint8_t       _heldKeys[32] = {0};
+    uint8_t       _heldCnt      = 0;
+    bool          _isHeld(uint8_t k) const;
+    void          _holdAdd(uint8_t k);
+    void          _holdRemove(uint8_t k);
+    void          _reassertHeld();
+    void          _releaseUnheld(uint8_t k);
+    void          _tapKeys(const uint8_t* seq, int n, uint32_t holdMs);
+
+    /* Layout-aware single character: modifiers + key as _kbdPress codes. */
+    int           _charSeq(char c, uint8_t* seq);
+    static bool   _singleChar(const char* s, char& ch);
 
     /* error info */
     std::string   _errMsg;
