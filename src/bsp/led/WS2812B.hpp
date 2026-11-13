@@ -77,6 +77,9 @@ private:
     uint32_t _lastUpdate;
     float    _phase;              ///< 0.0 – 1.0
     bool     _blinkState;
+    bool     _pausing = false;    ///< PULSE: in the gap between pulses
+    uint32_t _pauseStart = 0;     ///< millis() when the pulse ended
+    uint32_t _pauseMs = 0;        ///< gap length
 
     /* ── Hardware I/O ─────────────────────────────────── */
     void _send(uint8_t r, uint8_t g, uint8_t b);

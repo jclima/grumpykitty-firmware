@@ -57,6 +57,11 @@ void WS2812B_Class::_hsvToRgb(uint16_t h, uint8_t s, uint8_t v,
     }
 }
 
+/** Keep speed strictly positive (it is used as a divisor); NaN -> minimum */
+static inline float _clampSpeed(float s) {
+    return (s >= 0.05f) ? s : 0.05f;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  *  Constructor / Init
  * ══════════════════════════════════════════════════════════════════ */
@@ -120,7 +125,8 @@ void WS2812B_Class::update() {
 void WS2812B_Class::setEffect(Effect effect, Color color, float speed) {
     _currentEffect = effect;
     _targetColor   = (uint32_t)color;
-    _speed         = speed;
+    _speed         = _clampSpeed(speed);
+    _pausing       = false;
     _phase         = 0.0f;
     _lastUpdate    = millis();
     _blinkState    = false;
@@ -133,7 +139,8 @@ void WS2812B_Class::setEffect(Effect effect, uint8_t r, uint8_t g, uint8_t b,
                                float speed) {
     _currentEffect = effect;
     _targetColor   = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
-    _speed         = speed;
+    _speed         = _clampSpeed(speed);
+    _pausing       = false;
     _phase         = 0.0f;
     _lastUpdate    = millis();
     _blinkState    = false;
@@ -172,7 +179,7 @@ void WS2812B_Class::off() {
 
 void WS2812B_Class::_updateBreathing() {
     uint32_t now = millis();
-    float dt = (now - _lastUpdate) / 1000.0f * _speed;
+    float dt = (now - _lastUpdate) / 1000.0f * _clampSpeed(_speed);
     _lastUpdate = now;
 
     _phase += dt * 0.5f;                             // ~2 s full cycle
@@ -184,7 +191,7 @@ void WS2812B_Class::_updateBreathing() {
 
 void WS2812B_Class::_updateBlink(uint16_t periodMs) {
     uint32_t now = millis();
-    uint16_t half = (uint16_t)(periodMs / _speed) / 2;
+    uint16_t half = (uint16_t)(periodMs / _clampSpeed(_speed)) / 2;
 
     if (now - _lastUpdate >= half) {
         _lastUpdate = now;
@@ -196,15 +203,25 @@ void WS2812B_Class::_updateBlink(uint16_t periodMs) {
 
 void WS2812B_Class::_updatePulse() {
     uint32_t now = millis();
-    float dt = (now - _lastUpdate) / 1000.0f * _speed;
+
+    // Non-blocking pause between pulses (unsigned subtraction is wrap-safe)
+    if (_pausing) {
+        if ((uint32_t)(now - _pauseStart) < _pauseMs) return;
+        _pausing = false;
+        _lastUpdate = now;
+        _phase = 0.0f;
+    }
+
+    float dt = (now - _lastUpdate) / 1000.0f * _clampSpeed(_speed);
     _lastUpdate = now;
 
     _phase += dt * 2.0f;                             // 0.5 s pulse
     if (_phase >= 1.0f) {
         _phase = 0.0f;
         _send(0, 0, 0);
-        delay((uint16_t)(500 / _speed));             // pause between pulses
-        _lastUpdate = millis();
+        _pausing    = true;                          // pause between pulses
+        _pauseStart = now;
+        _pauseMs    = (uint32_t)(500.0f / _clampSpeed(_speed));
     } else {
         _showColorScaled(_targetColor, 1.0f - _phase);
     }
@@ -212,7 +229,7 @@ void WS2812B_Class::_updatePulse() {
 
 void WS2812B_Class::_updateRainbow() {
     uint32_t now = millis();
-    float dt = (now - _lastUpdate) / 1000.0f * _speed;
+    float dt = (now - _lastUpdate) / 1000.0f * _clampSpeed(_speed);
     _lastUpdate = now;
 
     _phase += dt * 0.1f;                             // ~10 s full rotation

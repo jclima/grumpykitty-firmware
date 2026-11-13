@@ -94,7 +94,7 @@ void AppSlideClicker::_ui() {
         lcd.setTextSize(1);
     }
     if (!_msg_dirty) return;
-    char line[28];
+    char line[32];
     uint16_t color = hp::COL_ACCENT;
     if (_msg[0] && now - _msg_at < MSG_MS) snprintf(line, sizeof(line), "%s", _msg);
     else {
@@ -149,9 +149,11 @@ void AppSlideClicker::onRunning() {
 
     // B: blank screen on release if held < 1 s; long press exits (handled above).
     const bool b_was = _prev[I_B];
-    if (!bb) _b_armed = true;
     if (bb && !b_was) _b_since = now;
-    if (!bb && b_was && _b_armed && now - _b_since < 1000) _key(ble_remote_hid::KEY_B, "BLANK (B)");
+    // Decide the tap before arming, so B held while the app opened does not fire on release.
+    const bool tap = !bb && b_was && _b_armed && now - _b_since < 1000;
+    if (!bb) _b_armed = true;
+    if (tap) _key(ble_remote_hid::KEY_B, "BLANK (B)");
     _prev[I_B] = bb;
 
     _touch(now);

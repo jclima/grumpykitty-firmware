@@ -98,6 +98,8 @@ class Game {
         SQ15x16 _speed;
         SQ15x16 _scroll_x;
         SQ15x16 _distance;
+        bool     _touch_prev = false;
+        uint32_t _over_since = 0;
 
         void _splash();
         void _init();

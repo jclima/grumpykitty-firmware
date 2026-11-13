@@ -76,7 +76,7 @@ void AppMediaRemote::_status_ui() {
     }
     if (!_msg_dirty) return;
     // Bottom message row: persistent state text unless a recent action label is active.
-    char line[28];
+    char line[32];
     uint16_t color = hp::COL_ACCENT;
     if (_msg[0] && millis() - _msg_at < MSG_MS) snprintf(line, sizeof(line), "%s", _msg);
     else {
@@ -125,9 +125,11 @@ void AppMediaRemote::onRunning() {
 
     // B: fire on release if held < 1 s; long press is handled above (exit).
     const bool b_was = _prev[I_B];
-    if (!bb) _b_armed = true;
     if (bb && !b_was) _b_since = now;
-    if (!bb && b_was && _b_armed && now - _b_since < 1000) _media(ble_remote_hid::MEDIA_MUTE, "MUTE");
+    // Decide the tap before arming, so B held while the app opened does not fire on release.
+    const bool tap = !bb && b_was && _b_armed && now - _b_since < 1000;
+    if (!bb) _b_armed = true;
+    if (tap) _media(ble_remote_hid::MEDIA_MUTE, "MUTE");
     _prev[I_B] = bb;
 
     if (_msg[0] && now - _msg_at >= MSG_MS) _msg_dirty = true;

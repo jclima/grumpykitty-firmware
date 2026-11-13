@@ -41,6 +41,9 @@ void Game::begin(DEVICES *device)
 {
     _device = device;
 
+    _touch_prev = _device->ctp.isTouched();
+    _device->button.A.hasChanged();   // drop an edge left over from the launcher
+
     _loadHighScore();
 
     _stage = Stage::SPLASH;
@@ -96,15 +99,12 @@ void Game::loop()
 void Game::_splash()
 {
 
-    // if (espboy.button.pressed(Button::ACT)) _stage = Stage::INIT;
-    if (_device->ctp.isTouched())
-    {
-        while (_device->ctp.isTouched())
-        {
-            delay(10);
-        }
+    // Start on the touch release edge (or button A); never block the app loop.
+    bool const touched = _device->ctp.isTouched();
+    bool const a_pressed = _device->button.A.pressed();
+    if ((_touch_prev && !touched) || a_pressed)
         _stage = Stage::INIT;
-    }
+    _touch_prev = touched;
 
     _dino->wait();
     _drawSplash();
@@ -129,7 +129,10 @@ void Game::_play()
     // if (button.A.pressed() && !_dino->jumping()) {
     //     _dino->jump();
     // }
-    if (_device->ctp.isTouched() && !_dino->jumping())
+    bool const touched = _device->ctp.isTouched();
+    bool const a_pressed = _device->button.A.pressed();   // edge: read every frame
+    _touch_prev = touched;
+    if ((touched || a_pressed) && !_dino->jumping())
     {
         _dino->jump();
         dino_sfx_play(SFX_JUMP);
@@ -146,6 +149,7 @@ void Game::_stop()
 {
 
     _stage = Stage::GAME_OVER;
+    _over_since = millis();
 
     _saveHighScore();
     _drawGameOver();
@@ -161,14 +165,13 @@ void Game::_gameOver()
     //     _sfx->playScore(THEME_LOOP);
     // }
 
-    if (_device->ctp.isTouched())
-    {
-        while (_device->ctp.isTouched())
-        {
-            delay(10);
-        }
+    // Restart on the touch release edge (or button A), but ignore the finger
+    // that was still down from the last jump for a short moment.
+    bool const touched = _device->ctp.isTouched();
+    bool const a_pressed = _device->button.A.pressed();
+    if (millis() - _over_since >= 600 && ((_touch_prev && !touched) || a_pressed))
         _restart();
-    }
+    _touch_prev = touched;
 
     _drawGameOver();
 }
@@ -369,7 +372,9 @@ void Game::_scroll()
         }
     }
 
-    _distance += _speed * _DISTANCE_FACTOR;
+    // Saturate: the score is a uint16_t and _distance is SQ15x16 (max ~32767).
+    if (static_cast<uint16_t>(_distance) < 32000)
+        _distance += _speed * _DISTANCE_FACTOR;
     _scroll_x += _speed;
 
     if (_scroll_x > GROUND_SIZE)

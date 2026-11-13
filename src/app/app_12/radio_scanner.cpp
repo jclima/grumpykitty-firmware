@@ -163,7 +163,7 @@ void AppRadioScanner::onOpen() {
     _monitor_option = 0; _monitor_channel = 0;
     _monitor_filter = wifi_packet_monitor::Filter::All;
     _monitor_save = false; _monitor_redraw = 0;
-    _next_scan = _next_snap = _last_draw = 0;
+    _next_scan = _next_snap = millis(); _last_draw = 0;   // not 0: signed deadline compare stalls after ~24.8 d uptime
     _wifi_scanning = false; _lease = 0; g_ble_paused = false; g_ble_running = false;
     _saved_mode = static_cast<int>(WiFi.getMode());
     auto& b = _device->button;
@@ -184,6 +184,11 @@ void AppRadioScanner::_stopWifiScan() {
     }
     if (!_wifi_scanning) return;
     esp_wifi_scan_stop();
+    /* The Arduino core clears its "scan running" bit only on the scan-done event
+     * (or in scanComplete()'s timeout branch): wait for it, or later scans
+     * elsewhere report "running". Bounded, so the loop is never blocked long. */
+    const uint32_t t0 = millis();
+    while (WiFi.scanComplete() == WIFI_SCAN_RUNNING && millis() - t0 < 2600) delay(10);
     _wifi_scanning = false;
     WiFi.scanDelete();
 }
@@ -197,7 +202,7 @@ void AppRadioScanner::_leaveTab() {
 }
 void AppRadioScanner::_enterTab(Tab tab) {
     _tab = tab; _count = _sel = _off = 0; _dirty = true; _paused = false;
-    g_ble_paused = false; _next_scan = _next_snap = 0;
+    g_ble_paused = false; _next_scan = _next_snap = millis();
     if (tab != BLE) {
         _r->wifiReady = false;
         _state = settings_get_wifi_en() ? ST_SCAN : ST_WIFI_OFF;
@@ -230,7 +235,7 @@ void AppRadioScanner::_wifiTick(uint32_t now) {
         if (_state != ST_WIFI_OFF) { _stopWifiScan(); _state = ST_WIFI_OFF; _count = 0; _r->wifiReady = false; _target_present = false; _dirty = true; }
         return;
     }
-    if (_state == ST_WIFI_OFF) { _state = ST_SCAN; _next_scan = 0; _dirty = true; }
+    if (_state == ST_WIFI_OFF) { _state = ST_SCAN; _next_scan = now; _dirty = true; }
     if (_wifi_scanning) {
         if (ui_wifi_bridge_radio_busy()) {
             _wifi_scanning = false;
@@ -724,7 +729,7 @@ void AppRadioScanner::onRunning() {
         } else if (_screen == ACTIONS && _action == 0) {
             _paused = !_paused;
             g_ble_paused = _paused;
-            if (!_paused && _tab == BLE) { tableClear(); _next_snap = 0; }
+            if (!_paused && _tab == BLE) { tableClear(); _next_snap = millis(); }
             _message[0] = 0;
         } else if (_screen == ACTIONS && _action == 1) {
             _exportCsv();

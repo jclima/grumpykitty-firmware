@@ -7,6 +7,7 @@
 - Skip SD probe/remount while mass storage is active or draining, ignore the Settings storage button during a screen animation, add usb_msc_is_quiescent() and show a sticky 'Eject on computer first' notice instead of releasing mid-write.
 - Honour the stop flag inside the mic read loop, clamp samples to the destination length, use a 4096-byte task stack, end() the speaker before re-init, free the codec handle on init failure and handle calloc failure in es8311_create.
 - Require each raw data token to end at whitespace or end of string and skip dot-prefixed entries when listing .ir files.
+- Replace busy-wait touch loops with release-edge detection (and button A) in Dino and cap the score, arm B only after the tap is evaluated in Media Remote and Slide Clicker, make the LED pulse pause non-blocking with a clamped speed, wait for a stopped Wi-Fi scan to clear in Radio Scanner and start its deadlines from millis().
 
 ## [0.1.8-grumpy] - 2026-11-11
 
