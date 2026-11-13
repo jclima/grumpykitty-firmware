@@ -2190,7 +2190,8 @@ namespace MOONCAKE::APPS
             while (*q) {
                 while (*q == ' ' || *q == '\t') ++q; if (!*q) break;
                 char* end = nullptr; long v = strtol(q, &end, 10);
-                if (end == q || v < 1 || v > 65535 || _loadSignal.rawData.size() >= infrared_file::kMaxRawDurations || _loadRawUsec > infrared_file::kMaxRawUsec - (uint32_t)v) { _loadValidSignal = false; break; }
+                /* A token must end at whitespace or end of string ("123+456" is not two values). */
+                if (end == q || !(*end == '\0' || *end == ' ' || *end == '\t') || v < 1 || v > 65535 || _loadSignal.rawData.size() >= infrared_file::kMaxRawDurations || _loadRawUsec > infrared_file::kMaxRawUsec - (uint32_t)v) { _loadValidSignal = false; break; }
                 _loadSignal.rawData.push_back((uint16_t)v); _loadRawUsec += (uint32_t)v; any = true; q = end;
             }
             if (*q || !any) _loadValidSignal = false;
@@ -2308,7 +2309,9 @@ namespace MOONCAKE::APPS
         while (file) {
             const char* slash = strrchr(file.name(), '/');
             String base = slash ? String(slash + 1) : String(file.name());
-            if (file.isDirectory()) {
+            if (base.startsWith(".")) {
+                /* hidden entries, e.g. macOS "._name.ir" AppleDouble sidecars */
+            } else if (file.isDirectory()) {
                 if (includeFolders && base.length() > 0 &&
                     !(strcmp(dir, IR_DIR) == 0 && strcasecmp(base.c_str(), "universal") == 0)) {
                     dirs.push_back(base + "/");
