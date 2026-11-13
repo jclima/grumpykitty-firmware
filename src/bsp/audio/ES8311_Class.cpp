@@ -478,6 +478,9 @@ void es8311_register_dump(es8311_handle_t dev)
 es8311_handle_t es8311_create(const i2c_port_t port, const uint16_t dev_addr)
 {
     es8311_dev_t *sensor = (es8311_dev_t *) calloc(1, sizeof(es8311_dev_t));
+    if (!sensor) {
+        return NULL;
+    }
     sensor->port = port;
     sensor->dev_addr = dev_addr;
     return (es8311_handle_t) sensor;

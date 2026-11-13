@@ -163,6 +163,10 @@ void Mic_Class::mic_task(void* args)
                          pdMS_TO_TICKS(100));
                 src_len = bytes_read >> 1; // samples
                 src_idx = 0;
+
+                // end() requested stop: leave the inner loop so the outer
+                // `while (_task_running)` exits and the normal cleanup runs.
+                if (!self->_task_running) break;
             }
 
             // Accumulate oversampling
@@ -218,8 +222,11 @@ void Mic_Class::mic_task(void* args)
                 }
             }
 
+            // Never write past the caller's buffer (dst_remain counts samples)
+            const size_t write_num = ((size_t)output_num < dst_remain) ? (size_t)output_num : dst_remain;
+
             // Write to destination buffer
-            for (int i = 0; i < output_num; ++i) {
+            for (size_t i = 0; i < write_num; ++i) {
                 auto value = sum_value[i];
                 if (current->is_16bit) {
                     if      (value < INT16_MIN + 16) value = INT16_MIN + 16;
@@ -238,8 +245,8 @@ void Mic_Class::mic_task(void* args)
             }
 
             sum_value[0] = sum_value[1] = 0;
-            dst_remain -= output_num;
-            if ((int32_t)dst_remain <= 0) {
+            dst_remain -= write_num;
+            if (dst_remain == 0) {
                 current->length = 0;
                 break;
             }
@@ -296,7 +303,7 @@ bool Mic_Class::begin()
     _rec_sample_rate = _calc_rec_rate();
     _task_running = true;
 
-    size_t stack = 2048 + (_cfg.dma_buf_len * sizeof(uint16_t));
+    size_t stack = 4096;  // ESP_LOGE needs headroom; src_buf is heap allocated
 
     BaseType_t created;
     if (_cfg.task_pinned_core < portNUM_PROCESSORS) {

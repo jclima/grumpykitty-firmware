@@ -52,6 +52,8 @@ bool Speaker_Class::_init_codec(uint32_t sample_rate)
                                 ES8311_RESOLUTION_16, ES8311_RESOLUTION_16);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "ES8311 init failed: %s", esp_err_to_name(err));
+        es8311_delete(_es_handle);
+        _es_handle = nullptr;
         return false;
     }
 
@@ -133,6 +135,12 @@ void Speaker_Class::_uninstall_i2s()
 
 bool Speaker_Class::begin(I2C_Class* i2c)
 {
+    // Re-entry guard: release any previous codec handle / I2S driver first
+    // (end() is safe in any state: every step is guarded).
+    if (_initialized || _es_handle) {
+        end();
+    }
+
     _i2c = i2c;
 
     // Init codec
