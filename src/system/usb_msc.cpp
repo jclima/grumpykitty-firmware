@@ -49,6 +49,8 @@ static std::atomic<int>       s_running{0};
 static std::atomic<int>       s_draining{0};
 static std::atomic<unsigned long> s_bytes{0};
 static std::atomic<int> s_state{USB_MSC_EJECTED};
+static volatile uint32_t s_last_write_ms = 0;     /* millis() of the last host write */
+static volatile bool     s_host_ejected  = false; /* host sent eject (load_eject && !start) */
 
 /* ── Sector callbacks — prefixed to avoid USBMSC.h typedef-name clash ── */
 
@@ -81,6 +83,7 @@ static int32_t _msc_write_cb(uint32_t lba, uint32_t offset,
                                uint8_t * buf, uint32_t bufsize)
 {
     s_inflight.fetch_add(1);
+    s_last_write_ms = millis();
     sdmmc_card_t * card = s_card.load();
     int32_t ret = -1;
     if (card && _msc_range_ok(card, lba, offset, bufsize) &&
@@ -92,9 +95,12 @@ static int32_t _msc_write_cb(uint32_t lba, uint32_t offset,
     return ret;
 }
 
-static bool _msc_startstop_cb(uint8_t /*pwr*/, bool /*start*/, bool load_eject)
+static bool _msc_startstop_cb(uint8_t /*pwr*/, bool start, bool load_eject)
 {
-    if (load_eject) Serial.println("[MSC] host ejected");
+    if (load_eject) {
+        Serial.println("[MSC] host ejected");
+        if (!start) s_host_ejected = true;
+    }
     return true;
 }
 
@@ -107,6 +113,8 @@ int usb_msc_enable(void)
 
     sdmmc_card_t * card = nullptr;
     s_bytes.store(0);
+    s_last_write_ms = 0;
+    s_host_ejected  = false;
 
     /* 1. Dismount FAT-FS — release exclusive SDMMC bus ownership */
     SD_MMC.end();
@@ -248,3 +256,14 @@ void usb_msc_set_error(usb_msc_state_t state)
         state == USB_MSC_INIT_FAILED) s_state.store(state);
 }
 void usb_msc_set_ejected(void) { s_state.store(USB_MSC_EJECTED); }
+
+/* True when it is safe to release the card: not owned, already draining, the
+ * host ejected, the host never wrote, or it has been quiet for 2 s. */
+bool usb_msc_is_quiescent(void)
+{
+    if (!s_running.load() || s_draining.load()) return true;
+    if (s_host_ejected) return true;
+    const uint32_t last = s_last_write_ms;
+    if (last == 0) return true;
+    return (uint32_t)(millis() - last) >= 2000;
+}

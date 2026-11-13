@@ -3,6 +3,7 @@
  * @brief SD_MMC ↔ C UI bridge implementation.
  */
 #include "ui_sd_bridge.h"
+#include "../system/usb_msc.h"
 
 #include <Arduino.h>
 #include <SD_MMC.h>
@@ -66,6 +67,10 @@ extern "C" int ui_sd_state(void)
 
 extern "C" int ui_sd_present(void)
 {
+    /* USB mass storage owns the card (also while draining): never probe or
+     * remount underneath it, report the state cached before it took over. */
+    if (usb_msc_is_active() || usb_msc_is_draining()) return s_sd_state == UI_SD_OK;
+
     /* Actively probe — SD_MMC.cardType() is a cached value that does not
      * notice hot removals. Opening "/" forces a bus transaction. */
     File root = SD_MMC.open("/");

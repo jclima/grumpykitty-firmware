@@ -22,6 +22,9 @@ extern lv_obj_t * ui_usb_msc_key_a_bg;
 extern lv_obj_t * ui_usb_msc_key_b_bg;
 extern lv_obj_t * ui_usb_msc_key_a_eject;
 extern lv_obj_t * ui_usb_msc_key_b_back;
+// Show a sticky message instead of the live status until the next key press
+// (pass NULL to resume the status display).
+extern void ui_usb_msc_set_notice(const char * text);
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus

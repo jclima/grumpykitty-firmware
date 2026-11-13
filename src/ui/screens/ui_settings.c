@@ -48,6 +48,11 @@ static void ui_event_msc_button_click(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 
+    /* A screen animation is running: _ui_screen_change would silently do
+     * nothing and MSC would be left on with no Eject screen. Ignore the tap. */
+    lv_disp_t * disp = lv_disp_get_default();
+    if(disp && disp->scr_to_load != NULL) return;
+
     /* Guard: SD card must be present before enabling MSC.
      * Without a card the host would enumerate an empty drive and MSC init
      * may panic the SD driver when it tries to read the block count. */

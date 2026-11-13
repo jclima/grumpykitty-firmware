@@ -17,12 +17,20 @@ lv_obj_t * ui_usb_msc_key_a_eject;
 lv_obj_t * ui_usb_msc_key_b_back;
 
 static lv_timer_t * s_status_timer = NULL;
+static const char * s_notice = NULL;   /* sticky message; shown until the next key press */
+
+void ui_usb_msc_set_notice(const char * text)
+{
+    s_notice = text;
+    if(text && ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, text);
+}
 
 // 1 Hz poll — updates label with live USB MSC state
 static void _msc_status_cb(lv_timer_t * t)
 {
     (void)t;
     if(!ui_usb_msc_label) return;
+    if(s_notice) { lv_label_set_text(ui_usb_msc_label, s_notice); return; }
 
     switch (usb_msc_state()) {
     case USB_MSC_MISSING: lv_label_set_text(ui_usb_msc_label, "No SD card - Back, insert, retry"); return;
@@ -138,6 +146,7 @@ void ui_usb_msc_screen_init(void)
 void ui_usb_msc_screen_destroy(void)
 {
     if(s_status_timer) { lv_timer_del(s_status_timer); s_status_timer = NULL; }
+    s_notice = NULL;
     if(ui_usb_msc) lv_obj_del(ui_usb_msc);
 
     ui_usb_msc                = NULL;

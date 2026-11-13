@@ -4,6 +4,7 @@
 
 ### Fixed
 - Reject malformed JPEG input in the Retro TV decoder: check DQT/DHT lengths, DC category and AC zero-run bounds, initialise the block flag, validate SOF0/DRI/SOS segment lengths, reset the decoder object before each frame and report a failed listen socket.
+- Skip SD probe/remount while mass storage is active or draining, ignore the Settings storage button during a screen animation, add usb_msc_is_quiescent() and show a sticky 'Eject on computer first' notice instead of releasing mid-write.
 
 ## [0.1.8-grumpy] - 2026-11-11
 

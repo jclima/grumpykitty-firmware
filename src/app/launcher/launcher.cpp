@@ -1065,6 +1065,14 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
 
     /* ── USB MSC screen ── */
     if (cur == ui_usb_msc) {
+        if (a || b) {
+            ui_usb_msc_set_notice(NULL);   /* new press: drop any sticky message */
+            if (!usb_msc_is_quiescent()) {
+                /* Host is still writing: releasing now could corrupt the card. */
+                ui_usb_msc_set_notice("Eject on computer first");
+                return;
+            }
+        }
         if (a) {
             if (usb_msc_is_active()) {
                 int ok = usb_manager_release(USB_MODE_MSC);

@@ -33,6 +33,11 @@ int  usb_msc_is_active(void);
 /** Returns 1 while teardown is waiting for a detached callback to finish. */
 int  usb_msc_is_draining(void);
 
+/** True when releasing the card now cannot cut off a host write: MSC not
+ *  active (or already tearing down), host ejected, host never wrote, or no
+ *  write for >= 2000 ms. */
+bool usb_msc_is_quiescent(void);
+
 /** Cumulative bytes transferred (read + write) since last enable(). */
 unsigned long usb_msc_bytes_transferred(void);
 usb_msc_state_t usb_msc_state(void);
