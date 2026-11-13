@@ -203,7 +203,10 @@ static void touchpad_read(lv_indev_drv_t * indev_drv, lv_indev_data_t * data)
 {
     static int x_pos = 0;
     static int y_pos = 0;
-    const bool touched = _ctp && _ctp->isTouched() && _ctp->getPos(x_pos, y_pos);
+    /* One I2C transaction: validated press + the coordinates of that sample */
+    int tx = x_pos, ty = y_pos;
+    const bool touched = _ctp && _ctp->readTouch(tx, ty);
+    if (touched) { x_pos = tx; y_pos = ty; }
     s_touch_raw = touched;
 
     if (s_screen_off) {

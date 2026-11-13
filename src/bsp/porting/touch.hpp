@@ -33,13 +33,14 @@
 
 class CTP_Class {
     private:
-        int _x_pos;
-        int _y_pos;
-        bool _enable;
+        int _x_pos = -1;
+        int _y_pos = -1;
+        bool _pressed = false;      // state reported by the last readTouch()
+        bool _enable = false;
 
         /* I2C related */
-        I2C_Class* _i2c;
-        uint8_t _dev_addr;
+        I2C_Class* _i2c = nullptr;
+        uint8_t _dev_addr = CTP_DEV_ADDR;
 
         inline void _I2C_init(I2C_Class* i2c, uint8_t dev_addr)
         {
@@ -50,22 +51,25 @@ class CTP_Class {
         inline bool _I2C_checkDevAvl()
         {
             // Use scanID to check if device is available
+            if (!_i2c) return true;   // not available
             return !_i2c->scanID(_dev_addr, CTP_I2C_FREQ);
         }
 
         inline void _I2C_write1Byte(uint8_t addr, uint8_t data)
         {
+            if (!_i2c) return;
             _i2c->writeRegister8(_dev_addr, addr, data, CTP_I2C_FREQ);
         }
 
         inline bool _I2C_readBuff(uint8_t addr, int size, uint8_t buff[])
         {
+            if (!_i2c) return false;
             return _i2c->readRegister(_dev_addr, addr, buff, size, CTP_I2C_FREQ);
         }
 
         inline uint8_t _I2C_read8Bit(uint8_t addr)
         {
-            return _i2c->readRegister8(_dev_addr, addr, CTP_I2C_FREQ);
+            return _i2c ? _i2c->readRegister8(_dev_addr, addr, CTP_I2C_FREQ) : 0;
         }
 
         inline uint16_t _I2C_read12Bit(uint8_t addr)
@@ -90,30 +94,65 @@ class CTP_Class {
         {
             _x_pos = -1;
             _y_pos = -1;
+            _pressed = false;
         }
 
-        inline bool _update_coor()
+        /* Raw FT6336 P1 bytes (XH, XL, YH, YL) -> screen coordinates,
+         * applying the CTP_* axis swap / mirror. */
+        static inline void _transform(const uint8_t* b, int& x, int& y)
         {
-            uint8_t buff[4];
-            if (!_I2C_readBuff(0x03, 4, buff)) {
-                _reset_coor();
-                return false;
-            }
-
             #if CTP_REVERS_XY
-                _y_pos = ((buff[0]&0x0F) << 8) | buff[1];
-                _x_pos = ((buff[2]&0x0F) << 8) | buff[3];
+                y = ((b[0]&0x0F) << 8) | b[1];
+                x = ((b[2]&0x0F) << 8) | b[3];
                 #if CTP_REVERS_XPOS
-                    _x_pos = -( _x_pos ) + 319;
+                    x = -( x ) + 319;
                 #endif
                 #if CTP_REVERS_YPOS
-                    _y_pos = -( _y_pos ) + 240;
+                    y = -( y ) + 240;
                 #endif
             #else
-                _x_pos = ((buff[0]&0x0F) << 8) | buff[1];
-                _y_pos = ((buff[2]&0x0F) << 8) | buff[3];
+                x = ((b[0]&0x0F) << 8) | b[1];
+                y = ((b[2]&0x0F) << 8) | b[3];
             #endif
-            return _x_pos >= 0 && _x_pos < 320 && _y_pos >= 0 && _y_pos < 240;
+        }
+
+        /* Read touch state in ONE I2C transaction (regs 0x02..0x06):
+         *   0x02 TD_STATUS (low nibble = number of touch points)
+         *   0x03 P1_XH  bits 7:6 event flag (0 down, 1 up, 2 contact, 3 none),
+         *               bits 3:0 high nibble of the first coordinate
+         *   0x04 P1_XL, 0x05 P1_YH, 0x06 P1_YL
+         * Reading count and coordinates together means a finger lifting
+         * between two reads cannot produce a stale point that is still
+         * reported as pressed.
+         *
+         * Pressed only for 1 or 2 points with event flag 0 or 2 and a position
+         * inside the screen. On an I2C failure the previous state and position
+         * are kept (no invented release, no invented position). */
+        inline bool _read_touch()
+        {
+            if (!_enable || !_i2c) {
+                _pressed = false;
+                return false;
+            }
+            uint8_t b[5];
+            if (!_I2C_readBuff(0x02, 5, b)) {
+                return _pressed;
+            }
+            const uint8_t points = b[0] & 0x0F;
+            const uint8_t event  = b[1] >> 6;
+            bool valid = (points == 1 || points == 2) && (event == 0 || event == 2);
+            if (valid) {
+                int nx, ny;
+                _transform(&b[1], nx, ny);
+                if (nx >= 0 && nx < 320 && ny >= 0 && ny < 240) {
+                    _x_pos = nx;
+                    _y_pos = ny;
+                } else {
+                    valid = false;
+                }
+            }
+            _pressed = valid;
+            return valid;
         }
 
     public:
@@ -140,17 +179,29 @@ class CTP_Class {
             _init();
         }
 
-        inline bool isTouched()
+        /**
+         * @brief Read the panel once; true while a valid finger is down.
+         * x / y are set to the last good position (-1 if none yet).
+         */
+        inline bool readTouch(int& x, int& y)
         {
-            if (!_enable) return false;
-            uint8_t count = 0;
-            return _i2c->readRegister(_dev_addr, 0x02, &count, 1, CTP_I2C_FREQ)
-                && count != 0;
+            const bool down = _read_touch();
+            x = _x_pos;
+            y = _y_pos;
+            return down;
         }
 
+        inline bool isTouched()
+        {
+            return _read_touch();
+        }
+
+        /* Position from the most recent isTouched()/readTouch() while that read
+         * reported a press (no second I2C transaction, so it always belongs to
+         * the same sample); performs a fresh read only if none is pressed yet. */
         inline bool getPos(int& x_pos, int& y_pos)
         {
-            if (!_enable || !_update_coor()) {
+            if (!_enable || (!_pressed && !_read_touch()) || _x_pos < 0) {
                 x_pos = -1;
                 y_pos = -1;
                 return false;
@@ -177,8 +228,8 @@ class CTP_Class {
 
         inline void printCoordinate()
         {
-            if (isTouched()) _update_coor();
-            else _reset_coor();
+            int x, y;
+            if (!readTouch(x, y)) _reset_coor();
 
             Serial.printf("X:%03d Y:%03d\n", _x_pos, _y_pos);
         }
