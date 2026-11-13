@@ -78,6 +78,11 @@ public:
 
     _tcp.setNoDelay(true);
     _tcp.begin(63333);
+    if (!_tcp) {
+      Serial.println("[RetroTV] listen socket failed");
+      stop();
+      return false;
+    }
 
     // Decode and draw on the app task. The upstream output task shares global
     // state and can outlive a frame (or a deleted receiver).
@@ -398,6 +403,7 @@ private:
   }
 
   bool drawJpg(void) {
+    _jdec = TJpgD{};  // drop width/height/msx/msy and table pointers left from the previous frame
     TJpgD::JRESULT jres = _jdec.prepare(jpgRead, this);
     if (jres != TJpgD::JDR_OK) {
       Serial.printf("prepare failed! %d\r\n", jres);

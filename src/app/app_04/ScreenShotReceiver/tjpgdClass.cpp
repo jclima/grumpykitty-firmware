@@ -180,6 +180,7 @@ static int create_qt_tbl (	/* 0:OK, !0:Failed */
 	int32_t *pb;
 
 	do {	/* Process all tables in the segment */
+		if (ndata < 65) return TJpgD::JDR_FMT1;	/* Err: truncated table (also prevents ndata underflow) */
 		d = *data++;							/* Get table property */
 		if (d & 0xF0) return TJpgD::JDR_FMT1;			/* Err: not 8-bit resolution */
 		pb = (int32_t*)alloc_pool(jd, 64 * sizeof (int32_t));/* Allocate a memory block for the table */
@@ -214,6 +215,7 @@ static int create_huffman_tbl (	/* 0:OK, !0:Failed */
 
 
 	do {	/* Process all tables in the segment */
+		if (ndata < 17) return TJpgD::JDR_FMT1;	/* Err: truncated table (also prevents ndata underflow) */
 		d = *data++;						/* Get table number and class */
 		if (d & 0xEE) return TJpgD::JDR_FMT1;		/* Err: invalid class/number */
 		cls = d >> 4; num = d & 0x0F;		/* class = dc(0)/ac(1), table number = 0/1 */
@@ -224,6 +226,8 @@ static int create_huffman_tbl (	/* 0:OK, !0:Failed */
 		for (size_t i = 0; i < 16; ++i) {		/* Load number of patterns for 1 to 16-bit code */
 			np += (pb[i] = data[i]);		/* Get sum of code words for each code */
 		}
+
+		if (ndata < 17 + np) return TJpgD::JDR_FMT1;	/* Err: segment shorter than the table it declares */
 
 		ph = (uint16_t*)alloc_pool(jd, (np * sizeof (uint16_t)));/* Allocate a memory block for the code word table */
 		if (!ph) return TJpgD::JDR_MEM1;			/* Err: not enough memory */
@@ -522,6 +526,7 @@ static TJpgD::JRESULT mcu_load (
 		hd = jd->huffdata[id][0];
 		b = huffext(jd, hb, hc, hd);			/* Extract a huffman coded data (bit length) */
 		if (b < 0) return (TJpgD::JRESULT)(-b);		/* Err: invalid code or input */
+		if (b > 11) return TJpgD::JDR_FMT1;		/* Err: DC bit length out of range (bitext handles 1 to 11 bits) */
 		d = jd->dcv[cmp];						/* DC value of previous block */
 		if (b) {								/* If there is any difference from previous block */
 			e = bitext(jd, b);					/* Extract data bits */
@@ -540,11 +545,13 @@ static TJpgD::JRESULT mcu_load (
 		hc = jd->huffcode[id][1];
 		hd = jd->huffdata[id][1];
 		i = 1;					/* Top of the AC elements */
+		z = 1;					/* No AC element decoded yet (EOB first) -> DC-only block */
 		do {
 			b = huffext(jd, hb, hc, hd);		/* Extract a huffman coded value (zero runs and bit length) */
 			if (b == 0) break;					/* EOB? */
 			if (b < 0) return (TJpgD::JRESULT)(-b);	/* Err: invalid code or input error */
 			i += b >> 4;
+			if (i > 63) return TJpgD::JDR_FMT1;	/* Err: zero run points past the last coefficient */
 			if (b &= 0x0F) {					/* Bit length */
 				d = bitext(jd, b);				/* Extract data bits */
 				if (d < 0) return (TJpgD::JRESULT)(-d);/* Err: input device */
@@ -553,7 +560,7 @@ static TJpgD::JRESULT mcu_load (
 				z = ZIG(i);						/* Zigzag-order to raster-order converted index */
 				tmp[z] = d * dqf[z] >> 8;		/* De-quantize, apply scale factor of Arai algorithm and descale 8 bits */
 			}
-		} while (++i != 64);		/* Next AC element */
+		} while (++i < 64);		/* Next AC element */
 
 		if (z == 1) {	/* If no AC element or scale ratio is 1/8, IDCT can be ommited and the block is filled with DC value */
 			d = (jd_yuv_t)((*tmp / 256) + 128);
@@ -772,6 +779,7 @@ TJpgD::JRESULT TJpgD::prepare (
 		dctr -= len;
 		switch (marker) {
 		case 0xC0:	/* SOF0 (baseline JPEG) */
+			if (len < 15) return TJpgD::JDR_FMT1;	/* Err: segment too short for 3 components */
 			width = LDB_WORD(seg+3);		/* Image width in unit of pixel */
 			height = LDB_WORD(seg+1);		/* Image height in unit of pixel */
 			if (seg[5] != 3) return TJpgD::JDR_FMT3;	/* Err: Supports only Y/Cb/Cr format */
@@ -795,6 +803,7 @@ TJpgD::JRESULT TJpgD::prepare (
 
 		case 0xDD:	/* DRI */
 			/* Get restart interval (MCUs) */
+			if (len < 2) return TJpgD::JDR_FMT1;
 			nrst = LDB_WORD(seg);
 			break;
 
@@ -812,6 +821,7 @@ TJpgD::JRESULT TJpgD::prepare (
 
 		case 0xDA:	/* SOS */
 			if (!width || !height) return TJpgD::JDR_FMT1;	/* Err: Invalid image size */
+			if (len < 7) return TJpgD::JDR_FMT1;	/* Err: segment too short for 3 components (reads seg[0..6]) */
 
 			if (seg[0] != 3) return TJpgD::JDR_FMT3;				/* Err: Supports only three color components format */
 

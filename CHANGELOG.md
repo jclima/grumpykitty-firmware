@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Reject malformed JPEG input in the Retro TV decoder: check DQT/DHT lengths, DC category and AC zero-run bounds, initialise the block flag, validate SOF0/DRI/SOS segment lengths, reset the decoder object before each frame and report a failed listen socket.
+
 ## [0.1.8-grumpy] - 2026-11-11
 
 ### Fixed
