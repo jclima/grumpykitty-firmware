@@ -115,42 +115,43 @@ static const VBtnDef kVBtns_Audio[] = {
 };
 static constexpr int kVBtns_Audio_N = 8;
 
-/* 4 — Blu-ray / DVD */
+/* 4 — Blu-ray / DVD (names as shipped in bluray_dvd.ir) */
 static const VBtnDef kVBtns_BDvd[] = {
-    {"POWER",  "Power"},    {"EJECT",  "Open_Close"},
-    {"PLAY",   "Play"},     {"PAUSE",  "Pause"},
-    {"STOP",   "Stop"},     {"MUTE",   "Mute"},
-    {"NEXT",   "Next"},     {"PREV",   "Prev"},
+    {"POWER",    "Power"},    {"EJECT",   "Eject"},
+    {"PLAY",     "Play"},     {"PAUSE",   "Pause"},
+    {"FWD >>",   "Fast_fo"},  {"<< REW",  "Fast_ba"},
+    {"SUBTITLE", "Subtitle"}, {"OK",      "Ok"},
 };
 static constexpr int kVBtns_BDvd_N = 8;
 
-/* 5 — Digital signage */
+/* 5 — Digital signage (names as shipped in digital_sign.ir) */
 static const VBtnDef kVBtns_Sign[] = {
-    {"POWER",  "Power"},    {"MUTE",   "Mute"},
-    {"VOL +",  "Vol_up"},   {"VOL -",  "Vol_dn"},
+    {"POWER",  "Power"},    {"SOURCE", "SOURCE"},
+    {"PLAY",   "PLAY"},     {"STOP",   "STOP"},
 };
 static constexpr int kVBtns_Sign_N = 4;
 
-/* 6 — Fans */
+/* 6 — Fans (names as shipped in fans.ir) */
 static const VBtnDef kVBtns_Fan[] = {
-    {"POWER",  "Power"},    {"SWING",  "Swing"},
+    {"POWER",  "Power"},    {"ROTATE", "Rotate"},
     {"SPD +",  "Speed_up"}, {"SPD -",  "Speed_dn"},
-    {"SLEEP",  "Sleep"},    {"TIMER",  "Timer"},
+    {"MODE",   "Mode"},     {"TIMER",  "Timer"},
 };
 static constexpr int kVBtns_Fan_N = 6;
 
-/* 7 — LED strips */
+/* 7 — LED strips (names as shipped in leds.ir) */
 static const VBtnDef kVBtns_LED[] = {
-    {"POWER",  "Power"},       {"FLASH",   "Flash"},
-    {"BRT +",  "Brightness_up"},{"BRT -",  "Brightness_dn"},
-    {"STROBE", "Strobe"},      {"SMOOTH",  "Smooth"},
+    {"PWR ON",  "Power_on"},      {"PWR OFF", "Power_off"},
+    {"BRT +",   "Brightness_up"}, {"BRT -",   "Brightness_dn"},
+    {"RED",     "Red"},           {"GREEN",   "Green"},
+    {"BLUE",    "Blue"},          {"WHITE",   "White"},
 };
-static constexpr int kVBtns_LED_N = 6;
+static constexpr int kVBtns_LED_N = 8;
 
-/* 8 — PC monitor */
+/* 8 — PC monitor (names as shipped in monitor.ir) */
 static const VBtnDef kVBtns_Mon[] = {
-    {"POWER",  "Power"},       {"INPUT",  "Input_next"},
-    {"BRT +",  "Brightness_up"},{"BRT -", "Brightness_dn"},
+    {"POWER",  "Power"},    {"SOURCE", "SOURCE"},
+    {"MENU",   "MENU"},     {"EXIT",   "EXIT"},
 };
 static constexpr int kVBtns_Mon_N = 4;
 
@@ -226,6 +227,9 @@ namespace MOONCAKE::APPS
     /* ════════════════════════════════════════════════════════════
      *  Constructor / Lifecycle
      * ════════════════════════════════════════════════════════════ */
+
+    /* Number of "name:" lines in an existing .ir file, or -1 on read failure. */
+    static int countNameLines(const char* path);
 
     /* Defined with the .ir file helpers below. Returns the Flipper protocol name
      * only when flipperEncodeFrame() reproduces value/bits exactly, else nullptr. */
@@ -535,6 +539,17 @@ namespace MOONCAKE::APPS
 
         decode_results results;
         if (_irRecv->decode(&results)) {
+            /* A NEC-style repeat frame carries no data of its own: keep waiting
+             * for the real frame instead of saving a ~3-sample raw signal. */
+            if (results.repeat) { _irRecv->resume(); return; }
+
+            /* RC5 / RC5X: bit 11 of the value is the toggle bit, which flips on
+             * every key press. Mask it so the round-trip check against the
+             * canonical frame passes and the stored value is stable. */
+            static constexpr uint64_t kRc5Toggle = 0x800;
+            uint64_t rxValue = results.value;
+            if (results.decode_type == RC5 || results.decode_type == RC5X) rxValue &= ~kRc5Toggle;
+
             /* Store the received signal (do NOT memset over the vector) */
             _learnedSig.rawData.clear();
             _learnedSig.name[0]   = '\0';
@@ -560,10 +575,10 @@ namespace MOONCAKE::APPS
             _learnedSig.isRaw = true;
             if (results.decode_type != UNKNOWN && results.decode_type != (decode_type_t)(-1)) {
                 uint32_t addr = results.address, cmd = results.command;
-                if (flipperNameFor(results.decode_type, results.bits, addr, cmd, results.value, &cmd)) {
+                if (flipperNameFor(results.decode_type, results.bits, addr, cmd, rxValue, &cmd)) {
                     _learnedSig.isRaw    = false;
                     _learnedSig.protocol = results.decode_type;
-                    _learnedSig.value    = results.value;
+                    _learnedSig.value    = rxValue;
                     _learnedSig.bits     = results.bits;
                     _learnedSig.address  = addr;
                     _learnedSig.command  = cmd;
@@ -948,7 +963,24 @@ namespace MOONCAKE::APPS
         if (!_device->button.A.pressed()) return;
 
         if (_menuSel == 0) {
-            bool ok = _appendSignalToFile(_savePath, _learnedSig);
+            /* Give the appended signal a unique name: <name>_<count+1>. */
+            char origName[sizeof(_learnedSig.name)];
+            memcpy(origName, _learnedSig.name, sizeof(origName));
+            const int existing = countNameLines(_savePath);
+            bool ok = false;
+            if (existing >= 0) {
+                char suffix[16];
+                snprintf(suffix, sizeof(suffix), "_%d", existing + 1);
+                const size_t maxBase = sizeof(_learnedSig.name) - 1 - strlen(suffix);
+                const size_t baseLen = std::min(strlen(origName), maxBase);
+                char newName[sizeof(_learnedSig.name)];
+                memcpy(newName, origName, baseLen);
+                strcpy(newName + baseLen, suffix);
+                if (!infrared_file::validName(newName)) snprintf(newName, sizeof(newName), "Signal%s", suffix);
+                strcpy(_learnedSig.name, newName);
+                ok = _appendSignalToFile(_savePath, _learnedSig);
+            }
+            memcpy(_learnedSig.name, origName, sizeof(origName));
             _drawMsgBox(ok ? "Signal saved!" : "Save FAILED!", ok ? _savePath : "Recovery needed; inspect files");
             delay(1500);
             if (ok) _switchScene(IrScene::MainMenu);
@@ -2190,6 +2222,12 @@ namespace MOONCAKE::APPS
             while (*q) {
                 while (*q == ' ' || *q == '\t') ++q; if (!*q) break;
                 char* end = nullptr; long v = strtol(q, &end, 10);
+                /* Even sample index = mark, odd = space (index 0 is a mark; the
+                 * parity continues across several "data:" lines because the
+                 * sample vector is only reset at "name:"). A space longer than
+                 * 65535 us is clamped on import; a longer mark is invalid. */
+                const bool isSpace = (_loadSignal.rawData.size() & 1u) != 0;
+                if (isSpace && v > 65535) v = 65535;
                 /* A token must end at whitespace or end of string ("123+456" is not two values). */
                 if (end == q || !(*end == '\0' || *end == ' ' || *end == '\t') || v < 1 || v > 65535 || _loadSignal.rawData.size() >= infrared_file::kMaxRawDurations || _loadRawUsec > infrared_file::kMaxRawUsec - (uint32_t)v) { _loadValidSignal = false; break; }
                 _loadSignal.rawData.push_back((uint16_t)v); _loadRawUsec += (uint32_t)v; any = true; q = end;
@@ -2252,6 +2290,37 @@ namespace MOONCAKE::APPS
             _switchScene(_loadSuccessScene);
             _prevScene = _loadOrigin;
         }
+    }
+
+    static int countNameLines(const char* path)
+    {
+        File f = SD_MMC.open(path, FILE_READ);
+        if (!f) return -1;
+        static const char kKey[] = "name:";
+        const size_t keyLen = sizeof(kKey) - 1;
+        const size_t fileSize = f.size();
+        size_t consumed = 0, col = 0;
+        bool match = true;
+        int count = 0;
+        uint8_t buf[512];
+        while (true) {
+            const size_t n = f.read(buf, sizeof(buf));
+            if (n == 0 || n > sizeof(buf)) {
+                if (n > sizeof(buf) || consumed < fileSize) count = -1;
+                break;
+            }
+            consumed += n;
+            for (size_t i = 0; i < n; i++) {
+                const char c = (char)buf[i];
+                if (c == '\n') { col = 0; match = true; continue; }
+                if (col < keyLen) {
+                    if (c != kKey[col]) match = false;
+                    if (++col == keyLen && match) count++;
+                }
+            }
+        }
+        f.close();
+        return count;
     }
 
     bool App09::_saveSignalToFile(const char* dir, const char* remoteName, const IrSignal& sig)
