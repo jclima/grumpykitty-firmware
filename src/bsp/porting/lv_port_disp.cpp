@@ -145,10 +145,17 @@ void lv_port_disp_init(LGFX_Class* lcd)
     disp_drv.draw_buf = &draw_buf_dsc_2;
     #endif
     
-    /*Full-refresh mode: LVGL always flushes the entire screen.
-     *Combined with 2 PSRAM full-screen buffers this enables true
-     *double-buffering — rendering and flushing happen in parallel.*/
+    /* Full refresh (default): LVGL re-renders and flushes the whole screen on
+     * every invalidation. The flush callback is synchronous (it does not return
+     * until the pixels are sent), so the two buffers do not overlap rendering
+     * with flushing; this mode simply keeps the frame complete.
+     * Build with -DMK_LVGL_PARTIAL_REFRESH to redraw only invalidated areas
+     * (both buffers are kept). */
+    #ifdef MK_LVGL_PARTIAL_REFRESH
+    disp_drv.full_refresh = 0;
+    #else
     disp_drv.full_refresh = 1;
+    #endif
 
 
     /* Set LVGL software rotation */
