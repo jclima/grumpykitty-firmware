@@ -74,6 +74,8 @@ static lv_obj_t * s_sw_ble      = NULL;
 static lv_obj_t * s_sw_wifi     = NULL;
 static lv_obj_t * s_lbl_ssid    = NULL;
 static lv_obj_t * s_lbl_wifi_st = NULL;
+static lv_timer_t * s_wifi_card_timer = NULL;   /* 2 s refresh of the Connect-tab SSID card */
+#define TAB_SSID_NONE "Tap to choose a network"
 
 /* Factory-reset confirmation dialog (NULL when closed) */
 static lv_obj_t * s_reset_dialog = NULL;
@@ -225,14 +227,31 @@ static void tab_ble_sw_cb(lv_event_t * e)
     settings_set_ble_en(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0);
 }
 
-/* SSID card status: "Wi-Fi off" / "Connected" / "Not connected". */
+/* SSID card: current SSID while connected, otherwise the saved one, plus a live
+ * status: "Wi-Fi off" / "Connecting..." / "Connected" / "Not connected". */
 static void _refresh_wifi_status_lbl(void)
 {
-    if(!s_lbl_wifi_st) return;
     bool on  = settings_get_wifi_en();
-    bool con = on && ui_wifi_bridge_is_connected();
-    lv_label_set_text(s_lbl_wifi_st, !on ? "Wi-Fi off" : con ? "Connected" : "Not connected");
+    wifi_bridge_status_t st = ui_wifi_bridge_get_status();
+    bool con = on && st == WIFI_BRIDGE_CONNECTED;
+    bool ing = on && st == WIFI_BRIDGE_CONNECTING;
+    if(s_lbl_ssid) {
+        char ssid[33] = {};
+        if(con) {
+            strncpy(ssid, ui_wifi_bridge_get_current_ssid(), sizeof(ssid) - 1);
+        }
+        if(!ssid[0]) persist_get_str(PKEY_WIFI_SSID, ssid, sizeof(ssid), "");
+        lv_label_set_text(s_lbl_ssid, ssid[0] ? ssid : TAB_SSID_NONE);
+    }
+    if(!s_lbl_wifi_st) return;
+    lv_label_set_text(s_lbl_wifi_st, !on ? "Wi-Fi off" : ing ? "Connecting..." : con ? "Connected" : "Not connected");
     lv_obj_set_style_text_color(s_lbl_wifi_st, lv_color_hex(con ? TV_LIME : TV_MUTED), 0);
+}
+
+static void _wifi_card_timer_cb(lv_timer_t * t)
+{
+    (void)t;
+    _refresh_wifi_status_lbl();
 }
 
 static void tab_wifi_sw_cb(lv_event_t * e)
@@ -530,7 +549,6 @@ static void _tab_set_time_cb(lv_event_t * e)
                       &ui_time_picker_screen_init);
 }
 
-#define TAB_SSID_NONE "Tap to choose a network"
 
 static void _tab_ssid_row_cb(lv_event_t * e)
 {
@@ -705,6 +723,7 @@ static void build_tab_connect(lv_obj_t * page)
     s_lbl_wifi_st = mk_lbl_r_card(ssid_row, !settings_get_wifi_en() ? "Wi-Fi off" : wifi_on ? "Connected" : "Not connected", 0,
                                   wifi_on ? TV_LIME : TV_MUTED, &ui_font_name_14);
     lv_obj_set_width(s_lbl_wifi_st, CARD_INN - 22);
+    if(!s_wifi_card_timer) s_wifi_card_timer = lv_timer_create(_wifi_card_timer_cb, 2000, NULL);
 
     lv_obj_t * chev = lv_label_create(ssid_row);
     lv_label_set_text(chev, LV_SYMBOL_RIGHT);
@@ -944,12 +963,7 @@ static void _tabview_refresh_values(void)
     _sync_switch(s_sw_ble,  settings_get_ble_en());
     _sync_switch(s_sw_wifi, settings_get_wifi_en());
 
-    if(s_lbl_ssid) {
-        char saved_ssid[33] = {};
-        persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
-        lv_label_set_text(s_lbl_ssid, saved_ssid[0] ? saved_ssid : TAB_SSID_NONE);
-    }
-    _refresh_wifi_status_lbl();
+    _refresh_wifi_status_lbl();   /* SSID + status */
 }
 
 static void _tabview_screen_event(lv_event_t * e)
@@ -959,6 +973,7 @@ static void _tabview_screen_event(lv_event_t * e)
         _tabview_refresh_values();
         if(s_time_timer)    lv_timer_resume(s_time_timer);
         if(s_sys_bat_timer) lv_timer_resume(s_sys_bat_timer);
+        if(s_wifi_card_timer) lv_timer_resume(s_wifi_card_timer);
         tab_time_refresh(NULL);
         _sys_bat_refresh(NULL);
         break;
@@ -969,6 +984,7 @@ static void _tabview_screen_event(lv_event_t * e)
     case LV_EVENT_SCREEN_UNLOADED:
         if(s_time_timer)    lv_timer_pause(s_time_timer);
         if(s_sys_bat_timer) lv_timer_pause(s_sys_bat_timer);
+        if(s_wifi_card_timer) lv_timer_pause(s_wifi_card_timer);
         break;
     default:
         break;
@@ -1091,6 +1107,7 @@ void ui_tabview_screen_destroy(void)
 {
     if(s_time_timer)    { lv_timer_del(s_time_timer);    s_time_timer    = NULL; }
     if(s_sys_bat_timer) { lv_timer_del(s_sys_bat_timer); s_sys_bat_timer = NULL; }
+    if(s_wifi_card_timer) { lv_timer_del(s_wifi_card_timer); s_wifi_card_timer = NULL; }
     s_lbl_date        = NULL;
     s_lbl_time_str    = NULL;
     s_sys_bat_pct_lbl = NULL;
