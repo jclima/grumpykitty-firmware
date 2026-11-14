@@ -49,6 +49,10 @@ void amp(bool on) {
 }
 
 bool play_mp3_locked(const uint8_t* data, size_t len, uint32_t limit_ms) {
+    /* Clear the stop request BEFORE the s_suspended check. system_sound_suspend()
+     * sets s_suspended and then s_stop, so a suspend landing after this point
+     * keeps its stop flag instead of having it erased further down. */
+    s_stop = false;
     if (!s_ready || s_suspended || !data || len < 4 || s_volume == 0) return false;
     if (!MP3Decoder_AllocateBuffers()) return false;
     MP3Decoder_ClearBuffer();
@@ -56,7 +60,6 @@ bool play_mp3_locked(const uint8_t* data, size_t len, uint32_t limit_ms) {
         2304 * sizeof(int16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     if (!pcm) { MP3Decoder_FreeBuffers(); return false; }
 
-    s_stop = false;
     s_playing = true;
     amp(true);
     uint32_t deadline = limit_ms ? millis() + limit_ms : 0;

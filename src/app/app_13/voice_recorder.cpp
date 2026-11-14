@@ -64,9 +64,11 @@ void AppVoiceRecorder::serviceDeferredClose(DEVICES*) {
 
 void AppVoiceRecorder::onOpen() {
     // Exclusive audio bus ownership: the mic and speaker share MCLK/BCLK/WS.
-    system_sound_suspend();
-    i2s_driver_uninstall(I2S_NUM_1);   // defensive: no-op when absent
-    _busy = _device->speaker.isEnabled();
+    bool suspended = system_sound_suspend();
+    if (suspended) i2s_driver_uninstall(I2S_NUM_1);   // defensive: no-op when absent
+    // A failed suspend means the system sound task still owns the shared audio
+    // bus: stay in the busy state (like the VU meter) and do not touch I2S.
+    _busy = !suspended || _device->speaker.isEnabled();
 
     memset(_prev, 0, sizeof(_prev));
     _a_armed = _b_armed = false; _b_since = 0;
