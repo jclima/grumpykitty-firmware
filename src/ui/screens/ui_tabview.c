@@ -1314,6 +1314,8 @@ static void _tab_changed_cb(lv_event_t * e)
 /* PRESSED does not bubble, so every clickable object under the screen listens. */
 static void _touch_reset_attach(lv_obj_t * o)
 {
+    /* The on-screen Select/B keys act on the current focus level: they must not reset it. */
+    if(o == ui_tab_key_a_bg || o == ui_tab_key_b_bg) return;
     if(lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE))
         lv_obj_add_event_cb(o, _touch_reset_cb, LV_EVENT_PRESSED, NULL);
     uint32_t n = lv_obj_get_child_cnt(o);
