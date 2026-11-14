@@ -77,8 +77,12 @@ static lv_obj_t * s_lbl_wifi_st = NULL;
 static lv_timer_t * s_wifi_card_timer = NULL;   /* 2 s refresh of the Connect-tab SSID card */
 #define TAB_SSID_NONE "Tap to choose a network"
 
-/* Factory-reset confirmation dialog (NULL when closed) */
-static lv_obj_t * s_reset_dialog = NULL;
+/* Confirmation dialog (Reboot / Factory Reset). NULL when closed. Created with a
+ * NULL parent, so it is modal on the top layer (blocks taps on the screen behind). */
+typedef enum { TV_DLG_NONE = 0, TV_DLG_REBOOT, TV_DLG_RESET } tv_dlg_kind_t;
+static lv_obj_t     * s_dialog      = NULL;
+static tv_dlg_kind_t  s_dialog_kind = TV_DLG_NONE;
+static int            s_dialog_sel  = 0;     /* highlighted button: 0 = Cancel, 1 = confirm */
 
 // ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -143,61 +147,130 @@ static void tab_key_b_cb(lv_event_t * e)
     _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_settings_screen_init);
 }
 
-static void tab_reboot_cb(lv_event_t * e)
+/* Buttons are {"Cancel", <confirm>}: index 0 cancels, index 1 confirms. */
+static void _dialog_close(void)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    settings_flush();   /* push any debounced setting to NVS before restarting */
-    esp_restart();
+    if (!s_dialog) return;
+    lv_obj_t * d = s_dialog;
+    s_dialog      = NULL;
+    s_dialog_kind = TV_DLG_NONE;
+    s_dialog_sel  = 0;
+    lv_msgbox_close(d);
 }
 
-static void _fr_msgbox_cb(lv_event_t * e)
+static void _dialog_cb(lv_event_t * e)
 {
     lv_obj_t * mbox = lv_event_get_current_target(e);
-    /* Button index 0 = "Reset", 1 = "Cancel" */
-    s_reset_dialog = NULL;
-    if (lv_msgbox_get_active_btn(mbox) == 0) {
-        lv_msgbox_close(mbox);
+    uint16_t idx = lv_msgbox_get_active_btn(mbox);
+    if (idx != 0 && idx != 1) return;
+    tv_dlg_kind_t kind = s_dialog_kind;
+    _dialog_close();
+    if (idx != 1) return;
+    if (kind == TV_DLG_REBOOT) {
+        settings_flush();   /* push any debounced setting to NVS before restarting */
+        esp_restart();
+    } else if (kind == TV_DLG_RESET) {
         recovery_factory_reset();   /* erase NVS + restart — does not return */
-    } else {
-        lv_msgbox_close(mbox);
     }
 }
 
-static void _fr_msgbox_delete_cb(lv_event_t * e)
+/* Danger-coloured confirm button and the joystick highlight on the selected one. */
+static void _dialog_btns_draw_cb(lv_event_t * e)
 {
-    /* Dialog destroyed by any path (parent screen deleted, etc.) */
-    if (s_reset_dialog == lv_event_get_target(e)) s_reset_dialog = NULL;
+    lv_obj_draw_part_dsc_t * dsc = lv_event_get_draw_part_dsc(e);
+    if (dsc->class_p != &lv_btnmatrix_class || dsc->type != LV_BTNMATRIX_DRAW_PART_BTN) return;
+    if (dsc->id == 1 && dsc->rect_dsc) {
+        dsc->rect_dsc->bg_color = lv_color_hex(TV_DANGER);
+        dsc->rect_dsc->bg_opa   = LV_OPA_COVER;
+        if (dsc->label_dsc) dsc->label_dsc->color = lv_color_white();
+    }
+    if ((int)dsc->id == s_dialog_sel && dsc->rect_dsc) {
+        dsc->rect_dsc->border_color = lv_color_hex(TV_LIME);
+        dsc->rect_dsc->border_width = 3;
+        dsc->rect_dsc->border_opa   = LV_OPA_COVER;
+        dsc->rect_dsc->border_side  = LV_BORDER_SIDE_FULL;
+    }
 }
 
-bool ui_tabview_reset_dialog_open(void)
+static void _dialog_delete_cb(lv_event_t * e)
 {
-    return s_reset_dialog != NULL;
+    /* Dialog destroyed by any path (backdrop deleted, etc.) */
+    if (s_dialog == lv_event_get_target(e)) {
+        s_dialog      = NULL;
+        s_dialog_kind = TV_DLG_NONE;
+        s_dialog_sel  = 0;
+    }
 }
 
-void ui_tabview_reset_dialog_cancel(void)
+bool ui_tabview_dialog_open(void)
 {
-    if (!s_reset_dialog) return;
-    lv_obj_t * d = s_reset_dialog;
-    s_reset_dialog = NULL;
-    lv_msgbox_close(d);
+    return s_dialog != NULL;
+}
+
+void ui_tabview_dialog_cancel(void)
+{
+    _dialog_close();
+}
+
+/* Left/Right (dir -1 / +1) moves the highlight between Cancel and the confirm button. */
+void ui_tabview_dialog_move(int dir)
+{
+    if (!s_dialog) return;
+    int n = s_dialog_sel + (dir < 0 ? -1 : 1);
+    if (n < 0) n = 0;
+    if (n > 1) n = 1;
+    if (n == s_dialog_sel) return;
+    s_dialog_sel = n;
+    lv_obj_t * btns = lv_msgbox_get_btns(s_dialog);
+    if (btns) lv_obj_invalidate(btns);
+}
+
+/* A: same path as a tap on the highlighted button (VALUE_CHANGED on the button matrix,
+ * which bubbles to the message box). */
+void ui_tabview_dialog_activate(void)
+{
+    if (!s_dialog) return;
+    lv_obj_t * btns = lv_msgbox_get_btns(s_dialog);
+    if (!btns) return;
+    lv_btnmatrix_set_selected_btn(btns, (uint16_t)s_dialog_sel);
+    lv_event_send(btns, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+static void _dialog_open(tv_dlg_kind_t kind, const char * title, const char * text)
+{
+    if (s_dialog) return;   /* already showing */
+    static const char * btns_reset[]  = {"Cancel", "Reset",  ""};
+    static const char * btns_reboot[] = {"Cancel", "Reboot", ""};
+    lv_obj_t * mbox = lv_msgbox_create(NULL, title, text,
+        kind == TV_DLG_RESET ? btns_reset : btns_reboot, false);
+    if (!mbox) return;
+    lv_obj_set_width(mbox, 220);
+    lv_obj_set_style_bg_color(mbox,    lv_color_hex(TV_CARD),  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_color(mbox, lv_color_hex(kind == TV_DLG_RESET ? TV_DANGER : TV_LIME),
+                                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(mbox, 2,                      LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_color(mbox,  lv_color_white(),        LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(mbox);
+    lv_obj_t * btns = lv_msgbox_get_btns(mbox);
+    if (btns) lv_obj_add_event_cb(btns, _dialog_btns_draw_cb, LV_EVENT_DRAW_PART_BEGIN, NULL);
+    lv_obj_add_event_cb(mbox, _dialog_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(mbox, _dialog_delete_cb, LV_EVENT_DELETE, NULL);
+    s_dialog      = mbox;
+    s_dialog_kind = kind;
+    s_dialog_sel  = 0;   /* start on Cancel */
+}
+
+static void tab_reboot_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _dialog_open(TV_DLG_REBOOT, "Reboot", "Reboot now?");
 }
 
 static void tab_factory_reset_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    if(s_reset_dialog) return;   /* already showing */
-    static const char * btns[] = {"Reset", "Cancel", ""};
-    lv_obj_t * mbox = lv_msgbox_create(lv_scr_act(),
-        "Factory Reset",
-        "Erase ALL settings?\nThis cannot be undone.",
-        btns, false);
-    lv_obj_set_style_bg_color(mbox,    lv_color_hex(TV_CARD),  LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_color(mbox, lv_color_hex(TV_DANGER), LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_set_style_border_width(mbox, 2,                      LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_center(mbox);
-    lv_obj_add_event_cb(mbox, _fr_msgbox_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(mbox, _fr_msgbox_delete_cb, LV_EVENT_DELETE, NULL);
-    s_reset_dialog = mbox;
+    _dialog_open(TV_DLG_RESET, "Factory Reset",
+                 "Erase ALL settings?\nThis cannot be undone.");
 }
 
 // ── NVS persist callbacks — called on LV_EVENT_VALUE_CHANGED ─────────────
@@ -978,8 +1051,8 @@ static void _tabview_screen_event(lv_event_t * e)
         _sys_bat_refresh(NULL);
         break;
     case LV_EVENT_SCREEN_UNLOAD_START:
-        /* An open Factory Reset dialog must not survive leaving the screen */
-        ui_tabview_reset_dialog_cancel();
+        /* An open confirmation dialog (top layer) must not survive leaving the screen */
+        ui_tabview_dialog_cancel();
         break;
     case LV_EVENT_SCREEN_UNLOADED:
         if(s_time_timer)    lv_timer_pause(s_time_timer);
@@ -1116,7 +1189,7 @@ void ui_tabview_screen_destroy(void)
     s_sl_bright = s_lbl_bright = s_sl_led = s_lbl_led = NULL;
     s_sl_vol = s_lbl_vol = s_sw_key = s_sw_ble = s_sw_wifi = NULL;
     s_lbl_ssid = s_lbl_wifi_st = NULL;
-    s_reset_dialog = NULL;
+    ui_tabview_dialog_cancel();   /* dialog lives on the top layer, not under ui_tabview */
 
     if(ui_tabview) lv_obj_del(ui_tabview);
 

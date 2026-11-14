@@ -10,6 +10,7 @@
 - Wi-Fi password keyboard can be typed with the joystick: it moves a highlight over the keys and A presses the highlighted key (Send is now a key).
 
 ### Fixed
+- Settings: Reboot now asks "Reboot now?" first; the Reboot and Factory Reset dialogs are modal (taps cannot reach the screen behind), list Cancel first with the destructive button in the danger colour, and work with the buttons (Left/Right pick, starts on Cancel, A activates, B cancels).
 - USB storage screen: the A (Eject) and B (Back) keys are tappable and share one code path with the physical buttons (including the Eject on the computer first check), every message goes through one notice that stays for 3 s before the live status replaces it, and the copy is sentence case without the contradictory detached message.
 - Home hint now lists the joystick directions that match what the joystick does (Left Apps, Right Settings, Up Clock, Down SD); it previously described the swipes.
 - Wi-Fi: a connect from the picker times out after 15 s, the password keyboard disconnects on its own timeout so the next Send works, taps ignored during a scan or connect show a toast, toasts are width-limited and dismiss after 2.5 s, and the Settings Connect tab SSID card shows the live SSID and status.

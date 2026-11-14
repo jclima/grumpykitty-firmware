@@ -15,9 +15,12 @@ extern "C" {
 // SCREEN: ui_tabview
 extern void ui_tabview_screen_init(void);
 extern void ui_tabview_screen_destroy(void);
-/* Factory Reset confirmation dialog: query / close (physical-button navigation) */
-extern bool ui_tabview_reset_dialog_open(void);
-extern void ui_tabview_reset_dialog_cancel(void);
+/* Reboot / Factory Reset confirmation dialog (modal, top layer): physical-button navigation.
+ * Left/Right (dir -1/+1) move the highlight between Cancel and the confirm button. */
+extern bool ui_tabview_dialog_open(void);
+extern void ui_tabview_dialog_cancel(void);
+extern void ui_tabview_dialog_move(int dir);
+extern void ui_tabview_dialog_activate(void);
 extern lv_obj_t * ui_tabview;
 extern lv_obj_t * ui_tabview_settings;
 extern lv_obj_t * ui_TabPage1;

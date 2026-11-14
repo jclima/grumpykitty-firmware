@@ -1136,10 +1136,14 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         return;
     }
     if (cur == ui_tabview) {
-        if (ui_tabview_reset_dialog_open()) {
-            /* Factory Reset confirmation is up: B cancels it; A and the joystick
-             * must not navigate away (or change tabs) behind an armed dialog. */
-            if (b) ui_tabview_reset_dialog_cancel();
+        if (ui_tabview_dialog_open()) {
+            /* Reboot / Factory Reset confirmation is up: Left/Right pick a button
+             * (starts on Cancel), A activates it, B cancels. Nothing reaches the
+             * screen behind (no navigation, no tab change). */
+            if (left)       ui_tabview_dialog_move(-1);
+            else if (right) ui_tabview_dialog_move(1);
+            else if (a)     ui_tabview_dialog_activate();
+            else if (b)     ui_tabview_dialog_cancel();
             return;
         }
         if (a)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_home_screen_init); return; }
