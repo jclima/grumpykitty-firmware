@@ -20,6 +20,7 @@
 - Radio Scanner keeps the 40 strongest Wi-Fi networks of a scan instead of the first 40, Voice Recorder closes without touching the SD card while USB storage owns it and retries restoring system audio once, and Retro TV reports Wi-Fi off, connect failure and stream start failure on screen and yields between updates.
 - Settings -> Connect: the SSID row is now a tappable card that opens the Wi-Fi network picker, and B (or swipe right) returns to the Connect tab.
 - Wi-Fi setup shows a short message when A is pressed with nothing to select.
+- The Settings Wi-Fi switch now turns the radio off and on: off cancels scans and connections and powers the radio down (the scan worker finishes first), on re-enables it and reconnects to the saved network; with Wi-Fi off at boot nothing auto-connects, the network picker shows "Wi-Fi is off" instead of scanning, and the Connect tab reads "Wi-Fi off".
 
 ## [0.1.8-grumpy] - 2026-11-11
 

@@ -13,6 +13,7 @@
  */
 #include "ui_wifi_bridge.h"
 #include "../system/persist.h"
+#include "../system/settings_bridge.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <freertos/FreeRTOS.h>
@@ -56,6 +57,10 @@ static char s_pending_ssid[33] = "";
 
 static bool s_inited = false;
 
+/* Master radio switch (the Settings Wi-Fi toggle). While false nothing may
+ * scan, connect or auto-reconnect. Seeded from settings in init. */
+static volatile bool s_radio_on = true;
+
 /* Protects scan-result reads/frees and the scan task bookkeeping below. */
 static SemaphoreHandle_t s_lock = nullptr;
 static inline void _lock(void)   { if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY); }
@@ -66,7 +71,8 @@ static bool s_scan_task_active = false;
 static bool s_monitor_active = false;
 
 enum wifi_radio_action_t { WIFI_ACTION_NONE, WIFI_ACTION_CONNECT,
-                           WIFI_ACTION_DISCONNECT, WIFI_ACTION_FORGET };
+                           WIFI_ACTION_DISCONNECT, WIFI_ACTION_FORGET,
+                           WIFI_ACTION_RADIO_OFF, WIFI_ACTION_RADIO_ON };
 static wifi_radio_action_t s_pending_action = WIFI_ACTION_NONE;
 static char s_pending_action_ssid[33] = "";
 static char s_pending_action_pass[65] = "";
@@ -86,6 +92,7 @@ static void _wifi_event(WiFiEvent_t event, WiFiEventInfo_t /*info*/)
     switch (event) {
 
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            if (!s_radio_on) break;   /* radio being switched off: ignore */
             s_status = WIFI_BRIDGE_CONNECTED;
             {
                 String ssid = WiFi.SSID();
@@ -218,6 +225,9 @@ static void _scan_task(void * /*arg*/)
         }
         _unlock();
 
+        /* Go IDLE first so the disconnect event cannot flip it to FAILED. */
+        if (action == WIFI_ACTION_RADIO_OFF) s_status = WIFI_BRIDGE_IDLE;
+
         /* Swallow the old link's DISCONNECTED event so it cannot fail the
          * attempt that follows. */
         s_prescan_disconnect = true;
@@ -226,10 +236,21 @@ static void _scan_task(void * /*arg*/)
         s_prescan_disconnect = false;
         if (action == WIFI_ACTION_CONNECT) {
             WiFi.mode(WIFI_STA);
+            WiFi.setAutoReconnect(false);
             s_status = WIFI_BRIDGE_CONNECTING;
             if (WiFi.begin(ssid, pass) == WL_CONNECT_FAILED) {
                 s_status = WIFI_BRIDGE_FAILED;
             }
+        } else if (action == WIFI_ACTION_RADIO_OFF) {
+            WiFi.disconnect(true);
+            WiFi.mode(WIFI_OFF);
+            s_status = WIFI_BRIDGE_IDLE;
+            s_current_ssid[0] = '\0';
+            s_current_ip[0] = '\0';
+        } else if (action == WIFI_ACTION_RADIO_ON) {
+            WiFi.mode(WIFI_STA);
+            WiFi.setAutoReconnect(false);
+            s_status = WIFI_BRIDGE_IDLE;
         } else {
             s_status = WIFI_BRIDGE_IDLE;
             s_current_ssid[0] = '\0';
@@ -256,6 +277,12 @@ void ui_wifi_bridge_init(void)
     WiFi.persistent(false);
 
     WiFi.onEvent(_wifi_event);
+    s_radio_on = settings_get_wifi_en() != 0;
+    if (!s_radio_on) {
+        Serial.println("[wifi] disabled in settings — radio off");
+        WiFi.mode(WIFI_OFF);
+        return;
+    }
     WiFi.mode(WIFI_STA);
     WiFi.setAutoReconnect(false);   /* we manage reconnect explicitly */
 
@@ -291,6 +318,11 @@ void ui_wifi_bridge_start_scan(void)
 {
     _lock();
     if (s_monitor_active) { _unlock(); return; }
+    if (!s_radio_on) {   /* finished, empty */
+        s_scan_count = 0;
+        _unlock();
+        return;
+    }
 
     /* A scan task is already running: don't spawn a second one, ask it to
      * scan again (it discards its current results first).  Unless a queued
@@ -441,7 +473,7 @@ void ui_wifi_bridge_connect(const char *ssid, const char *pass)
     /* Stop any in-progress scan before connecting. The scan task (sole owner
      * of the results) notices the generation change and frees them itself. */
     _lock();
-    if (s_monitor_active) { _unlock(); return; }
+    if (s_monitor_active || !s_radio_on) { _unlock(); return; }
     bool was_scanning = s_scan_task_active;
     if (was_scanning) {
         s_scan_gen++;
@@ -514,7 +546,8 @@ void ui_wifi_bridge_disconnect(void)
         s_scan_gen++;
         s_scan_count = -2;
         s_need_reconnect = false;
-        s_pending_action = WIFI_ACTION_DISCONNECT;
+        if (s_pending_action != WIFI_ACTION_RADIO_OFF)
+            s_pending_action = WIFI_ACTION_DISCONNECT;
         s_status = WIFI_BRIDGE_IDLE;
         s_current_ssid[0] = '\0';
         s_current_ip[0]   = '\0';
@@ -530,6 +563,63 @@ void ui_wifi_bridge_disconnect(void)
     s_current_ip[0]   = '\0';
 }
 
+/* ── Radio on/off (Settings Wi-Fi switch) ────────────────────── */
+void ui_wifi_bridge_set_enabled(bool on)
+{
+    if (!s_inited) return;   /* init seeds the state from settings */
+
+    if (!on) {
+        _lock();
+        if (s_monitor_active) { _unlock(); return; }
+        s_radio_on = false;
+        s_try_valid = false;
+        s_need_reconnect = false;
+        s_scan_gen++;
+        s_scan_count = -2;
+        s_current_ssid[0] = '\0';
+        s_current_ip[0]   = '\0';
+        const bool worker = s_scan_task_active;
+        if (worker) {
+            /* Never stop the radio while the worker is inside scanNetworks. */
+            s_pending_action = WIFI_ACTION_RADIO_OFF;
+            s_status = WIFI_BRIDGE_IDLE;
+        }
+        _unlock();
+        if (worker) {
+            Serial.println("[wifi] radio off queued until scan worker finishes");
+            return;
+        }
+        s_status = WIFI_BRIDGE_IDLE;   /* before disconnecting: no FAILED */
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        Serial.println("[wifi] radio off");
+        return;
+    }
+
+    _lock();
+    if (s_monitor_active) { _unlock(); return; }
+    s_radio_on = true;
+    const bool worker = s_scan_task_active;
+    _unlock();
+
+    char sv_ssid[33] = {};
+    persist_get_str(kKeySsid, sv_ssid, sizeof(sv_ssid), "");
+    if (!worker) {
+        WiFi.mode(WIFI_STA);
+        WiFi.setAutoReconnect(false);
+        s_status = WIFI_BRIDGE_IDLE;
+    }
+    if (sv_ssid[0] != '\0') {
+        /* Queues behind the worker (replacing a pending RADIO_OFF) if busy. */
+        ui_wifi_bridge_connect_saved(sv_ssid);
+    } else if (worker) {
+        _lock();
+        if (s_scan_task_active) s_pending_action = WIFI_ACTION_RADIO_ON;
+        _unlock();
+    }
+    Serial.println("[wifi] radio on");
+}
+
 /* ── State ───────────────────────────────────────────────────── */
 wifi_bridge_status_t ui_wifi_bridge_get_status(void)
 {
@@ -539,6 +629,7 @@ wifi_bridge_status_t ui_wifi_bridge_get_status(void)
 void ui_wifi_bridge_get_status_text(char *buf, int len)
 {
     if (!buf || len <= 0) return;
+    if (!s_radio_on) { snprintf(buf, (size_t)len, "Wi-Fi off"); return; }
     switch (s_status) {
         case WIFI_BRIDGE_CONNECTED:
             snprintf(buf, (size_t)len, "Connected: %s", s_current_ssid);
@@ -599,7 +690,8 @@ void ui_wifi_bridge_forget(const char *ssid)
             s_scan_gen++;
             s_scan_count = -2;
             s_need_reconnect = false;
-            s_pending_action = WIFI_ACTION_FORGET;
+            if (s_pending_action != WIFI_ACTION_RADIO_OFF)
+                s_pending_action = WIFI_ACTION_FORGET;
             s_status = WIFI_BRIDGE_IDLE;
             s_current_ssid[0] = '\0';
             s_current_ip[0]   = '\0';

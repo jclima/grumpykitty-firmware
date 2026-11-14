@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include "../ui.h"
 #include "../ui_wifi_bridge.h"
+#include "../../system/settings_bridge.h"
 
 // ── Screen-level objects (extern in ui_wifi.h) ──
 lv_obj_t * ui_wifi;
@@ -182,6 +183,7 @@ static bool _wifi_input_blocked(void)
 // ── Start / restart AP scan (safe to call repeatedly) ──
 static void _wifi_start_scan(void)
 {
+    if(!settings_get_wifi_en()) return;   /* radio off: nothing to poll for */
     if(s_scan_active) return;
     s_scan_done   = false;
     s_scan_active = true;   /* set before lv_obj_add_state to guard re-entry */
@@ -433,6 +435,25 @@ static void _wifi_build_list(void)
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 28, 0);
 
         return;  // Never expose stale scan rows for activation.
+    }
+
+    if(!settings_get_wifi_en()) {
+        /* Radio off: empty state, no rows to focus. */
+        s_focus_index = -1;
+        s_focus_rescan = false;
+        s_focused.ssid[0] = '\0';
+        lv_obj_t * row = lv_obj_create(ui_wifi_list);
+        lv_obj_set_size(row, lv_pct(100), 56);
+        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(row, 0, 0);
+        lv_obj_set_style_pad_all(row, 2, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_t * lbl = lv_label_create(row);
+        lv_label_set_text(lbl, "Wi-Fi is off\nTurn it on in Settings");
+        lv_obj_set_style_text_color(lbl, lv_color_hex(0x888888), 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 4, 0);
+        return;
     }
 
     if(n < 0) n = 0;

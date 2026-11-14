@@ -225,9 +225,22 @@ static void tab_ble_sw_cb(lv_event_t * e)
     settings_set_ble_en(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0);
 }
 
+/* SSID card status: "Wi-Fi off" / "Connected" / "Not connected". */
+static void _refresh_wifi_status_lbl(void)
+{
+    if(!s_lbl_wifi_st) return;
+    bool on  = settings_get_wifi_en();
+    bool con = on && ui_wifi_bridge_is_connected();
+    lv_label_set_text(s_lbl_wifi_st, !on ? "Wi-Fi off" : con ? "Connected" : "Not connected");
+    lv_obj_set_style_text_color(s_lbl_wifi_st, lv_color_hex(con ? TV_LIME : TV_MUTED), 0);
+}
+
 static void tab_wifi_sw_cb(lv_event_t * e)
 {
-    settings_set_wifi_en(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0);
+    bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    settings_set_wifi_en(on ? 1 : 0);
+    ui_wifi_bridge_set_enabled(on);
+    _refresh_wifi_status_lbl();
 }
 
 // ── Widget helpers ────────────────────────────────────────────────────────
@@ -676,7 +689,7 @@ static void build_tab_connect(lv_obj_t * page)
     /* Show saved SSID from NVS; status reflects live connection state */
     char saved_ssid[33] = {};
     persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
-    bool wifi_on = ui_wifi_bridge_is_connected();
+    bool wifi_on = settings_get_wifi_en() && ui_wifi_bridge_is_connected();
     /* Tappable card: opens the network picker (ui_wifi). Page scroll is off, so a
      * tap cannot turn into a scroll. Child labels are not clickable. */
     lv_obj_t * ssid_row = mk_card(page, 104, 52);
@@ -689,7 +702,7 @@ static void build_tab_connect(lv_obj_t * page)
     s_lbl_ssid = mk_lbl(ssid_row, saved_ssid[0] ? saved_ssid : TAB_SSID_NONE, 0, 18, TV_TEXT, &ui_font_name_14);
     lv_obj_set_width(s_lbl_ssid, CARD_INN - 22);
     lv_label_set_long_mode(s_lbl_ssid, LV_LABEL_LONG_DOT);
-    s_lbl_wifi_st = mk_lbl_r_card(ssid_row, wifi_on ? "Connected" : "Not connected", 0,
+    s_lbl_wifi_st = mk_lbl_r_card(ssid_row, !settings_get_wifi_en() ? "Wi-Fi off" : wifi_on ? "Connected" : "Not connected", 0,
                                   wifi_on ? TV_LIME : TV_MUTED, &ui_font_name_14);
     lv_obj_set_width(s_lbl_wifi_st, CARD_INN - 22);
 
@@ -936,12 +949,7 @@ static void _tabview_refresh_values(void)
         persist_get_str(PKEY_WIFI_SSID, saved_ssid, sizeof(saved_ssid), "");
         lv_label_set_text(s_lbl_ssid, saved_ssid[0] ? saved_ssid : TAB_SSID_NONE);
     }
-    if(s_lbl_wifi_st) {
-        bool wifi_on = ui_wifi_bridge_is_connected();
-        lv_label_set_text(s_lbl_wifi_st, wifi_on ? "Connected" : "Not connected");
-        lv_obj_set_style_text_color(s_lbl_wifi_st,
-                                    lv_color_hex(wifi_on ? TV_LIME : TV_MUTED), 0);
-    }
+    _refresh_wifi_status_lbl();
 }
 
 static void _tabview_screen_event(lv_event_t * e)
