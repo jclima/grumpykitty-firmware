@@ -638,6 +638,13 @@ bool ui_wifi_bridge_set_enabled(bool on)
     return true;
 }
 
+bool ui_wifi_apply_enabled(bool on)
+{
+    if (!ui_wifi_bridge_set_enabled(on)) return false;
+    settings_set_wifi_en(on ? 1 : 0);
+    return true;
+}
+
 /* ── State ───────────────────────────────────────────────────── */
 wifi_bridge_status_t ui_wifi_bridge_get_status(void)
 {

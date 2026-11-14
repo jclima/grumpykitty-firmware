@@ -24,6 +24,12 @@ void ui_wifi_bridge_init(void);
  *  down; on re-enables STA and reconnects to the saved network. */
 bool ui_wifi_bridge_set_enabled(bool on);
 
+/** Apply the Wi-Fi switch in one place (Settings tab and quick settings):
+ *  ui_wifi_bridge_set_enabled(on) and, only when that succeeds, persist the
+ *  setting with settings_set_wifi_en(on). Returns false if refused (the
+ *  setting is then left unchanged and the caller must revert its switch). */
+bool ui_wifi_apply_enabled(bool on);
+
 /** Erase WiFi credentials persisted by the IDF itself (esp_wifi_restore +
  *  'nvs.net80211' namespace). Used by 'forget network' and factory reset. */
 void ui_wifi_bridge_wipe_stored_config(void);

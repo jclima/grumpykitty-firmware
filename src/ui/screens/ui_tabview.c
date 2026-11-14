@@ -363,13 +363,11 @@ static void tab_wifi_sw_cb(lv_event_t * e)
 {
     lv_obj_t * sw = lv_event_get_target(e);
     bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
-    if(!ui_wifi_bridge_set_enabled(on)) {
+    if(!ui_wifi_apply_enabled(on)) {
         /* Radio is in use (monitor) and refused: put the switch back and keep
          * the saved setting. lv_obj_*_state does not emit VALUE_CHANGED. */
         if(on) lv_obj_clear_state(sw, LV_STATE_CHECKED);
         else   lv_obj_add_state(sw, LV_STATE_CHECKED);
-    } else {
-        settings_set_wifi_en(on ? 1 : 0);
     }
     _refresh_wifi_status_lbl();
 }
