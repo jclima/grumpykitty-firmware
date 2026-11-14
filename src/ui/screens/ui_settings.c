@@ -267,6 +267,11 @@ void ui_event_settings(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
 
+    if(event_code == LV_EVENT_SCREEN_LOAD_START) {
+        /* Screens are reused: drop any joystick focus left from the previous visit. */
+        _focus_hide();
+        s_focus_idx = 0;
+    }
     if(event_code == LV_EVENT_GESTURE &&  lv_indev_get_gesture_dir(lv_indev_get_act()) == LV_DIR_RIGHT) {
         lv_indev_wait_release(lv_indev_get_act());
         _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 500, 0, &ui_home_screen_init);
