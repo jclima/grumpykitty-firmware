@@ -29,7 +29,9 @@ static uint8_t s_crit_count = 0;
 #define PCT_STEP_MS        10000u   /* at most 1 displayed point per 10 s   */
 #define PCT_MIN_DELTA      2        /* target must differ by >= 2 to step   */
 #define VBUS_SETTLE_MS     5000u    /* ignore samples after plug/unplug     */
-#define PCT_FULL_TARGET    97       /* charge-complete: allow reaching 100  */
+#define PCT_FULL_TARGET    90       /* charge-complete floor (no way to tell why PMU is not charging) */
+#define PCT_DIVERGE_DELTA  5        /* |target - displayed| that counts as divergence */
+#define PCT_DIVERGE_TICKS  30       /* consecutive valid ticks before snapping */
 #define V_EMA_ALPHA        (1.0f / 16.0f)
 
 static volatile int s_disp_pct   = 100;
@@ -39,6 +41,8 @@ static bool         s_last_vbus  = false;
 static uint32_t     s_settle_until  = 0;
 static uint32_t     s_last_step_ms  = 0;
 static bool         s_settling      = false;   /* VBUS-change settle window active */
+static bool         s_settle_unplug = false;   /* the settle in progress follows an unplug */
+static uint8_t      s_div_count     = 0;       /* consecutive diverged valid ticks */
 static bool         s_post_grace_seeded = false;
 
 /* true once `now` has reached `until` (wrap-safe). */
@@ -105,6 +109,18 @@ static void seed_all(float v, uint32_t now)
     s_seeded       = true;
     s_disp_pct     = curve_pct(v);
     s_last_step_ms = now;
+}
+
+/* Displayed percentage, capped by what the filtered voltage says. Used for
+ * low-battery decisions so a stale/high displayed value can never mask a low cell. */
+static int power_effective_pct(void)
+{
+    int pct = power_battery_pct();
+    if (s_pmu && s_seeded && power_is_ready()) {
+        const int e = curve_pct(s_v_ema);
+        if (e < pct) pct = e;
+    }
+    return pct;
 }
 
 /* Idle timer — reset by power_reset_sleep_timer() on any user activity */
@@ -180,7 +196,9 @@ extern "C" void power_tick(void)
     if (usb != s_last_vbus) {
         s_last_vbus    = usb;
         s_settling     = true;
+        s_settle_unplug = !usb;
         s_settle_until = now + VBUS_SETTLE_MS;
+        s_div_count    = 0;
     }
     if (valid) {
         if (s_settling) {
@@ -190,6 +208,12 @@ extern "C" void power_tick(void)
                 s_v_ema    = vm;
                 s_seeded   = true;
                 s_settling = false;
+                /* After an unplug the displayed value may have been seeded from
+                 * the raised charging voltage: never keep it above the real one. */
+                if (s_settle_unplug) {
+                    const int t = curve_pct(vm);
+                    if (t < s_disp_pct) s_disp_pct = t;
+                }
             }
         } else if (!s_seeded) {
             seed_all(v, now);
@@ -209,6 +233,7 @@ extern "C" void power_tick(void)
             now = millis();   /* the median read took ~60 ms */
             seed_all(vm, now);
             s_settling = false;
+            s_div_count = 0;
         }
     }
 
@@ -217,10 +242,27 @@ extern "C" void power_tick(void)
     /* Displayed percentage: hysteresis + rate limit. */
     if (s_seeded && !s_settling) {
         const int  target_raw = curve_pct(s_v_ema);
-        const bool full       = usb && !charging && target_raw >= PCT_FULL_TARGET;
+        /* Charge complete: VBUS present, battery present, PMU done charging. */
+        const bool full       = usb && !charging && target_raw >= PCT_FULL_TARGET &&
+                                s_pmu->isBatExist();
         const int  target     = full ? 100 : target_raw;
         const int  cur        = s_disp_pct;
-        if ((uint32_t)(now - s_last_step_ms) >= PCT_STEP_MS) {
+
+        /* Divergence escape: displayed value stuck far from the filtered one. */
+        if (valid) {
+            const int d = target_raw - cur;
+            if (d >= PCT_DIVERGE_DELTA || d <= -PCT_DIVERGE_DELTA) {
+                if (++s_div_count >= PCT_DIVERGE_TICKS) {
+                    s_disp_pct     = target_raw;
+                    s_last_step_ms = now;
+                    s_div_count    = 0;
+                }
+            } else {
+                s_div_count = 0;
+            }
+        }
+
+        if (s_disp_pct == cur && (uint32_t)(now - s_last_step_ms) >= PCT_STEP_MS) {
             if (!usb && target <= cur - PCT_MIN_DELTA) {
                 s_disp_pct = cur - 1;
                 s_last_step_ms = now;
@@ -239,7 +281,7 @@ extern "C" void power_tick(void)
     /* Critical shutdown keeps its original input: the unfiltered reading of
      * this tick (0 V counts as 0%), and the same N-consecutive-sample rule. */
     const int raw_pct = curve_pct(v);
-    const int pct     = s_disp_pct;   /* warning uses the displayed value */
+    const int pct     = power_effective_pct();   /* warning: never above the filtered voltage */
 
     /* Reset warn state when charging restores battery above warn threshold */
     if (charging && s_warn_shown && pct > POWER_WARN_BAT_PCT) {
@@ -353,12 +395,12 @@ extern "C" bool power_is_charging(void)
 
 extern "C" bool power_is_low_battery(void)
 {
-    return power_battery_pct() <= POWER_WARN_BAT_PCT && !power_is_charging();
+    return power_effective_pct() <= POWER_WARN_BAT_PCT && !power_is_charging();
 }
 
 extern "C" bool power_is_critical_battery(void)
 {
-    return power_battery_pct() <= POWER_CRIT_BAT_PCT && !power_is_charging();
+    return power_effective_pct() <= POWER_CRIT_BAT_PCT && !power_is_charging();
 }
 
 extern "C" bool power_vbus_present(void)
