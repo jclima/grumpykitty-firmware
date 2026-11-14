@@ -834,6 +834,10 @@ static void _conn_poll_cb(lv_timer_t * t)
         s_was_saved = false;
         ui_wifi_bridge_disconnect();
         _wifi_show_toast("Timed out", lv_color_hex(0xFF5555));
+        /* disconnect() invalidated any scan the header switch started meanwhile;
+         * drop that state so _wifi_start_scan() does not return early. */
+        if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
+        s_scan_active = false;
         _wifi_start_scan();
         _wifi_build_list();
     }
@@ -869,6 +873,15 @@ static void _scan_timer_cb(lv_timer_t * t)
 static void _switch_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    if(s_conn_timer) {
+        /* A connect is being polled: ignore the toggle and undo it visually. */
+        if(lv_obj_has_state(ui_wifi_scan_switch, LV_STATE_CHECKED))
+            lv_obj_clear_state(ui_wifi_scan_switch, LV_STATE_CHECKED);
+        else
+            lv_obj_add_state(ui_wifi_scan_switch, LV_STATE_CHECKED);
+        _wifi_show_toast_ex("Connecting...", lv_color_hex(0xFFFFFF), true);
+        return;
+    }
     if(lv_obj_has_state(ui_wifi_scan_switch, LV_STATE_CHECKED)) {
         _wifi_start_scan();
         _wifi_build_list();
