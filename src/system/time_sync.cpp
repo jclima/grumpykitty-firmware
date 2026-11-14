@@ -1,5 +1,6 @@
 #include "time_sync.h"
 #include "settings_bridge.h"
+#include "ota_updater.h"
 #include "../ui/ui_rtc_bridge.h"
 #include "../ui/ui_wifi_bridge.h"
 #include <Arduino.h>
@@ -18,6 +19,7 @@ static wifi_bridge_status_t s_prev_status = WIFI_BRIDGE_IDLE;
 static bool     s_prev_auto  = false;
 static bool     s_waiting    = false;   /* inside the 60 s window after a request */
 static bool     s_first_pending = false; /* no write yet since this connect: next result writes */
+static bool     s_synced_since_boot = false; /* an SNTP callback was consumed at least once */
 static uint32_t s_wait_start = 0;
 static bool     s_have_write = false;   /* RTC written at least once since boot */
 static uint32_t s_write_ms   = 0;
@@ -54,14 +56,22 @@ static bool _write_rtc(void)
 
 static void _start_request(void)
 {
-    /* Fresh sync: start SNTP, or restart it when something (OTA, an earlier
-     * connect) already enabled it so a new query goes out right away. */
-    s_sync_flag = false;
-    if (!sntp_enabled()) configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-    else                 sntp_restart();
-    s_waiting    = true;
+    /* The first result after each connect (or Auto time switched on) writes.
+     * lwIP SNTP stop/init are not thread-safe and the OTA worker may call
+     * configTime() at any time, so never restart SNTP from here. */
     s_first_pending = true;
-    s_wait_start = millis();
+    s_waiting       = true;
+    s_wait_start    = millis();
+
+    if (ota_updater::jobActive()) return;   /* OTA starts SNTP itself; wait for the callback */
+
+    if (!sntp_enabled()) {
+        configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+        return;
+    }
+    /* SNTP already running: use the clock it already set, else wait for the next callback. */
+    if (s_synced_since_boot && time(nullptr) >= kEarliestValid && _write_rtc())
+        s_first_pending = false;
 }
 
 extern "C" void time_sync_tick(void)
@@ -74,6 +84,7 @@ extern "C" void time_sync_tick(void)
     s_prev_auto   = auto_on;
 
     if (!auto_on) {
+        if (s_sync_flag) s_synced_since_boot = true;
         s_sync_flag     = false;
         s_waiting       = false;
         s_first_pending = false;
@@ -88,6 +99,7 @@ extern "C" void time_sync_tick(void)
 
     if (!s_sync_flag) return;
     s_sync_flag = false;
+    s_synced_since_boot = true;
     /* The first result after a connect always writes, even if it arrives after
      * the 60 s window; later periodic SNTP updates rewrite the RTC at most every 6 h. */
     if (!s_first_pending && s_have_write && (uint32_t)(millis() - s_write_ms) < kMinRewriteMs) return;

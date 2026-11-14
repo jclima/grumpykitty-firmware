@@ -384,6 +384,13 @@ Status status() {
     return result;
 }
 
+bool jobActive() {
+    portENTER_CRITICAL(&lock);
+    const bool active = busy;
+    portEXIT_CRITICAL(&lock);
+    return active;
+}
+
 bool check() { return start(Job::Check); }
 bool download() { return start(Job::Download); }
 

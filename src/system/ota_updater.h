@@ -21,4 +21,7 @@ void cancel();
 bool activate();
 void confirmHealthyBoot();
 
+// True while a check/download worker task is running (read-only).
+bool jobActive();
+
 } // namespace ota_updater
