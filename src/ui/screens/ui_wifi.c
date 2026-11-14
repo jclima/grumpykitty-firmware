@@ -78,6 +78,7 @@ static int _ap_cmp(const void * a, const void * b)
 // ── Forward declarations ──
 static void _wifi_build_list(void);
 static void _wifi_show_toast(const char * msg, lv_color_t color);
+static void _wifi_show_toast_ex(const char * msg, lv_color_t color, bool sticky);
 static void _wifi_add_rescan_row(void);
 static void _wifi_start_scan(void);
 static void _show_menu(const wifi_row_t * row);
@@ -88,26 +89,64 @@ static void _conn_poll_cb(lv_timer_t * t);
 static void _nav_to_t9_cb(lv_timer_t * t);
 
 // ── Toast ──
-static void _wifi_show_toast(const char * msg, lv_color_t color)
+#define WIFI_TOAST_MAX_W   300
+#define WIFI_TOAST_PAD_H   8
+#define WIFI_TOAST_MS      2500
+static lv_timer_t * s_toast_timer = NULL;   // one-shot auto-dismiss (NULL for sticky toasts)
+
+/* Delete the toast and its timer together. Safe when either is already gone. */
+static void _wifi_toast_clear(void)
 {
+    if(s_toast_timer) { lv_timer_del(s_toast_timer); s_toast_timer = NULL; }
     if(s_toast) { lv_obj_del(s_toast); s_toast = NULL; }
+}
+
+static void _toast_timer_cb(lv_timer_t * t)
+{
+    (void)t;
+    s_toast_timer = NULL;   /* repeat_count = 1: LVGL deletes the timer after this call */
+    if(s_toast) { lv_obj_del(s_toast); s_toast = NULL; }
+}
+
+/* sticky: stays until replaced or the screen unloads (used for "Connecting..."). */
+static void _wifi_show_toast_ex(const char * msg, lv_color_t color, bool sticky)
+{
+    _wifi_toast_clear();
     if(!ui_wifi) return;
     s_toast = lv_obj_create(ui_wifi);
     lv_obj_set_height(s_toast, 26);
     lv_obj_set_width(s_toast, LV_SIZE_CONTENT);
+    lv_obj_set_style_max_width(s_toast, WIFI_TOAST_MAX_W, 0);
     lv_obj_set_pos(s_toast, 8, 207);
     lv_obj_set_style_bg_color(s_toast, lv_color_hex(0x1C1C1E), 0);
     lv_obj_set_style_bg_opa(s_toast, 220, 0);
     lv_obj_set_style_radius(s_toast, 6, 0);
     lv_obj_set_style_border_width(s_toast, 0, 0);
-    lv_obj_set_style_pad_hor(s_toast, 8, 0);
+    lv_obj_set_style_pad_hor(s_toast, WIFI_TOAST_PAD_H, 0);
     lv_obj_set_style_pad_ver(s_toast, 4, 0);
     lv_obj_clear_flag(s_toast, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_t * lbl = lv_label_create(s_toast);
+    /* LV_LABEL_LONG_DOT needs a fixed width and height: size the label to the text,
+     * capped so the whole toast stays within WIFI_TOAST_MAX_W. */
+    lv_point_t sz;
+    lv_txt_get_size(&sz, msg, &lv_font_montserrat_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_coord_t w = sz.x + 2;
+    if(w > WIFI_TOAST_MAX_W - 2 * WIFI_TOAST_PAD_H) w = WIFI_TOAST_MAX_W - 2 * WIFI_TOAST_PAD_H;
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(lbl, w, lv_font_get_line_height(&lv_font_montserrat_14));
     lv_label_set_text(lbl, msg);
     lv_obj_set_style_text_color(lbl, color, 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
     lv_obj_move_foreground(s_toast);
+    if(!sticky) {
+        s_toast_timer = lv_timer_create(_toast_timer_cb, WIFI_TOAST_MS, NULL);
+        lv_timer_set_repeat_count(s_toast_timer, 1);
+    }
+}
+
+static void _wifi_show_toast(const char * msg, lv_color_t color)
+{
+    _wifi_show_toast_ex(msg, color, false);
 }
 
 static void _wifi_clear_focus_slots(void)
@@ -189,7 +228,7 @@ static void _wifi_notify_blocked(void)
     lv_disp_t *disp = lv_disp_get_default();
     if(!ui_wifi || lv_scr_act() != ui_wifi || (disp && disp->scr_to_load != NULL) || s_menu) return;
     if(ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING)
-        _wifi_show_toast("Connecting...", lv_color_hex(0xFFFFFF));
+        _wifi_show_toast_ex("Connecting...", lv_color_hex(0xFFFFFF), true);
     else if(s_scan_active)
         _wifi_show_toast("Scanning...", lv_color_hex(0xFFFFFF));
 }
@@ -351,7 +390,7 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
         ui_wifi_bridge_connect_saved(ssid);
         char msg[80];
         lv_snprintf(msg, sizeof(msg), "Connecting: %s", ssid);
-        _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
+        _wifi_show_toast_ex(msg, lv_color_hex(0xFFFFFF), true);
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
         s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
@@ -363,7 +402,7 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
         ui_wifi_bridge_connect(ssid, "");
         char msg[80];
         lv_snprintf(msg, sizeof(msg), "Connecting: %s (open)", ssid);
-        _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
+        _wifi_show_toast_ex(msg, lv_color_hex(0xFFFFFF), true);
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
         s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
@@ -798,6 +837,7 @@ void ui_event_wifi(lv_event_t * e)
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
         s_scan_active = false;
         _hide_menu();
+        _wifi_toast_clear();
         s_focus_index = -1;
         /* Leaving for anything but the password keyboard (e.g. Home) drops the
          * tabview return target. By UNLOADED the new screen is already active. */
@@ -812,6 +852,7 @@ void ui_event_wifi(lv_event_t * e)
             if(st == WIFI_BRIDGE_CONNECTING && !s_conn_timer) {
                 s_conn_start_ms = lv_tick_get();
                 s_conn_timer = lv_timer_create(_conn_poll_cb, 400, NULL);
+                _wifi_show_toast_ex("Connecting...", lv_color_hex(0xFFFFFF), true);
             }
             if(st != WIFI_BRIDGE_CONNECTING && !s_scan_active) _wifi_start_scan();
             _wifi_build_list();
@@ -863,6 +904,7 @@ void ui_wifi_screen_init(void)
     s_scan_timer    = NULL;
     s_conn_timer    = NULL;
     s_toast         = NULL;
+    s_toast_timer   = NULL;
     s_last_count    = -1;
     s_scan_done     = false;
     s_scan_active   = false;
@@ -1019,7 +1061,7 @@ void ui_wifi_screen_init(void)
         char msg[80];
         lv_snprintf(msg, sizeof(msg), "Connecting: %s",
                     ui_wifi_bridge_get_current_ssid());
-        _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
+        _wifi_show_toast_ex(msg, lv_color_hex(0xFFFFFF), true);
         s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
     } else {
@@ -1045,6 +1087,7 @@ void ui_wifi_screen_destroy(void)
 {
     if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
     if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+    _wifi_toast_clear();
     _wifi_clear_focus_slots();
     s_focused.ssid[0] = s_attempt_ssid[0] = '\0';
     s_focus_rescan = false;
