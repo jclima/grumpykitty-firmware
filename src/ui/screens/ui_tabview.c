@@ -9,6 +9,7 @@
 #include "../ui_wifi_bridge.h"
 #include "../../system/settings_bridge.h"
 #include "../../system/persist.h"
+#include "../../system/usb_msc.h"
 #include <esp_system.h>
 #include "../../system/recovery.h"
 #include "../../system/power_mgmt.h"
@@ -75,6 +76,16 @@ static lv_obj_t * s_sw_wifi     = NULL;
 static lv_obj_t * s_lbl_ssid    = NULL;
 static lv_obj_t * s_lbl_wifi_st = NULL;
 static lv_timer_t * s_wifi_card_timer = NULL;   /* 2 s refresh of the Connect-tab SSID card */
+
+/* System tab storage cards (refreshed at most every STORAGE_REFRESH_MS) */
+#define STORAGE_REFRESH_MS 5000
+static lv_obj_t * s_sd_bar    = NULL;
+static lv_obj_t * s_sd_lbl    = NULL;
+static lv_obj_t * s_nvs_bar   = NULL;
+static lv_obj_t * s_nvs_lbl   = NULL;
+static uint32_t   s_storage_last_ms = 0;
+static bool       s_storage_valid   = false;
+static void _storage_refresh(bool force);
 #define TAB_SSID_NONE "Tap to choose a network"
 
 /* Confirmation dialog (Reboot / Factory Reset). NULL when closed. Created with a
@@ -116,6 +127,8 @@ static void _sys_bat_refresh(lv_timer_t * t)
     if (fw < 1) fw = 1;
     lv_obj_set_width(s_sys_bat_fill, fw);
     lv_obj_set_style_bg_color(s_sys_bat_fill, lv_color_hex(bar_clr), 0);
+
+    _storage_refresh(false);   /* throttled; only while the System tab is showing */
 }
 
 static void tab_time_refresh(lv_timer_t * t)
@@ -839,6 +852,54 @@ static void build_tab_time(lv_obj_t * page)
     }
 }
 
+/* SD + NVS usage. While USB mass storage owns the card the SD figures are left as they
+ * were (no filesystem access); NVS stats are internal flash and always safe. */
+static void _storage_refresh(bool force)
+{
+    if(!s_sd_bar || !s_sd_lbl || !s_nvs_bar || !s_nvs_lbl) return;
+    if(!force) {
+        /* Only while the System tab is the visible one */
+        if(!ui_tabview_settings || !ui_TabPage5) return;
+        lv_obj_t * cont = lv_tabview_get_content(ui_tabview_settings);
+        if(!cont || lv_obj_get_child(cont, lv_tabview_get_tab_act(ui_tabview_settings)) != ui_TabPage5) return;
+        if(s_storage_valid && (uint32_t)(lv_tick_get() - s_storage_last_ms) < STORAGE_REFRESH_MS) return;
+    }
+    s_storage_last_ms = lv_tick_get();
+
+    bool msc_owns_sd = usb_msc_is_active() || usb_msc_is_draining();
+    if(!msc_owns_sd || !s_storage_valid) {
+        uint64_t sd_total = msc_owns_sd ? 0 : (uint64_t)ui_sd_total_bytes();
+        uint64_t sd_used  = msc_owns_sd ? 0 : (uint64_t)ui_sd_used_bytes();
+        int sd_pct = (sd_total > 0) ? (int)((sd_used * 100ULL) / sd_total) : 0;
+        char sd_info[40];
+        if(msc_owns_sd) {
+            lv_snprintf(sd_info, sizeof(sd_info), "USB storage active");
+        } else if(sd_total == 0) {
+            lv_snprintf(sd_info, sizeof(sd_info), "not mounted");
+        } else {
+            uint32_t u_mb = (uint32_t)(sd_used  / 1048576UL);
+            uint32_t t_mb = (uint32_t)(sd_total / 1048576UL);
+            if(t_mb >= 1024)
+                lv_snprintf(sd_info, sizeof(sd_info), "%u.%u / %u.%u GB",
+                            u_mb / 1024, (u_mb % 1024) * 10 / 1024,
+                            t_mb / 1024, (t_mb % 1024) * 10 / 1024);
+            else
+                lv_snprintf(sd_info, sizeof(sd_info), "%u / %u MB", u_mb, t_mb);
+        }
+        lv_bar_set_value(s_sd_bar, sd_pct, LV_ANIM_OFF);
+        lv_label_set_text(s_sd_lbl, sd_info);
+    }
+
+    nvs_stats_t nst = {};
+    nvs_get_stats(NULL, &nst);   /* NULL = default NVS partition */
+    int nvs_pct = (nst.total_entries > 0)
+                  ? (int)((nst.used_entries * 100u) / nst.total_entries) : 0;
+    lv_label_set_text_fmt(s_nvs_lbl, "%u / %u entries",
+                          (unsigned)nst.used_entries, (unsigned)nst.total_entries);
+    lv_bar_set_value(s_nvs_bar, nvs_pct, LV_ANIM_OFF);
+    s_storage_valid = true;
+}
+
 static void build_tab_system(lv_obj_t * page)
 {
     // Page itself is NOT scrollable — title stays fixed
@@ -938,35 +999,16 @@ static void build_tab_system(lv_obj_t * page)
     y += 20;
 
     {
-        uint64_t sd_total = (uint64_t)ui_sd_total_bytes();
-        uint64_t sd_used  = (uint64_t)ui_sd_used_bytes();
-        int sd_pct = (sd_total > 0) ? (int)((sd_used * 100ULL) / sd_total) : 0;
-        char sd_info[40];
-        if(sd_total == 0) {
-            lv_snprintf(sd_info, sizeof(sd_info), "not mounted");
-        } else {
-            uint32_t u_mb = (uint32_t)(sd_used  / 1048576UL);
-            uint32_t t_mb = (uint32_t)(sd_total / 1048576UL);
-            if(t_mb >= 1024)
-                lv_snprintf(sd_info, sizeof(sd_info), "%u.%u / %u.%u GB",
-                            u_mb / 1024, (u_mb % 1024) * 10 / 1024,
-                            t_mb / 1024, (t_mb % 1024) * 10 / 1024);
-            else
-                lv_snprintf(sd_info, sizeof(sd_info), "%u / %u MB", u_mb, t_mb);
-        }
-
         lv_obj_t * c_sd = mk_card(sc, y, 68);
         mk_lbl(c_sd, "SD Card", 0, 0, TV_TEXT, &ui_font_name_14);
-        mk_bar(c_sd, 0, 20, CARD_INN, sd_pct, TV_ORANGE);
-        {
-            lv_obj_t * l = lv_label_create(c_sd);
-            lv_label_set_text(l, sd_info);
-            lv_obj_set_pos(l, 0, 38);
-            lv_obj_set_width(l, CARD_INN);
-            lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(TV_MUTED), 0);
-            lv_obj_set_style_text_font(l, &ui_font_name_14, 0);
-        }
+        s_sd_bar = mk_bar(c_sd, 0, 20, CARD_INN, 0, TV_ORANGE);
+        s_sd_lbl = lv_label_create(c_sd);
+        lv_label_set_text(s_sd_lbl, "");
+        lv_obj_set_pos(s_sd_lbl, 0, 38);
+        lv_obj_set_width(s_sd_lbl, CARD_INN);
+        lv_obj_set_style_text_align(s_sd_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(s_sd_lbl, lv_color_hex(TV_MUTED), 0);
+        lv_obj_set_style_text_font(s_sd_lbl, &ui_font_name_14, 0);
         y += 68 + 8;
     }
 
@@ -975,28 +1017,19 @@ static void build_tab_system(lv_obj_t * page)
     y += 20;
 
     {
-        nvs_stats_t nst = {};
-        nvs_get_stats(NULL, &nst);   /* NULL = default NVS partition */
-        int nvs_pct = (nst.total_entries > 0)
-                      ? (int)((nst.used_entries * 100u) / nst.total_entries) : 0;
-        char nvs_info[40];
-        lv_snprintf(nvs_info, sizeof(nvs_info), "%u / %u entries",
-                    (unsigned)nst.used_entries, (unsigned)nst.total_entries);
-
         lv_obj_t * c_nvs = mk_card(sc, y, 68);
         mk_lbl(c_nvs, "NVS Config", 0, 0, TV_TEXT, &ui_font_name_14);
-        mk_bar(c_nvs, 0, 20, CARD_INN, nvs_pct, TV_LIME);
-        {
-            lv_obj_t * l = lv_label_create(c_nvs);
-            lv_label_set_text(l, nvs_info);
-            lv_obj_set_pos(l, 0, 38);
-            lv_obj_set_width(l, CARD_INN);
-            lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
-            lv_obj_set_style_text_color(l, lv_color_hex(TV_MUTED), 0);
-            lv_obj_set_style_text_font(l, &ui_font_name_14, 0);
-        }
+        s_nvs_bar = mk_bar(c_nvs, 0, 20, CARD_INN, 0, TV_LIME);
+        s_nvs_lbl = lv_label_create(c_nvs);
+        lv_label_set_text(s_nvs_lbl, "");
+        lv_obj_set_pos(s_nvs_lbl, 0, 38);
+        lv_obj_set_width(s_nvs_lbl, CARD_INN);
+        lv_obj_set_style_text_align(s_nvs_lbl, LV_TEXT_ALIGN_RIGHT, 0);
+        lv_obj_set_style_text_color(s_nvs_lbl, lv_color_hex(TV_MUTED), 0);
+        lv_obj_set_style_text_font(s_nvs_lbl, &ui_font_name_14, 0);
         y += 68 + 8;
     }
+    _storage_refresh(true);
 
     // ── MAINTENANCE ──────────────────────────────────────────────────────────
     mk_lbl(sc, "MAINTENANCE", TAB_MARG, y, TV_MUTED, &ui_font_name_14);
@@ -1037,6 +1070,7 @@ static void _tabview_refresh_values(void)
     _sync_switch(s_sw_wifi, settings_get_wifi_en());
 
     _refresh_wifi_status_lbl();   /* SSID + status */
+    _storage_refresh(true);       /* fresh figures on every visit */
 }
 
 static void _tabview_screen_event(lv_event_t * e)
@@ -1189,6 +1223,8 @@ void ui_tabview_screen_destroy(void)
     s_sl_bright = s_lbl_bright = s_sl_led = s_lbl_led = NULL;
     s_sl_vol = s_lbl_vol = s_sw_key = s_sw_ble = s_sw_wifi = NULL;
     s_lbl_ssid = s_lbl_wifi_st = NULL;
+    s_sd_bar = s_sd_lbl = s_nvs_bar = s_nvs_lbl = NULL;
+    s_storage_valid = false;
     ui_tabview_dialog_cancel();   /* dialog lives on the top layer, not under ui_tabview */
 
     if(ui_tabview) lv_obj_del(ui_tabview);
