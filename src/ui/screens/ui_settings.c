@@ -3,6 +3,7 @@
 // LVGL version: 8.3.11
 // Project name: main_interface
 
+#include <stdio.h>
 #include "../ui.h"
 #include "../ui_wifi_bridge.h"
 #include "../ui_sd_bridge.h"
@@ -96,9 +97,20 @@ static void ui_event_info_button_click(lv_event_t * e)
     if(lv_event_get_code(e) != LV_EVENT_CLICKED || s_info_dialog) return;
 
     static const char * buttons[] = {"OK", ""};
+    char info[96];
+    if(!settings_get_wifi_en()) {
+        snprintf(info, sizeof(info), "Firmware " FIRMWARE_VERSION "\nWi-Fi: off");
+    } else if(ui_wifi_bridge_is_connected()) {
+        char ip[16];
+        ui_wifi_bridge_get_ip(ip, sizeof(ip));
+        if(ip[0]) snprintf(info, sizeof(info), "Firmware " FIRMWARE_VERSION "\nIP %s", ip);
+        else      snprintf(info, sizeof(info), "Firmware " FIRMWARE_VERSION "\nWi-Fi: not connected");
+    } else {
+        snprintf(info, sizeof(info), "Firmware " FIRMWARE_VERSION "\nWi-Fi: not connected");
+    }
     s_info_dialog = lv_msgbox_create(lv_scr_act(),
                                      PROJECT_NAME,
-                                     "Firmware " FIRMWARE_VERSION,
+                                     info,
                                      buttons, false);
     lv_obj_set_width(s_info_dialog, 250);
     lv_obj_set_flex_align(s_info_dialog, LV_FLEX_ALIGN_CENTER,

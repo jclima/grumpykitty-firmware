@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Settings Info dialog also shows the Wi-Fi IP address, or "Wi-Fi: not connected" / "Wi-Fi: off".
 - Wi-Fi picker: the options menu of the connected network starts with Details, a live view of its IP, gateway, signal strength, channel, MAC and BSSID (A or B closes it).
 - Status LED shows Wi-Fi connect progress while the LED is otherwise idle: blue breathing while connecting (up to 20 s), then a 600 ms green flash on success or red on failure; skipped when the LED brightness is 0 or a battery/charging effect is active.
 - Settings tabs reach every row with the joystick: Up/Down switch tabs (all five are reachable), Right or A enters the tab and outlines the first row, Up/Down move between rows (Up from the first row returns to the tabs), Left/Right change a slider by 5, A toggles a switch or opens the focused button or SSID card, and B steps back to the tab list before a second B leaves. A no longer jumps Home (the key reads Select), and tapping the on-screen A/B keys does the same as the buttons.
