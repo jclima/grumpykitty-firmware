@@ -14,6 +14,7 @@ extern "C" {
 extern void ui_clock_screen_init(void);
 extern void ui_clock_screen_destroy(void);
 extern void ui_event_clock(lv_event_t * e);
+extern void ui_clock_open_editor(void);   // same path as the double-tap
 extern lv_obj_t * ui_clock;
 extern lv_obj_t * ui_clock_bg;
 extern lv_obj_t * ui_up_;

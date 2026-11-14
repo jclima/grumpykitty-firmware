@@ -1100,6 +1100,7 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         if (left)  { ui_sd_card_files_action_previous_page(); return; }
         if (right) { ui_sd_card_files_action_next_page(); return; }
     } else if (cur == ui_clock) {
+        if (a)     { ui_clock_open_editor(); return; }
         if (down)  { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_TOP,    500, 0, &ui_home_screen_init); return; }
     } else if (cur == ui_manual) {
         if (a)     { ui_manual_enter_focused(); return; }

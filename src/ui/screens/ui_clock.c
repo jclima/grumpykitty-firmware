@@ -4,7 +4,7 @@
  *
  * Navigation:
  *   Swipe UP / Joystick DOWN  → Home (MOVE_TOP)
- *   Double-tap on face        → Manual settings (FADE_ON)
+ *   Double-tap on face / A    → Manual settings (FADE_ON)
  *
  * Real-time update:
  *   LVGL 1Hz timer → ui_rtc_bridge_get() → update ui_week / ui_date / ui_time labels
@@ -48,6 +48,13 @@ static void clock_tick_cb(lv_timer_t * t)
 /* ── Double-tap state ── */
 static uint32_t s_last_tap_ms = 0;
 
+/* Open the manual date/time editor. Shared by the double-tap and the A button. */
+void ui_clock_open_editor(void)
+{
+    s_last_tap_ms = 0;
+    _ui_screen_change(&ui_manual, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_manual_screen_init);
+}
+
 /* ── Event handler ── */
 void ui_event_clock(lv_event_t * e)
 {
@@ -77,8 +84,7 @@ void ui_event_clock(lv_event_t * e)
     if (event_code == LV_EVENT_SHORT_CLICKED) {
         uint32_t now = lv_tick_get() | 1u;
         if (s_last_tap_ms && lv_tick_elaps(s_last_tap_ms) < 500) {
-            s_last_tap_ms = 0;
-            _ui_screen_change(&ui_manual, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_manual_screen_init);
+            ui_clock_open_editor();
         } else {
             s_last_tap_ms = now;
         }
@@ -156,7 +162,7 @@ void ui_clock_screen_init(void)
 
     /* Make the existing double-tap edit affordance discoverable. */
     lv_obj_t * edit_hint = lv_label_create(ui_clock);
-    lv_label_set_text(edit_hint, "Double-tap to edit");
+    lv_label_set_text(edit_hint, "Double-tap or A to edit");
     lv_obj_set_x(edit_hint, 105); lv_obj_set_y(edit_hint, 204);
     lv_obj_set_style_text_color(edit_hint, lv_color_white(), 0);
     lv_obj_set_style_text_font(edit_hint, &ui_font_name_14, 0);
