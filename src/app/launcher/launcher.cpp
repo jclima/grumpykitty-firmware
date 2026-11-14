@@ -205,6 +205,64 @@ static void _updateLed(DEVICES* dev, int pct, bool charging)
     }
 }
 
+/* ── Wi-Fi connect cue ──────────────────────────────────────────────
+ *  Blue breathing while a connect is in progress (capped at 20 s), then a
+ *  600 ms solid green (connected) or red (failed) flash.  Only used while the
+ *  LED is otherwise idle (s_led_cur == OFF), so it never competes with the
+ *  battery / charging effects.  Called every main-loop iteration (UI branch)
+ *  before led.update().  The cue yields the moment _updateLed starts an effect.
+ * ─────────────────────────────────────────────────────────────────── */
+enum { WCUE_NONE = 0, WCUE_BREATHE, WCUE_FLASH };
+static uint8_t  s_cue       = WCUE_NONE;
+static uint32_t s_cue_start = 0;
+static uint32_t s_cue_until = 0;   /* duration in ms from s_cue_start */
+
+static void _wifiLedCancel(DEVICES* dev)
+{
+    if (s_cue != WCUE_NONE) {
+        s_cue = WCUE_NONE;
+        if (s_led_cur == WS2812B_Class::OFF) dev->led.off();
+    }
+}
+
+static void _wifiLedTick(DEVICES* dev)
+{
+    static wifi_bridge_status_t prev = WIFI_BRIDGE_IDLE;
+    const wifi_bridge_status_t cur = ui_wifi_bridge_get_status();
+    const uint32_t now = millis();
+
+    /* An effect started by _updateLed owns the LED: drop the cue silently. */
+    if (s_cue != WCUE_NONE && s_led_cur != WS2812B_Class::OFF) s_cue = WCUE_NONE;
+
+    if (cur != prev) {
+        const bool can_cue = sys_get_led() > 0 && s_led_cur == WS2812B_Class::OFF;
+        if (cur == WIFI_BRIDGE_IDLE) {
+            _wifiLedCancel(dev);
+        } else if (cur == WIFI_BRIDGE_CONNECTING) {
+            if (can_cue) {
+                s_cue = WCUE_BREATHE; s_cue_start = now; s_cue_until = 20000;
+                dev->led.setEffect(WS2812B_Class::BREATHING, WS2812B_Class::BLUE, 0.7f);
+            }
+        } else if (prev == WIFI_BRIDGE_CONNECTING && s_cue == WCUE_BREATHE) {
+            /* CONNECTED or FAILED after a cued connect */
+            if (can_cue) {
+                s_cue = WCUE_FLASH; s_cue_start = now; s_cue_until = 600;
+                dev->led.setEffect(WS2812B_Class::SOLID,
+                                   cur == WIFI_BRIDGE_CONNECTED ? WS2812B_Class::GREEN
+                                                                : WS2812B_Class::RED);
+            } else {
+                _wifiLedCancel(dev);
+            }
+        }
+        prev = cur;
+    }
+
+    if (s_cue != WCUE_NONE && (uint32_t)(now - s_cue_start) >= s_cue_until) {
+        s_cue = WCUE_NONE;
+        if (s_led_cur == WS2812B_Class::OFF) dev->led.off();
+    }
+}
+
 /* Launcher instance for plain C callbacks (set in onCreate). */
 static Launcher* s_launcher = nullptr;
 
@@ -386,6 +444,7 @@ void Launcher::onLoop()
     if (!_app_running) {
         /* ── GUI state: LVGL active ── */
         /* Drive LED animation (BREATHING / BLINK) — must tick every loop. */
+        _wifiLedTick(_device);
         _device->led.update();
 
         /* Poll physical buttons every loop so press edges aren't missed. */
@@ -910,6 +969,7 @@ void Launcher::handleAppSelection()
     for (int i = 0; i < APP_REGISTRY_COUNT; i++) {
         if (strcmp(APP_REGISTRY[i].id, selId) == 0 && i < (int)_native_handles.size()) {
             /* Enter app — LVGL screens stay in memory, just pause rendering */
+            _wifiLedCancel(_device);
             _running_app_id = _native_handles[i];
             if (!_mooncake.openApp(_running_app_id)) {
                 _running_app_id = -1;
@@ -931,6 +991,7 @@ void Launcher::handleAppSelection()
         auto app = personal_apps::makeApp(_device, package);
         if (!app) { ui_apps_menu_clear_selected(); _show_toast("App unavailable. Refresh in Manage", 0x555555); return; }
         _personal_handle = _mooncake.installApp(std::move(app)); _personal_id = package.id;
+        _wifiLedCancel(_device);
         if (_personal_handle < 0 || !_mooncake.openApp(_personal_handle)) { if (_personal_handle >= 0) { _mooncake.uninstallApp(_personal_handle); _mooncake.update(); } _personal_handle=-1; _personal_id.clear(); ui_apps_menu_clear_selected(); return; }
         _running_app_id=_personal_handle; _app_running=true; s_in_app=true; _b_released_since_open=false; ui_apps_menu_clear_selected(); return;
     }

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Status LED shows Wi-Fi connect progress while the LED is otherwise idle: blue breathing while connecting (up to 20 s), then a 600 ms green flash on success or red on failure; skipped when the LED brightness is 0 or a battery/charging effect is active.
 - Settings tabs reach every row with the joystick: Up/Down switch tabs (all five are reachable), Right or A enters the tab and outlines the first row, Up/Down move between rows (Up from the first row returns to the tabs), Left/Right change a slider by 5, A toggles a switch or opens the focused button or SSID card, and B steps back to the tab list before a second B leaves. A no longer jumps Home (the key reads Select), and tapping the on-screen A/B keys does the same as the buttons.
 - Clock: A opens the date and time editor like a double-tap, and the hint reads "Double-tap or A to edit".
 - Main Settings screen works with the joystick and buttons: the joystick moves an accent outline over the Wi-Fi card, detailed settings, USB storage, Bluetooth and Info icons, A activates the focused one (the outline appears on first joystick use and hides on touch), B closes the Info dialog or returns Home, and Left on the leftmost icon still goes Home.
