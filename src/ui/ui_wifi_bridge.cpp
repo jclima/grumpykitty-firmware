@@ -74,6 +74,7 @@ enum wifi_radio_action_t { WIFI_ACTION_NONE, WIFI_ACTION_CONNECT,
                            WIFI_ACTION_DISCONNECT, WIFI_ACTION_FORGET,
                            WIFI_ACTION_RADIO_OFF, WIFI_ACTION_RADIO_ON };
 static wifi_radio_action_t s_pending_action = WIFI_ACTION_NONE;
+static bool s_wipe_pending = false;   /* a Forget's IDF config wipe is still owed (under lock) */
 static char s_pending_action_ssid[33] = "";
 static char s_pending_action_pass[65] = "";
 
@@ -171,6 +172,12 @@ static void _scan_task(void * /*arg*/)
         const int gen = s_scan_gen;
         wifi_radio_action_t action = s_pending_action;
         s_pending_action = WIFI_ACTION_NONE;
+        /* Owed wipe is consumed by FORGET or RADIO_OFF only. */
+        bool do_wipe = false;
+        if (action == WIFI_ACTION_FORGET || action == WIFI_ACTION_RADIO_OFF) {
+            do_wipe = s_wipe_pending;
+            s_wipe_pending = false;
+        }
 
         if (action == WIFI_ACTION_NONE && s_scan_count == -1) {
             const bool interrupt = s_need_reconnect &&
@@ -242,6 +249,9 @@ static void _scan_task(void * /*arg*/)
                 s_status = WIFI_BRIDGE_FAILED;
             }
         } else if (action == WIFI_ACTION_RADIO_OFF) {
+            /* Wipe while the driver is still initialised (esp_wifi_restore
+             * needs it), before the mode change. */
+            if (do_wipe) ui_wifi_bridge_wipe_stored_config();
             WiFi.disconnect(true);
             WiFi.mode(WIFI_OFF);
             s_status = WIFI_BRIDGE_IDLE;
@@ -255,7 +265,7 @@ static void _scan_task(void * /*arg*/)
             s_status = WIFI_BRIDGE_IDLE;
             s_current_ssid[0] = '\0';
             s_current_ip[0] = '\0';
-            if (action == WIFI_ACTION_FORGET) ui_wifi_bridge_wipe_stored_config();
+            if (action == WIFI_ACTION_FORGET && do_wipe) ui_wifi_bridge_wipe_stored_config();
         }
     }
 
@@ -695,6 +705,7 @@ void ui_wifi_bridge_forget(const char *ssid)
         s_try_valid = false;
         bool was_scanning = s_scan_task_active;
         if (was_scanning) {
+            s_wipe_pending = true;   /* survives a RADIO_OFF overwriting FORGET */
             s_scan_gen++;
             s_scan_count = -2;
             s_need_reconnect = false;
