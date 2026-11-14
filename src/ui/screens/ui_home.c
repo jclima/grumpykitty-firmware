@@ -130,7 +130,7 @@ void ui_home_screen_init(void)
     lv_obj_set_width(s_nav_hint, 300);
     lv_obj_set_x(s_nav_hint, 10);
     lv_obj_set_y(s_nav_hint, 184);
-    lv_label_set_text(s_nav_hint, "R Apps  L Settings  U SD  D Clock");
+    lv_label_set_text(s_nav_hint, "Left Apps  Right Settings  Up Clock  Down SD");
     lv_obj_set_style_text_align(s_nav_hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(s_nav_hint, THEME_LV(THEME_TEXT_DIM), 0);
     lv_obj_set_style_text_font(s_nav_hint, &ui_font_name_14, 0);
