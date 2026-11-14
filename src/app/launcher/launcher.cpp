@@ -139,13 +139,16 @@ static const char* _navigation_target_name(const lv_obj_t* screen, mk_event_t ev
     if ((screen == ui_apps_menu && event == MK_EVT_JOY_RIGHT) ||
         (screen == ui_settings && (event == MK_EVT_JOY_LEFT || event == MK_EVT_BTN_B)) ||
         (screen == ui_sd_card_files && event == MK_EVT_JOY_UP) ||
-        (screen == ui_clock && event == MK_EVT_JOY_DOWN) ||
-        (screen == ui_tabview && event == MK_EVT_BTN_A)) {
+        (screen == ui_clock && event == MK_EVT_JOY_DOWN)) {
         return "home";
     }
     if (screen == ui_manual && event == MK_EVT_BTN_B) return "clock";
-    if ((screen == ui_usb_msc || screen == ui_wifi || screen == ui_tabview) &&
-        event == MK_EVT_BTN_B) {
+    if ((screen == ui_usb_msc || screen == ui_wifi) && event == MK_EVT_BTN_B) {
+        return "settings";
+    }
+    /* Settings tabs: B only leaves from tab level (at row level it steps back to the tabs). */
+    if (screen == ui_tabview && event == MK_EVT_BTN_B && !ui_tabview_row_level() &&
+        !ui_tabview_dialog_open()) {
         return "settings";
     }
     if (screen == ui_t9_keyboard && event == MK_EVT_BTN_B &&
@@ -1146,10 +1149,13 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
             else if (b)     ui_tabview_dialog_cancel();
             return;
         }
-        if (a)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_home_screen_init); return; }
-        if (b)    { _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
-        if (up)   { uint16_t t = lv_tabview_get_tab_act(ui_tabview_settings); if (t > 0) lv_tabview_set_act(ui_tabview_settings, t-1, LV_ANIM_ON); return; }
-        if (down) { uint16_t t = lv_tabview_get_tab_act(ui_tabview_settings); if (t < 4) lv_tabview_set_act(ui_tabview_settings, t+1, LV_ANIM_ON); return; }
+        /* Two-level navigation lives in ui_tabview.c; B leaves only from tab level. */
+        if (a)     { ui_tabview_press_a(); return; }
+        if (b)     { if (!ui_tabview_press_b()) _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init); return; }
+        if (left)  { ui_tabview_nav(-1, 0); return; }
+        if (right) { ui_tabview_nav(1, 0);  return; }
+        if (up)    { ui_tabview_nav(0, -1); return; }
+        if (down)  { ui_tabview_nav(0, 1);  return; }
         return;
     }
     if (cur == ui_t9_keyboard) {

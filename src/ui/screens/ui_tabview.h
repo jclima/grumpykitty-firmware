@@ -21,6 +21,13 @@ extern bool ui_tabview_dialog_open(void);
 extern void ui_tabview_dialog_cancel(void);
 extern void ui_tabview_dialog_move(int dir);
 extern void ui_tabview_dialog_activate(void);
+/* Physical buttons / joystick (see ui_tabview.c). nav and press_a are always consumed on
+ * this screen; press_b returns false at tab level so the caller leaves the screen.
+ * row_level is true while a row is focused (B then steps back instead of leaving). */
+extern bool ui_tabview_nav(int dx, int dy);
+extern bool ui_tabview_press_a(void);
+extern bool ui_tabview_press_b(void);
+extern bool ui_tabview_row_level(void);
 extern lv_obj_t * ui_tabview;
 extern lv_obj_t * ui_tabview_settings;
 extern lv_obj_t * ui_TabPage1;

@@ -76,6 +76,11 @@ static lv_obj_t * s_sw_wifi     = NULL;
 static lv_obj_t * s_lbl_ssid    = NULL;
 static lv_obj_t * s_lbl_wifi_st = NULL;
 static lv_timer_t * s_wifi_card_timer = NULL;   /* 2 s refresh of the Connect-tab SSID card */
+static lv_obj_t * s_ssid_row   = NULL;   /* joystick focus targets (see the focus block) */
+static lv_obj_t * s_btn_date   = NULL;
+static lv_obj_t * s_btn_time   = NULL;
+static lv_obj_t * s_btn_reboot = NULL;
+static lv_obj_t * s_btn_reset  = NULL;
 
 /* System tab storage cards (refreshed at most every STORAGE_REFRESH_MS) */
 #define STORAGE_REFRESH_MS 5000
@@ -151,13 +156,15 @@ static void tab_time_refresh(lv_timer_t * t)
 static void tab_key_a_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_home_screen_init);
+    ui_tabview_press_a();   /* same path as the physical A button */
 }
 
 static void tab_key_b_cb(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-    _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_settings_screen_init);
+    /* Same path as the physical B button: row level -> tab level, else leave. */
+    if(!ui_tabview_press_b())
+        _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_settings_screen_init);
 }
 
 /* Buttons are {"Cancel", <confirm>}: index 0 cancels, index 1 confirms. */
@@ -799,6 +806,7 @@ static void build_tab_connect(lv_obj_t * page)
     /* Tappable card: opens the network picker (ui_wifi). Page scroll is off, so a
      * tap cannot turn into a scroll. Child labels are not clickable. */
     lv_obj_t * ssid_row = mk_card(page, 104, 52);
+    s_ssid_row = ssid_row;
     lv_obj_add_flag(ssid_row, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(ssid_row, lv_color_hex(TV_TRACK), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_border_opa(ssid_row, LV_OPA_COVER,         LV_PART_MAIN | LV_STATE_PRESSED);
@@ -845,10 +853,10 @@ static void build_tab_time(lv_obj_t * page)
     s_lbl_time_str = mk_lbl(page, "--- --:--", TAB_MARG, 130, TV_TEXT, &ui_font_name_24);
 
     /* Only 6 px between the two buttons: 2 px extra each so the touch areas never overlap */
-    lv_obj_set_ext_click_area(
-        mk_outline_btn(page, TAB_MARG,           170, 108, 30, "Set Date", TV_LIME,  _tab_set_date_cb), 2);
-    lv_obj_set_ext_click_area(
-        mk_outline_btn(page, TAB_MARG + 114,     170, 108, 30, "Set Time", TV_LIME,  _tab_set_time_cb), 2);
+    s_btn_date = mk_outline_btn(page, TAB_MARG,       170, 108, 30, "Set Date", TV_LIME, _tab_set_date_cb);
+    s_btn_time = mk_outline_btn(page, TAB_MARG + 114, 170, 108, 30, "Set Time", TV_LIME, _tab_set_time_cb);
+    lv_obj_set_ext_click_area(s_btn_date, 2);
+    lv_obj_set_ext_click_area(s_btn_time, 2);
 
     tab_time_refresh(NULL);
 
@@ -996,7 +1004,7 @@ static void build_tab_system(lv_obj_t * page)
     lv_obj_t * c_rb = mk_card(sc, y, 66);
     mk_lbl(c_rb, "Reboot", 0, 0, TV_TEXT, &ui_font_name_14);
     mk_lbl(c_rb, "soft restart", 0, 30, TV_MUTED, &ui_font_name_14);
-    mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", THEME_ACCENT, tab_reboot_cb);
+    s_btn_reboot = mk_outline_btn(c_rb, CARD_INN - 90, 7, 90, 36, "Reboot", THEME_ACCENT, tab_reboot_cb);
     y += 66 + 8;
 
     // ── STORAGE ──────────────────────────────────────────────────────────────
@@ -1044,7 +1052,7 @@ static void build_tab_system(lv_obj_t * page)
     mk_lbl(c_fr, "Factory Reset", 0, 0, TV_TEXT, &ui_font_name_14);
     mk_lbl(c_fr, "erase all", 0, 30, TV_MUTED, &ui_font_name_14);
     mk_lbl(c_fr, "settings", 0, 48, TV_MUTED, &ui_font_name_14);
-    mk_outline_btn(c_fr, CARD_INN - 90, 10, 90, 44, "Reset", TV_DANGER, tab_factory_reset_cb);
+    s_btn_reset = mk_outline_btn(c_fr, CARD_INN - 90, 10, 90, 44, "Reset", TV_DANGER, tab_factory_reset_cb);
     y += 84 + 8;
 
 }
@@ -1078,10 +1086,245 @@ static void _tabview_refresh_values(void)
     _storage_refresh(true);       /* fresh figures on every visit */
 }
 
+// ── Joystick / button navigation ──────────────────────────────────────────
+/* Two levels. TAB LEVEL (no outline): Up/Down switch tabs, Right or A enters the tab.
+ * ROW LEVEL (outline on the focused row): Up/Down move between rows (Up from the first
+ * row goes back to tab level), Left/Right adjust a slider, B or Left on a non-slider
+ * row goes back to tab level. Lists are built at screen creation and cleared in
+ * ui_tabview_screen_destroy; any touch, tab change or screen load returns to tab level. */
+#define TV_TABS      5
+#define TV_ROWS_MAX  3
+#define TV_SLIDER_STEP 5
+
+typedef enum { ROW_SLIDER, ROW_SWITCH, ROW_CLICK } tv_row_kind_t;
+typedef struct {
+    lv_obj_t    * obj;     /* receives the value change / click */
+    lv_obj_t    * frame;   /* gets the outline and is scrolled into view */
+    tv_row_kind_t kind;
+} tv_row_t;
+
+static tv_row_t   s_rows[TV_TABS][TV_ROWS_MAX];
+static uint8_t    s_row_cnt[TV_TABS];
+static bool       s_row_level = false;
+static int        s_row_tab   = 0;
+static int        s_row_idx   = 0;
+static lv_obj_t * s_painted   = NULL;   /* object currently carrying the outline */
+
+static void _rows_add(int tab, lv_obj_t * obj, lv_obj_t * frame, tv_row_kind_t kind)
+{
+    if(!obj || tab < 0 || tab >= TV_TABS || s_row_cnt[tab] >= TV_ROWS_MAX) return;
+    tv_row_t * r = &s_rows[tab][s_row_cnt[tab]++];
+    r->obj   = obj;
+    r->frame = frame ? frame : obj;
+    r->kind  = kind;
+}
+
+/* Visual order per tab (top to bottom). Sliders and the Key Tone switch sit in a card:
+ * the card carries the outline. */
+static void _rows_build(void)
+{
+    memset(s_rows, 0, sizeof(s_rows));
+    memset(s_row_cnt, 0, sizeof(s_row_cnt));
+    _rows_add(0, s_sl_bright, s_sl_bright ? lv_obj_get_parent(s_sl_bright) : NULL, ROW_SLIDER);
+    _rows_add(0, s_sl_led,    s_sl_led    ? lv_obj_get_parent(s_sl_led)    : NULL, ROW_SLIDER);
+    _rows_add(1, s_sl_vol,    s_sl_vol    ? lv_obj_get_parent(s_sl_vol)    : NULL, ROW_SLIDER);
+    _rows_add(1, s_sw_key,    s_sw_key    ? lv_obj_get_parent(s_sw_key)    : NULL, ROW_SWITCH);
+    _rows_add(2, s_sw_ble,    NULL,        ROW_SWITCH);
+    _rows_add(2, s_sw_wifi,   NULL,        ROW_SWITCH);
+    _rows_add(2, s_ssid_row,  NULL,        ROW_CLICK);
+    _rows_add(3, s_btn_date,  NULL,        ROW_CLICK);
+    _rows_add(3, s_btn_time,  NULL,        ROW_CLICK);
+    _rows_add(4, s_btn_reboot, NULL,       ROW_CLICK);
+    _rows_add(4, s_btn_reset,  NULL,       ROW_CLICK);
+}
+
+static void _outline_paint(lv_obj_t * o, bool on)
+{
+    if(!o) return;
+    if(on) {
+        lv_obj_set_style_outline_color(o, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_width(o, 3, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_pad(o, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+        lv_obj_set_style_outline_width(o, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_opa(o, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+static void _outline_clear(void)
+{
+    if(s_painted) _outline_paint(s_painted, false);
+    s_painted = NULL;
+}
+
+/* Back to tab level: outline removed, nothing focused. */
+static void _focus_reset(void)
+{
+    _outline_clear();
+    s_row_level = false;
+    s_row_idx   = 0;
+}
+
+static bool _row_usable(const tv_row_t * r)
+{
+    if(!r->obj || !r->frame) return false;
+    if(lv_obj_has_flag(r->obj, LV_OBJ_FLAG_HIDDEN) || lv_obj_has_flag(r->frame, LV_OBJ_FLAG_HIDDEN)) return false;
+    if(lv_obj_has_state(r->obj, LV_STATE_DISABLED)) return false;
+    return true;
+}
+
+/* First usable row at or after `from` walking by `step` (+1 / -1); -1 if none. */
+static int _row_find(int tab, int from, int step)
+{
+    for(int i = from; i >= 0 && i < (int)s_row_cnt[tab]; i += step)
+        if(_row_usable(&s_rows[tab][i])) return i;
+    return -1;
+}
+
+static void _row_focus(int idx)
+{
+    tv_row_t * r = &s_rows[s_row_tab][idx];
+    _outline_clear();
+    s_row_idx = idx;
+    s_painted = r->frame;
+    _outline_paint(s_painted, true);
+    lv_obj_scroll_to_view_recursive(r->frame, LV_ANIM_ON);
+}
+
+static int _tab_count(void)
+{
+    lv_obj_t * cont = ui_tabview_settings ? lv_tabview_get_content(ui_tabview_settings) : NULL;
+    int n = cont ? (int)lv_obj_get_child_cnt(cont) : 0;
+    return n > TV_TABS ? TV_TABS : n;
+}
+
+static bool _row_level_valid(void)
+{
+    if(!s_row_level) return false;
+    if(!ui_tabview_settings || (int)lv_tabview_get_tab_act(ui_tabview_settings) != s_row_tab ||
+       s_row_idx >= (int)s_row_cnt[s_row_tab]) {
+        _focus_reset();
+        return false;
+    }
+    return true;
+}
+
+static bool _enter_rows(void)
+{
+    if(!ui_tabview_settings) return false;
+    int tab = (int)lv_tabview_get_tab_act(ui_tabview_settings);
+    if(tab < 0 || tab >= TV_TABS) return false;
+    int first = _row_find(tab, 0, 1);
+    if(first < 0) return false;
+    s_row_tab   = tab;
+    s_row_level = true;
+    _row_focus(first);
+    return true;
+}
+
+bool ui_tabview_row_level(void)
+{
+    return _row_level_valid();
+}
+
+bool ui_tabview_nav(int dx, int dy)
+{
+    if(!ui_tabview_settings || s_dialog) return false;
+
+    if(!_row_level_valid()) {
+        if(dy) {
+            int t = (int)lv_tabview_get_tab_act(ui_tabview_settings);
+            int n = _tab_count();
+            int nt = t + (dy < 0 ? -1 : 1);
+            if(nt >= 0 && nt < n) lv_tabview_set_act(ui_tabview_settings, (uint32_t)nt, LV_ANIM_ON);
+        } else if(dx > 0) {
+            _enter_rows();
+        }
+        return true;   /* Left (and clamped Up/Down) do nothing */
+    }
+
+    tv_row_t * r = &s_rows[s_row_tab][s_row_idx];
+    if(dy) {
+        int next = _row_find(s_row_tab, s_row_idx + (dy < 0 ? -1 : 1), dy < 0 ? -1 : 1);
+        if(next >= 0)      _row_focus(next);
+        else if(dy < 0)    _focus_reset();   /* above the first row: back to the tabs */
+        return true;       /* below the last row: clamped */
+    }
+    if(r->kind == ROW_SLIDER) {
+        int v  = (int)lv_slider_get_value(r->obj);
+        int nv = v + (dx < 0 ? -TV_SLIDER_STEP : TV_SLIDER_STEP);
+        int lo = (int)lv_slider_get_min_value(r->obj);
+        int hi = (int)lv_slider_get_max_value(r->obj);
+        if(nv < lo) nv = lo;
+        if(nv > hi) nv = hi;
+        if(nv != v) {
+            lv_slider_set_value(r->obj, nv, LV_ANIM_OFF);
+            lv_event_send(r->obj, LV_EVENT_VALUE_CHANGED, NULL);   /* label + apply + save, as a touch */
+        }
+    } else if(dx < 0) {
+        _focus_reset();
+    }
+    return true;
+}
+
+bool ui_tabview_press_a(void)
+{
+    if(!ui_tabview_settings || s_dialog) return false;
+    if(!_row_level_valid()) {
+        _enter_rows();   /* this press only focuses the first row */
+        return true;
+    }
+    tv_row_t * r = &s_rows[s_row_tab][s_row_idx];
+    if(r->kind == ROW_SWITCH) {
+        if(lv_obj_has_state(r->obj, LV_STATE_CHECKED)) lv_obj_clear_state(r->obj, LV_STATE_CHECKED);
+        else lv_obj_add_state(r->obj, LV_STATE_CHECKED);
+        lv_event_send(r->obj, LV_EVENT_VALUE_CHANGED, NULL);
+    } else if(r->kind == ROW_CLICK) {
+        lv_event_send(r->obj, LV_EVENT_CLICKED, NULL);
+    }
+    return true;
+}
+
+/* Returns true when B was consumed (row level -> tab level); false at tab level so
+ * the caller leaves the screen. */
+bool ui_tabview_press_b(void)
+{
+    if(s_dialog) return true;
+    if(_row_level_valid()) {
+        _focus_reset();
+        return true;
+    }
+    return false;
+}
+
+static void _touch_reset_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_PRESSED) return;
+    _focus_reset();
+}
+
+static void _tab_changed_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    if(lv_event_get_target(e) != ui_tabview_settings) return;   /* ignore bubbled child events */
+    _focus_reset();
+}
+
+/* PRESSED does not bubble, so every clickable object under the screen listens. */
+static void _touch_reset_attach(lv_obj_t * o)
+{
+    if(lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE))
+        lv_obj_add_event_cb(o, _touch_reset_cb, LV_EVENT_PRESSED, NULL);
+    uint32_t n = lv_obj_get_child_cnt(o);
+    for(uint32_t i = 0; i < n; i++) _touch_reset_attach(lv_obj_get_child(o, i));
+}
+
 static void _tabview_screen_event(lv_event_t * e)
 {
     switch(lv_event_get_code(e)) {
     case LV_EVENT_SCREEN_LOAD_START:
+        _focus_reset();
         _tabview_refresh_values();
         if(s_time_timer)    lv_timer_resume(s_time_timer);
         if(s_sys_bat_timer) lv_timer_resume(s_sys_bat_timer);
@@ -1202,7 +1445,7 @@ void ui_tabview_screen_init(void)
 
     ui_tab_key_a_save = lv_label_create(ui_tabview);
     lv_obj_set_pos(ui_tab_key_a_save, 194, 211);
-    lv_label_set_text(ui_tab_key_a_save, "Home");
+    lv_label_set_text(ui_tab_key_a_save, "Select");
     lv_obj_set_style_text_color(ui_tab_key_a_save, lv_color_hex(0x000000), 0);
     lv_obj_set_style_text_font(ui_tab_key_a_save,  &ui_font_name_14, 0);
 
@@ -1213,6 +1456,11 @@ void ui_tabview_screen_init(void)
     lv_obj_set_style_text_font(ui_tab_key_a_back,  &ui_font_name_14, 0);
 
     lv_obj_add_event_cb(ui_tabview, _tabview_screen_event, LV_EVENT_ALL, NULL);
+
+    _focus_reset();
+    _rows_build();
+    lv_obj_add_event_cb(ui_tabview_settings, _tab_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    _touch_reset_attach(ui_tabview);
 }
 
 void ui_tabview_screen_destroy(void)
@@ -1230,6 +1478,12 @@ void ui_tabview_screen_destroy(void)
     s_lbl_ssid = s_lbl_wifi_st = NULL;
     s_sd_bar = s_sd_lbl = s_nvs_bar = s_nvs_lbl = NULL;
     s_storage_valid = false;
+    s_painted = NULL;   /* objects are about to be deleted: no stale pointers */
+    s_row_level = false;
+    s_row_idx = 0;
+    memset(s_rows, 0, sizeof(s_rows));
+    memset(s_row_cnt, 0, sizeof(s_row_cnt));
+    s_ssid_row = s_btn_date = s_btn_time = s_btn_reboot = s_btn_reset = NULL;
     ui_tabview_dialog_cancel();   /* dialog lives on the top layer, not under ui_tabview */
 
     if(ui_tabview) lv_obj_del(ui_tabview);
