@@ -31,6 +31,8 @@ static bool         s_scan_active = false;  // true from start_scan() until comp
 static bool         s_was_saved   = false;  // true while connecting to a saved network
 static int          s_focus_index = -1;
 static bool         s_focus_rescan = false;
+static uint32_t     s_conn_start_ms = 0;    // lv_tick_get() when the current connect attempt began
+#define WIFI_CONNECT_TIMEOUT_MS 15000u
 
 // ── Highlighted row: joystick selects this; physical A activates it ──
 static struct {
@@ -180,6 +182,18 @@ static bool _wifi_input_blocked(void)
            ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING;
 }
 
+/* A tap / A press was dropped by _wifi_input_blocked(): say why when the reason
+ * is a scan or an in-flight connect (silent for menu, transitions, other screens). */
+static void _wifi_notify_blocked(void)
+{
+    lv_disp_t *disp = lv_disp_get_default();
+    if(!ui_wifi || lv_scr_act() != ui_wifi || (disp && disp->scr_to_load != NULL) || s_menu) return;
+    if(ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING)
+        _wifi_show_toast("Connecting...", lv_color_hex(0xFFFFFF));
+    else if(s_scan_active)
+        _wifi_show_toast("Scanning...", lv_color_hex(0xFFFFFF));
+}
+
 // ── Start / restart AP scan (safe to call repeatedly) ──
 static void _wifi_start_scan(void)
 {
@@ -297,7 +311,8 @@ static void _show_menu(const wifi_row_t * row)
 // ── Row click / long-press ──
 static void _row_click_cb(lv_event_t *e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED || _wifi_input_blocked()) return;
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(_wifi_input_blocked()) { _wifi_notify_blocked(); return; }
     int index = _wifi_slot_for_object(lv_event_get_target(e));
     if(index < 0) return;
     _wifi_select_slot(index, LV_ANIM_ON);
@@ -338,6 +353,7 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
         lv_snprintf(msg, sizeof(msg), "Connecting: %s", ssid);
         _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+        s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
     } else if(!encrypted) {
         ui_wifi_bridge_stop_scan();
@@ -349,6 +365,7 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
         lv_snprintf(msg, sizeof(msg), "Connecting: %s (open)", ssid);
         _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+        s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
     } else {
         // Encrypted network → T9 password entry
@@ -362,7 +379,8 @@ static void _do_connect(const char * ssid, bool saved, bool encrypted)
 // ── Rescan row ──
 static void _rescan_cb(lv_event_t *e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED || _wifi_input_blocked()) return;
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(_wifi_input_blocked()) { _wifi_notify_blocked(); return; }
     int index = _wifi_slot_for_object(lv_event_get_target(e));
     if(index < 0) return;
     _wifi_select_slot(index, LV_ANIM_ON);
@@ -678,6 +696,16 @@ static void _conn_poll_cb(lv_timer_t * t)
             _wifi_start_scan();   /* restore network list */
             _wifi_build_list();
         }
+
+    } else if((uint32_t)(lv_tick_get() - s_conn_start_ms) >= WIFI_CONNECT_TIMEOUT_MS) {
+        /* Still connecting/idle after 15 s: abort so the screen does not stay
+         * locked and the next attempt is not ignored as "already connecting". */
+        if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
+        s_was_saved = false;
+        ui_wifi_bridge_disconnect();
+        _wifi_show_toast("Timed out", lv_color_hex(0xFF5555));
+        _wifi_start_scan();
+        _wifi_build_list();
     }
 }
 
@@ -781,7 +809,10 @@ void ui_event_wifi(lv_event_t * e)
     if(code == LV_EVENT_SCREEN_LOADED) {
         if(lv_scr_act() == ui_wifi) {
             wifi_bridge_status_t st = ui_wifi_bridge_get_status();
-            if(st == WIFI_BRIDGE_CONNECTING && !s_conn_timer) s_conn_timer = lv_timer_create(_conn_poll_cb, 400, NULL);
+            if(st == WIFI_BRIDGE_CONNECTING && !s_conn_timer) {
+                s_conn_start_ms = lv_tick_get();
+                s_conn_timer = lv_timer_create(_conn_poll_cb, 400, NULL);
+            }
             if(st != WIFI_BRIDGE_CONNECTING && !s_scan_active) _wifi_start_scan();
             _wifi_build_list();
         }
@@ -797,7 +828,7 @@ void ui_event_wifi(lv_event_t * e)
 // ── Public: physical A button connects focused row ──
 void ui_wifi_connect_focused(void)
 {
-    if(_wifi_input_blocked()) return;
+    if(_wifi_input_blocked()) { _wifi_notify_blocked(); return; }
     if(s_focus_index < 0 || s_focus_index >= s_focus_count) {
         _wifi_show_toast("No network to select", lv_color_hex(0xFFFFFF));
         return;
@@ -989,6 +1020,7 @@ void ui_wifi_screen_init(void)
         lv_snprintf(msg, sizeof(msg), "Connecting: %s",
                     ui_wifi_bridge_get_current_ssid());
         _wifi_show_toast(msg, lv_color_hex(0xFFFFFF));
+        s_conn_start_ms = lv_tick_get();
         s_conn_timer = lv_timer_create(_conn_poll_cb, 500, NULL);
     } else {
         /* Auto-scan on entry (Apple-style: list appears immediately) */

@@ -286,6 +286,7 @@ static void _conn_poll_cb(lv_timer_t * t)
     } else if(elapsed >= kConnTimeoutMs) {
         if(s_conn_timer) { lv_timer_del(s_conn_timer); s_conn_timer = NULL; }
         _overlay_hide();
+        ui_wifi_bridge_disconnect();   /* leave CONNECTING so the next Send is not ignored */
         _show_err("Timed out. Try again.");
 
     } else {
