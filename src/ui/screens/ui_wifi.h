@@ -18,6 +18,8 @@ extern void ui_event_wifi(lv_event_t * e);
 extern void ui_wifi_connect_focused(void);
 extern void ui_wifi_focus_step(int direction);
 extern bool ui_wifi_handle_back(void);
+/** Open the Forget/Cancel menu for the highlighted row (joystick Right). */
+extern void ui_wifi_open_options(void);
 /** Make B / swipe-right return to the tabview (true) or Settings (false). */
 extern void ui_wifi_set_return_to_tabview(bool to_tabview);
 /** Navigate back to the screen the picker was opened from (clears the return target). */

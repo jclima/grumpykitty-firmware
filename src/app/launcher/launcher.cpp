@@ -1146,6 +1146,7 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         if (b) { if (ui_wifi_handle_back()) return; ui_wifi_go_back(); return; }
         if (up) { ui_wifi_focus_step(-1); return; }
         if (down) { ui_wifi_focus_step(1); return; }
+        if (right) { ui_wifi_open_options(); return; }
         return;
     }
     if (cur == ui_tabview) {

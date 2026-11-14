@@ -44,6 +44,8 @@ static struct {
 // ── Long-press menu ──
 static lv_obj_t * s_menu      = NULL;
 static char       s_menu_ssid[64] = "";
+static lv_obj_t * s_menu_btn[2] = {NULL, NULL};   /* [0] Forget, [1] Cancel */
+static int        s_menu_sel    = 1;              /* joystick highlight; defaults to the safe button */
 
 // ── Per-row heap data ──
 typedef struct {
@@ -259,14 +261,38 @@ static void _row_delete_cb(lv_event_t * e)
 }
 
 // ── Long-press Forget menu ──
-static void _forget_cb(lv_event_t * e)
+static void _menu_forget(void)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     ui_wifi_bridge_forget(s_menu_ssid);
     _hide_menu();
     s_focused.ssid[0] = '\0';
     s_focus_rescan = false;
     _wifi_build_list();
+}
+
+static void _forget_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _menu_forget();
+}
+
+/* Joystick highlight on the menu buttons (same FOCUSED border as the list rows). */
+static void _menu_select(int idx)
+{
+    if(idx < 0) idx = 0;
+    if(idx > 1) idx = 1;
+    s_menu_sel = idx;
+    for(int i = 0; i < 2; i++) {
+        if(!s_menu_btn[i]) continue;
+        if(i == idx) lv_obj_add_state(s_menu_btn[i], LV_STATE_FOCUSED);
+        else lv_obj_clear_state(s_menu_btn[i], LV_STATE_FOCUSED);
+    }
+}
+
+static void _menu_activate(void)
+{
+    if(s_menu_sel == 0) _menu_forget();
+    else _hide_menu();
 }
 
 static void _menu_cancel_cb(lv_event_t * e)
@@ -278,6 +304,7 @@ static void _menu_cancel_cb(lv_event_t * e)
 static void _hide_menu(void)
 {
     if(s_menu) { lv_obj_del(s_menu); s_menu = NULL; }
+    s_menu_btn[0] = s_menu_btn[1] = NULL;
 }
 
 static void _show_menu(const wifi_row_t * row)
@@ -329,6 +356,9 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_set_style_bg_color(fbtn, lv_color_hex(0xFF3B30), 0);
     lv_obj_set_style_radius(fbtn, 6, 0);
     lv_obj_set_style_pad_all(fbtn, 0, 0);
+    lv_obj_set_style_border_color(fbtn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(fbtn, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(fbtn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
     lv_obj_add_event_cb(fbtn, _forget_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * flbl = lv_label_create(fbtn);
     lv_label_set_text(flbl, "Forget Network");
@@ -343,12 +373,19 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_set_style_bg_color(cbtn, lv_color_hex(0x3A3A3C), 0);
     lv_obj_set_style_radius(cbtn, 6, 0);
     lv_obj_set_style_pad_all(cbtn, 0, 0);
+    lv_obj_set_style_border_color(cbtn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(cbtn, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(cbtn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
     lv_obj_add_event_cb(cbtn, _menu_cancel_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * clbl = lv_label_create(cbtn);
     lv_label_set_text(clbl, "Cancel");
     lv_obj_set_style_text_color(clbl, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_font(clbl, &lv_font_montserrat_14, 0);
     lv_obj_align(clbl, LV_ALIGN_CENTER, 0, 0);
+
+    s_menu_btn[0] = fbtn;
+    s_menu_btn[1] = cbtn;
+    _menu_select(1);
 }
 
 // ── Row click / long-press ──
@@ -439,6 +476,8 @@ static void _wifi_add_rescan_row(void)
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 2, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x3A3A3C), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
 
     // Symbol with default font (LVGL symbols)
     lv_obj_t * sym = lv_label_create(row);
@@ -492,28 +531,28 @@ static void _wifi_add_ap_row(const wifi_row_t * ap, bool interactive)
     lv_obj_set_style_radius(row, 4, 0);
     lv_obj_set_style_pad_all(row, 2, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-    // Lock icon (default font has LVGL symbols)
-    lv_obj_t * lock = lv_label_create(row);
-    lv_label_set_text(lock, ap->encrypted ? LV_SYMBOL_EYE_CLOSE : " ");
-    lv_obj_set_style_text_color(lock, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(lock, LV_FONT_DEFAULT, 0);
-    lv_obj_align(lock, LV_ALIGN_LEFT_MID, 2, 0);
+    /* Pressed feedback (touch). The joystick highlight is the FOCUSED border. */
+    lv_obj_set_style_bg_color(row, lv_color_hex(0x3A3A3C), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
 
-    // Connected tick
-    int ssid_x = 18;
+    /* The bundled LVGL symbol font has no lock glyph (only EYE_OPEN/EYE_CLOSE),
+     * so secured networks carry a "Locked" text tag on the right instead. */
+    int ssid_x = 6;
+    int ssid_w = 170;
     if(is_connected) {
         lv_obj_t * tick = lv_label_create(row);
         lv_label_set_text(tick, LV_SYMBOL_OK);
         lv_obj_set_style_text_color(tick, THEME_LV(THEME_OK), 0);
         lv_obj_set_style_text_font(tick, LV_FONT_DEFAULT, 0);
-        lv_obj_align(tick, LV_ALIGN_LEFT_MID, 18, 0);
-        ssid_x = 32;
+        lv_obj_align(tick, LV_ALIGN_LEFT_MID, 6, 0);
+        ssid_x = 24;
+        ssid_w = 140;
     }
 
     // SSID label
     lv_obj_t * ssid_lbl = lv_label_create(row);
     lv_label_set_long_mode(ssid_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(ssid_lbl, 150);
+    lv_obj_set_width(ssid_lbl, ssid_w);
      /* LV_LABEL_LONG_DOT only ellipsises when the height is bounded too.
      * Left at LV_SIZE_CONTENT the label grows instead, wrapping a long
      * SSID onto a second line that the 38 px row then clips. Pin it to a
@@ -531,16 +570,17 @@ static void _wifi_add_ap_row(const wifi_row_t * ap, bool interactive)
     else                   sig_color = lv_color_hex(0x888888);
 
     // Right label: pct + status tag
-    char right_buf[20];
+    char right_buf[24];
     if(is_connected) {
-        lv_snprintf(right_buf, sizeof(right_buf), "%d%%", ap->pct);
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%% Connected", ap->pct);
+        sig_color = THEME_LV(THEME_OK);
     } else if(ap->saved) {
         lv_snprintf(right_buf, sizeof(right_buf), "%d%% Saved", ap->pct);
         sig_color = THEME_LV(THEME_ACCENT);
     } else if(!ap->encrypted) {
         lv_snprintf(right_buf, sizeof(right_buf), "%d%% Open", ap->pct);
     } else {
-        lv_snprintf(right_buf, sizeof(right_buf), "%d%%", ap->pct);
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%% Locked", ap->pct);
     }
 
     lv_obj_t * right_lbl = lv_label_create(row);
@@ -919,6 +959,10 @@ void ui_event_wifi(lv_event_t * e)
 // ── Public: physical A button connects focused row ──
 void ui_wifi_connect_focused(void)
 {
+    if(s_menu) {   /* options menu open: A activates the highlighted button */
+        if(ui_wifi && lv_scr_act() == ui_wifi) _menu_activate();
+        return;
+    }
     if(_wifi_input_blocked()) { _wifi_notify_blocked(); return; }
     if(s_focus_index < 0 || s_focus_index >= s_focus_count) {
         _wifi_show_toast("No network to select", lv_color_hex(0xFFFFFF));
@@ -931,11 +975,25 @@ void ui_wifi_connect_focused(void)
 
 void ui_wifi_focus_step(int direction)
 {
+    if(s_menu) {   /* options menu open: Up/Down move between its buttons */
+        if(direction) _menu_select(direction < 0 ? 0 : 1);
+        return;
+    }
     if(!direction || _wifi_input_blocked() || !s_focus_count) return;
     int next = s_focus_index < 0 ? 0 : s_focus_index + (direction < 0 ? -1 : 1);
     if(next < 0) next = s_focus_count - 1;
     if(next >= s_focus_count) next = 0;
     _wifi_select_slot(next, LV_ANIM_ON);
+}
+
+/* Joystick Right on the focused row: same options menu the long-press opens. */
+void ui_wifi_open_options(void)
+{
+    if(_wifi_input_blocked()) { _wifi_notify_blocked(); return; }
+    if(s_focus_index < 0 || s_focus_index >= s_focus_count) return;
+    wifi_row_t *data = s_focus_slots[s_focus_index].data;
+    if(!data) return;   /* Rescan row has no options */
+    _show_menu(data);
 }
 
 bool ui_wifi_handle_back(void)
@@ -1101,6 +1159,13 @@ void ui_wifi_screen_init(void)
     lv_label_set_text(ui_wifi_key_b_back, "B Back");
     lv_obj_set_style_text_color(ui_wifi_key_b_back, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_text_font(ui_wifi_key_b_back, &lv_font_montserrat_14, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    /* Discoverability of the Forget menu (long-press, or joystick Right). */
+    lv_obj_t * hint = lv_label_create(ui_wifi);
+    lv_label_set_text(hint, "Hold/Right: options");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(hint, 15, 210);
 
     lv_obj_add_event_cb(ui_wifi, ui_event_wifi, LV_EVENT_ALL, NULL);
 
