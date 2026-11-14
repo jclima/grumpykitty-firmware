@@ -32,6 +32,7 @@ extern "C" {
 ///////////////////// SCREENS ////////////////////
 
 #include "screens/ui_home.h"
+#include "screens/ui_quick_panel.h"
 #include "screens/ui_apps_menu.h"
 #include "screens/ui_apps_manager.h"
 #include "screens/ui_clock.h"

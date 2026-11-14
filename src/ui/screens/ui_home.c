@@ -19,6 +19,7 @@ lv_obj_t * ui_unit3;
 lv_obj_t * ui_unit4;
 lv_obj_t * ui_unit5;
 static lv_obj_t * s_nav_hint;
+static lv_obj_t * s_qs_tab;
 
 /*
  * Home 十字导航布局：手势方向 = 动画方向（推送式）
@@ -36,6 +37,8 @@ static lv_obj_t * s_nav_hint;
 void ui_event_home(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
+    /* Leaving Home (swipe, joystick, app launch) must not leave the overlay behind. */
+    if (event_code == LV_EVENT_SCREEN_UNLOAD_START) { ui_quick_panel_close(); return; }
     if (event_code != LV_EVENT_GESTURE) return;
 
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
@@ -57,6 +60,14 @@ void ui_event_home(lv_event_t * e)
         default:
             break;
     }
+}
+
+/* Tap on the top-centre tab opens the quick settings panel. A swipe that starts
+ * on the tab still reaches ui_event_home (GESTURE_BUBBLE), which calls
+ * lv_indev_wait_release, so the same touch never also ends as a click. */
+static void _qs_tab_cb(lv_event_t * e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) ui_quick_panel_open(false);
 }
 
 // build funtions
@@ -190,12 +201,34 @@ void ui_home_screen_init(void)
     lv_obj_add_flag(ui_unit5, LV_OBJ_FLAG_ADV_HITTEST);     /// Flags
     lv_obj_clear_flag(ui_unit5, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
+    /* Quick settings tab. 48x22 visible at (136,0); the object is 8 px taller and
+     * sits above the screen edge so only the bottom corners are rounded. Between
+     * the SD icon (x<=~35) and the battery text (x>=210); created last = on top. */
+    s_qs_tab = lv_btn_create(ui_home);
+    lv_obj_remove_style_all(s_qs_tab);
+    lv_obj_set_size(s_qs_tab, 48, 30);
+    lv_obj_set_pos(s_qs_tab, 136, -8);
+    lv_obj_set_ext_click_area(s_qs_tab, 6);
+    lv_obj_add_flag(s_qs_tab, LV_OBJ_FLAG_GESTURE_BUBBLE);
+    lv_obj_set_style_radius(s_qs_tab, 8, 0);
+    lv_obj_set_style_bg_color(s_qs_tab, THEME_LV(THEME_BG), 0);
+    lv_obj_set_style_bg_opa(s_qs_tab, LV_OPA_60, 0);
+    lv_obj_set_style_bg_color(s_qs_tab, THEME_LV(THEME_SURFACE_ALT), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(s_qs_tab, LV_OPA_90, LV_STATE_PRESSED);
+    lv_obj_t * qs_icon = lv_label_create(s_qs_tab);
+    lv_label_set_text(qs_icon, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(qs_icon, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(qs_icon, THEME_LV(THEME_TEXT), 0);
+    lv_obj_align(qs_icon, LV_ALIGN_CENTER, 0, 4);   /* centre of the visible 22 px */
+    lv_obj_add_event_cb(s_qs_tab, _qs_tab_cb, LV_EVENT_CLICKED, NULL);
+
     lv_obj_add_event_cb(ui_home, ui_event_home, LV_EVENT_ALL, NULL);
 
 }
 
 void ui_home_screen_destroy(void)
 {
+    ui_quick_panel_close();
     if(ui_home) lv_obj_del(ui_home);
 
     // NULL screen variables
@@ -213,5 +246,6 @@ void ui_home_screen_destroy(void)
     ui_unit4 = NULL;
     ui_unit5 = NULL;
     s_nav_hint = NULL;
+    s_qs_tab = NULL;
 
 }
