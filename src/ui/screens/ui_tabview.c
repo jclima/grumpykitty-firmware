@@ -848,7 +848,7 @@ static void build_tab_time(lv_obj_t * page)
     lv_obj_set_ext_click_area(
         mk_outline_btn(page, TAB_MARG,           170, 108, 30, "Set Date", TV_LIME,  _tab_set_date_cb), 2);
     lv_obj_set_ext_click_area(
-        mk_outline_btn(page, TAB_MARG + 114,     170, 108, 30, "Set Time", TV_MUTED, _tab_set_time_cb), 2);
+        mk_outline_btn(page, TAB_MARG + 114,     170, 108, 30, "Set Time", TV_LIME,  _tab_set_time_cb), 2);
 
     tab_time_refresh(NULL);
 

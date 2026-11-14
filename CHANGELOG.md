@@ -10,6 +10,7 @@
 - Wi-Fi password keyboard can be typed with the joystick: it moves a highlight over the keys and A presses the highlighted key (Send is now a key).
 
 ### Fixed
+- Settings polish: Set Time is styled like Set Date, the main Settings Wi-Fi card reads "Connected: <name>", the Bluetooth icon darkens while pressed like the other icons, and an unused Wi-Fi dot variable was removed.
 - Touch targets: the Settings switches (8 px), the Wi-Fi picker switch (6 px), the password Show button, the Forget/Cancel menu buttons and Set Date / Set Time have larger hit areas, kept small enough not to overlap their neighbours.
 - Settings -> System: the SD card and NVS usage bars and labels refresh every 5 s while the tab is open (and on every visit); the SD card is not queried while USB storage owns it.
 - Settings: Reboot now asks "Reboot now?" first; the Reboot and Factory Reset dialogs are modal (taps cannot reach the screen behind), list Cancel first with the destructive button in the danger colour, and work with the buttons (Left/Right pick, starts on Cancel, A activates, B cancels).

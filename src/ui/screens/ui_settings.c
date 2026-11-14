@@ -12,7 +12,6 @@
 #include "../../bsp/config.h"
 
 static lv_obj_t   * s_wifi_lbl          = NULL;
-static lv_obj_t   * s_wifi_dot          = NULL;
 static lv_timer_t * s_wifi_lbl_timer    = NULL;
 static lv_obj_t   * s_info_dialog       = NULL;
 
@@ -282,10 +281,8 @@ static void _wifi_lbl_refresh(lv_timer_t * t)
     wifi_bridge_status_t st = ui_wifi_bridge_get_status();
     char buf[80];
     if(st == WIFI_BRIDGE_CONNECTED) {
-        if(s_wifi_dot) lv_obj_clear_flag(s_wifi_dot, LV_OBJ_FLAG_HIDDEN);
-        lv_snprintf(buf, sizeof(buf), "connect: %s", ui_wifi_bridge_get_current_ssid());
+        lv_snprintf(buf, sizeof(buf), "Connected: %s", ui_wifi_bridge_get_current_ssid());
     } else {
-        if(s_wifi_dot) lv_obj_add_flag(s_wifi_dot, LV_OBJ_FLAG_HIDDEN);
         ui_wifi_bridge_get_status_text(buf, sizeof(buf));
     }
     lv_label_set_text(s_wifi_lbl, buf);
@@ -523,6 +520,11 @@ void ui_settings_screen_init(void)
 
     /* Any touch hides the joystick focus outline. */
     lv_obj_set_style_radius(ui_ble_button, 43, LV_PART_MAIN | LV_STATE_DEFAULT);   /* round outline */
+    /* Press feedback like the other icon buttons (their theme press state darkens the icon). */
+    lv_obj_set_style_img_recolor(ui_ble_button, lv_color_black(), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_img_recolor_opa(ui_ble_button, LV_OPA_30, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_img_recolor(ui_ble_button, lv_color_black(), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_img_recolor_opa(ui_ble_button, LV_OPA_30, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(ui_settings,          _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(ui_wifi_status,       _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(ui_settings_button,   _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
@@ -554,7 +556,6 @@ void ui_settings_screen_destroy(void)
     s_focus_shown = false;
     if(s_wifi_lbl_timer) { lv_timer_del(s_wifi_lbl_timer); s_wifi_lbl_timer = NULL; }
     s_wifi_lbl = NULL;
-    s_wifi_dot = NULL;
     if(ui_settings) lv_obj_del(ui_settings);
 
     // NULL screen variables
