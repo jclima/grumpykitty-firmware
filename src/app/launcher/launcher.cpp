@@ -104,6 +104,7 @@ static void _set_screen_off(bool off)
 {
     s_screen_off = off;
     lv_port_indev_set_screen_off(off);
+    if (off) ui_quick_panel_close();   /* never leave the overlay up behind a dark screen */
 }
 
 static bool _screen_transition_active()
@@ -132,6 +133,8 @@ static const char* _screen_name(const lv_obj_t* screen)
 static const char* _navigation_target_name(const lv_obj_t* screen, mk_event_t event)
 {
     if (screen == ui_home) {
+        if (ui_quick_panel_is_open()) return nullptr;   /* panel consumes every button */
+        if (event == MK_EVT_BTN_A)     return "quick-settings";
         if (event == MK_EVT_JOY_LEFT)  return "apps";
         if (event == MK_EVT_JOY_RIGHT) return "settings";
         if (event == MK_EVT_JOY_UP)    return "clock";
@@ -298,7 +301,9 @@ static int  s_toast_pct     = 0;
 
 static void _show_toast(const char * msg, uint32_t bg)
 {
-    lv_obj_t * scr = lv_scr_act();
+    /* While the Home quick settings panel is open, toasts go on the top layer so
+     * they are not hidden behind it. */
+    lv_obj_t * scr = ui_quick_panel_is_open() ? lv_layer_top() : lv_scr_act();
     if (!scr) return;
 
     /* Toast banner — fixed at top of whatever screen is currently active */
@@ -962,6 +967,7 @@ void Launcher::handleAppSelection()
     }
     if (!selId || selId[0] == '\0') return;
 
+    ui_quick_panel_close();   /* no overlay may survive an app launch (no-op when closed) */
     Serial.printf("[Launcher] Selected: %s\n", selId);
     if (strcmp(selId, "__manager") == 0) {
         ui_apps_menu_clear_selected(); refreshAppManager();
@@ -1115,6 +1121,9 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
     const bool left  = (evt == MK_EVT_JOY_LEFT);
     const bool right = (evt == MK_EVT_JOY_RIGHT);
 
+    /* Defensive: the quick settings panel only belongs to Home. */
+    if (cur != ui_home && ui_quick_panel_is_open()) ui_quick_panel_close();
+
     const char* target = _navigation_target_name(cur, evt);
     if (target) {
         Serial.printf("[Launcher] Navigation %s -> %s (event=0x%02X, heap=%lu)\n",
@@ -1124,6 +1133,17 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
 
     /* ── Home: joystick → cross navigation ── */
     if (cur == ui_home) {
+        if (ui_quick_panel_is_open()) {
+            /* Quick settings is modal: the joystick never navigates away while it is up. */
+            if (up)         ui_quick_panel_nav(0, -1);
+            else if (down)  ui_quick_panel_nav(0, 1);
+            else if (left)  ui_quick_panel_nav(-1, 0);
+            else if (right) ui_quick_panel_nav(1, 0);
+            else if (a)     ui_quick_panel_press_a();
+            else if (b)     ui_quick_panel_close();
+            return;
+        }
+        if (a)          { ui_quick_panel_open(true); return; }   /* B still does nothing on Home */
         if (left)       _ui_screen_change(&ui_apps_menu,     LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_apps_menu_screen_init);
         else if (right) _ui_screen_change(&ui_settings,      LV_SCR_LOAD_ANIM_MOVE_LEFT,   500, 0, &ui_settings_screen_init);
         else if (up)    _ui_screen_change(&ui_clock,         LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, &ui_clock_screen_init);
