@@ -29,6 +29,10 @@ bool ui_rtc_bridge_set_time(uint8_t hour, uint8_t minute, uint8_t second);
 
 /** Write weekday only (0=Sun..6=Sat). Keeps current date and H:M:S. */
 bool ui_rtc_bridge_set_weekday(uint8_t weekday);
+/** Write a full date and time at once (weekday auto-computed). Returns false on
+ *  an invalid date/time or when the RTC is not available. */
+bool ui_rtc_bridge_set_datetime(uint16_t year, uint8_t month, uint8_t day,
+                                uint8_t hour, uint8_t minute, uint8_t second);
 bool ui_rtc_bridge_date_valid(uint16_t year, uint8_t month, uint8_t day);
 
 #ifdef __cplusplus

@@ -55,6 +55,22 @@ extern "C" bool ui_rtc_bridge_set_date(uint16_t year, uint8_t month, uint8_t day
     return s_rtc->setTime(t);
 }
 
+extern "C" bool ui_rtc_bridge_set_datetime(uint16_t year, uint8_t month, uint8_t day,
+                                           uint8_t hour, uint8_t minute, uint8_t second)
+{
+    if (!s_rtc || !PCF8563_Class::isDateValid(year, month, day)) return false;
+    if (hour > 23 || minute > 59 || second > 59) return false;
+    RTC_Time t;
+    t.year    = year;
+    t.month   = month;
+    t.day     = day;
+    t.weekday = compute_weekday(year, month, day);
+    t.hour    = hour;
+    t.min     = minute;
+    t.sec     = second;
+    return s_rtc->setTime(t);
+}
+
 extern "C" bool ui_rtc_bridge_date_valid(uint16_t year, uint8_t month, uint8_t day)
 {
     return PCF8563_Class::isDateValid(year, month, day);

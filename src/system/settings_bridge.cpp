@@ -35,6 +35,10 @@ static int      s_led_effect   = 1;         /* SOLID */
 static bool     s_wifi_en      = true;
 static char     s_ble_name[21] = "GrumpyKitty";
 static bool     s_ble_en       = false;
+static bool     s_time_auto    = false;
+static int      s_tz_off_min   = 0;
+
+static int settings_clamp_tz_off(int m);
 
 /* ── Dirty-flag write coalescing ─────────────────────────────── */
 
@@ -49,6 +53,8 @@ enum DirtyBit : uint32_t {
     D_WIFI_EN    = 1u <<  7,
     D_BLE_NAME   = 1u <<  8,
     D_BLE_EN     = 1u <<  9,
+    D_TIME_AUTO  = 1u << 10,
+    D_TZ_OFF     = 1u << 11,
 };
 
 static uint32_t s_dirty       = 0;
@@ -98,6 +104,10 @@ void settings_load_all(void)
     s_ble_en  = persist_get_int(PKEY_BLE_EN,  0) != 0;
     bluetooth_manager::setEnabled(s_ble_en);
 
+    /* Time sync (additive keys: absent -> default) */
+    s_time_auto  = persist_get_int(PKEY_TIME_AUTO, 0) != 0;
+    s_tz_off_min = settings_clamp_tz_off(persist_get_int(PKEY_TZ_OFF, 0));
+
     s_dirty = 0;   /* nothing to flush yet */
     Serial.printf("[settings] Loaded — bright=%d vol=%d led=%d fx=%d wifi=%d ble=%d\n",
                   s_brightness, s_volume, s_led, s_led_effect,
@@ -120,6 +130,8 @@ void settings_flush(void)
     FLUSH_ONE(D_WIFI_EN,    persist_set_int(PKEY_WIFI_EN,      s_wifi_en ? 1 : 0));
     FLUSH_ONE(D_BLE_NAME,   persist_set_str(PKEY_BLE_NAME,     s_ble_name));
     FLUSH_ONE(D_BLE_EN,     persist_set_int(PKEY_BLE_EN,       s_ble_en ? 1 : 0));
+    FLUSH_ONE(D_TIME_AUTO,  persist_set_int(PKEY_TIME_AUTO,    s_time_auto ? 1 : 0));
+    FLUSH_ONE(D_TZ_OFF,     persist_set_int(PKEY_TZ_OFF,       s_tz_off_min));
 #undef FLUSH_ONE
 
     Serial.printf("[settings] Flushed dirty=0x%03lX remaining=0x%03lX\n",
@@ -165,6 +177,29 @@ void settings_set_disp_timeout(int secs)
 }
 
 int settings_get_disp_timeout(void) { return s_disp_timeout; }
+
+/* ── Time sync ───────────────────────────────────────────────── */
+
+static int settings_clamp_tz_off(int m)
+{
+    if (m < -720) m = -720;
+    if (m >  840) m =  840;
+    return m;
+}
+
+void settings_set_time_auto(int on)
+{
+    s_time_auto = on != 0;
+    MARK_DIRTY(D_TIME_AUTO);
+}
+int settings_get_time_auto(void) { return s_time_auto ? 1 : 0; }
+
+void settings_set_tz_off_min(int minutes)
+{
+    s_tz_off_min = settings_clamp_tz_off(minutes);
+    MARK_DIRTY(D_TZ_OFF);
+}
+int settings_get_tz_off_min(void) { return s_tz_off_min; }
 
 /* ════════════════════════════════════════════════════════════════
  * Audio

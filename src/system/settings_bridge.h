@@ -94,6 +94,14 @@ int  sys_get_brightness(void);
 void settings_set_disp_timeout(int secs);
 int  settings_get_disp_timeout(void);
 
+/* ── Time sync ───────────────────────────────────────────────── */
+/** Internet time sync enable (0|1, default 0) + schedule NVS write. */
+void settings_set_time_auto(int on);
+int  settings_get_time_auto(void);
+/** UTC offset in minutes, clamped to -720..+840 + schedule NVS write. */
+void settings_set_tz_off_min(int minutes);
+int  settings_get_tz_off_min(void);
+
 /* ── Audio ───────────────────────────────────────────────────── */
 
 /** Apply speaker volume.  pct = 0..100 → Speaker_Class. (boot-time) */

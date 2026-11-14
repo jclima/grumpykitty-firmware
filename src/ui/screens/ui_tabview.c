@@ -10,6 +10,7 @@
 #include "../../system/settings_bridge.h"
 #include "../../system/persist.h"
 #include "../../system/usb_msc.h"
+#include "../../system/time_sync.h"
 #include <esp_system.h>
 #include "../../system/recovery.h"
 #include "../../system/power_mgmt.h"
@@ -56,6 +57,12 @@ lv_obj_t * ui_tab_key_a_back;
 static lv_obj_t  * s_lbl_date     = NULL;
 static lv_obj_t  * s_lbl_time_str = NULL;
 static lv_timer_t * s_time_timer  = NULL;
+static lv_obj_t  * s_lbl_sync     = NULL;   /* "Synced HH:MM" / "Not synced" on the Date caption line */
+static lv_obj_t  * s_sw_auto_time = NULL;
+static lv_obj_t  * s_tz_row       = NULL;   /* UTC offset stepper frame (joystick row) */
+static lv_obj_t  * s_tz_minus     = NULL;
+static lv_obj_t  * s_tz_plus      = NULL;
+static lv_obj_t  * s_lbl_tz       = NULL;
 
 /* ── System tab: battery live data ──────────────────────────────── */
 static lv_obj_t  * s_sys_bat_pct_lbl = NULL;
@@ -139,6 +146,11 @@ static void _sys_bat_refresh(lv_timer_t * t)
 static void tab_time_refresh(lv_timer_t * t)
 {
     (void)t;
+    if(s_lbl_sync) {
+        char sync[24];
+        time_sync_status(sync, sizeof(sync));
+        lv_label_set_text(s_lbl_sync, sync);
+    }
     if(!s_lbl_date || !s_lbl_time_str) return;
     uint16_t year; uint8_t month, day, weekday, hour, minute, second;
     if (!ui_rtc_bridge_get(&year, &month, &day, &weekday, &hour, &minute, &second)) {
@@ -835,6 +847,79 @@ static void build_tab_connect(lv_obj_t * page)
     lv_obj_align(chev, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
+static void _tz_label_update(void)
+{
+    if(!s_lbl_tz) return;
+    int m = settings_get_tz_off_min();
+    int a = m < 0 ? -m : m;
+    lv_label_set_text_fmt(s_lbl_tz, "UTC%c%02d:%02d", m < 0 ? '-' : '+', a / 60, a % 60);
+}
+
+static void _tz_row_enable(bool on)
+{
+    lv_obj_t * o[3] = { s_tz_row, s_tz_minus, s_tz_plus };
+    for(int i = 0; i < 3; i++) {
+        if(!o[i]) continue;
+        if(on) lv_obj_clear_state(o[i], LV_STATE_DISABLED);
+        else   lv_obj_add_state(o[i], LV_STATE_DISABLED);
+    }
+}
+
+/* One 30-minute step of the UTC offset; used by the - / + buttons and Left / Right. */
+static void _tz_step(int dir)
+{
+    if(!settings_get_time_auto()) return;   /* row is disabled while auto time is off */
+    int cur = settings_get_tz_off_min();
+    int nv = cur + (dir < 0 ? -30 : 30);
+    if(nv < -720) nv = -720;
+    if(nv >  840) nv =  840;
+    if(nv == cur) return;
+    settings_set_tz_off_min(nv);
+    _tz_label_update();
+    time_sync_offset_changed();
+}
+
+static void _tz_minus_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) _tz_step(-1);
+}
+
+static void _tz_plus_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) _tz_step(1);
+}
+
+static void tab_auto_time_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+    bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+    settings_set_time_auto(on ? 1 : 0);
+    _tz_row_enable(on);
+    /* time_sync_tick() sees the setting change and starts a sync if Wi-Fi is up */
+}
+
+static lv_obj_t * mk_tz_btn(lv_obj_t * frame, const char * text, lv_coord_t x, lv_event_cb_t cb)
+{
+    lv_obj_t * btn = lv_btn_create(frame);
+    lv_obj_set_size(btn, 28, 24);
+    lv_obj_set_pos(btn, x, 1);
+    lv_obj_set_ext_click_area(btn, 2);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(TV_TRACK), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(btn,   LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(btn,   LV_OPA_70,              LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(btn,   12,                     LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_border_width(btn, 0,                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_shadow_width(btn, 0,                  LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_pad_all(btn,  0,                      LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_t * l = lv_label_create(btn);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, lv_color_hex(TV_LIME), 0);
+    lv_obj_set_style_text_font(l, &ui_font_name_14, 0);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, NULL);
+    return btn;
+}
+
 static void build_tab_time(lv_obj_t * page)
 {
     lv_obj_set_style_bg_opa(page,      LV_OPA_TRANSP, 0);
@@ -853,17 +938,58 @@ static void build_tab_time(lv_obj_t * page)
     lv_obj_set_style_radius(tim_div,      0, 0);
     lv_obj_set_style_pad_all(tim_div,     0, 0);
 
-    mk_lbl(page, "Date", TAB_MARG, 40, TV_MUTED, &ui_font_name_14);
-    s_lbl_date = mk_lbl(page, "--/--/----", TAB_MARG, 60, TV_TEXT, &ui_font_name_24);
+    /* Everything below the divider lives in a scrolling sub-container (same pattern
+     * as the System tab); y values here are the old page y minus 38. */
+    lv_obj_t * sc = lv_obj_create(page);
+    lv_obj_set_size(sc, TAB_PG_W, 241 - 38);
+    lv_obj_set_pos(sc, 0, 38);
+    lv_obj_set_scroll_dir(sc, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(sc, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_bg_opa(sc,        LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(sc,       0, 0);
+    lv_obj_set_style_pad_bottom(sc,    40, 0);
+    lv_obj_set_style_border_width(sc,  0, 0);
+    lv_obj_set_style_radius(sc,        0, 0);
 
-    mk_lbl(page, "Time", TAB_MARG, 110, TV_MUTED, &ui_font_name_14);
-    s_lbl_time_str = mk_lbl(page, "--- --:--", TAB_MARG, 130, TV_TEXT, &ui_font_name_24);
+    mk_lbl(sc, "Date", TAB_MARG, 2, TV_MUTED, &ui_font_name_14);
+    s_lbl_sync = mk_lbl_r(sc, "Not synced", 2, TV_MUTED, &ui_font_name_14);
+    s_lbl_date = mk_lbl(sc, "--/--/----", TAB_MARG, 22, TV_TEXT, &ui_font_name_24);
+
+    mk_lbl(sc, "Time", TAB_MARG, 72, TV_MUTED, &ui_font_name_14);
+    s_lbl_time_str = mk_lbl(sc, "--- --:--", TAB_MARG, 92, TV_TEXT, &ui_font_name_24);
 
     /* Only 6 px between the two buttons: 2 px extra each so the touch areas never overlap */
-    s_btn_date = mk_outline_btn(page, TAB_MARG,       170, 108, 30, "Set Date", TV_LIME, _tab_set_date_cb);
-    s_btn_time = mk_outline_btn(page, TAB_MARG + 114, 170, 108, 30, "Set Time", TV_LIME, _tab_set_time_cb);
+    s_btn_date = mk_outline_btn(sc, TAB_MARG,       132, 108, 30, "Set Date", TV_LIME, _tab_set_date_cb);
+    s_btn_time = mk_outline_btn(sc, TAB_MARG + 114, 132, 108, 30, "Set Time", TV_LIME, _tab_set_time_cb);
     lv_obj_set_ext_click_area(s_btn_date, 2);
     lv_obj_set_ext_click_area(s_btn_time, 2);
+
+    /* Internet time sync */
+    const bool auto_on = settings_get_time_auto() != 0;
+    mk_lbl(sc, "Auto time", TAB_MARG, 178, TV_MUTED, &ui_font_name_14);
+    s_sw_auto_time = mk_switch(sc, 173, auto_on);
+    lv_obj_add_event_cb(s_sw_auto_time, tab_auto_time_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    mk_lbl(sc, "UTC offset", TAB_MARG, 206, TV_MUTED, &ui_font_name_14);
+    s_tz_row = lv_obj_create(sc);
+    lv_obj_set_size(s_tz_row, TAB_USE_W, 30);
+    lv_obj_set_pos(s_tz_row, TAB_MARG, 226);
+    lv_obj_clear_flag(s_tz_row, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(s_tz_row, lv_color_hex(TV_CARD), 0);
+    lv_obj_set_style_bg_opa(s_tz_row, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_tz_row, lv_color_hex(TV_TRACK), 0);
+    lv_obj_set_style_border_width(s_tz_row, 1, 0);
+    lv_obj_set_style_radius(s_tz_row, 15, 0);
+    lv_obj_set_style_pad_all(s_tz_row, 0, 0);
+    lv_obj_set_style_opa(s_tz_row, LV_OPA_40, LV_PART_MAIN | LV_STATE_DISABLED);
+    s_tz_minus = mk_tz_btn(s_tz_row, "-", 3, _tz_minus_cb);
+    s_tz_plus  = mk_tz_btn(s_tz_row, "+", TAB_USE_W - 28 - 3 - 2, _tz_plus_cb);
+    s_lbl_tz = lv_label_create(s_tz_row);
+    lv_obj_set_style_text_color(s_lbl_tz, lv_color_hex(TV_TEXT), 0);
+    lv_obj_set_style_text_font(s_lbl_tz, &ui_font_name_14, 0);
+    lv_obj_align(s_lbl_tz, LV_ALIGN_CENTER, 0, 0);
+    _tz_label_update();
+    _tz_row_enable(auto_on);
 
     tab_time_refresh(NULL);
 
@@ -1088,6 +1214,9 @@ static void _tabview_refresh_values(void)
     _sync_switch(s_sw_key,  sys_get_key_sound());
     _sync_switch(s_sw_ble,  settings_get_ble_en());
     _sync_switch(s_sw_wifi, settings_get_wifi_en());
+    _sync_switch(s_sw_auto_time, settings_get_time_auto());
+    _tz_label_update();
+    _tz_row_enable(settings_get_time_auto() != 0);
 
     _refresh_wifi_status_lbl();   /* SSID + status */
     _storage_refresh(true);       /* fresh figures on every visit */
@@ -1100,10 +1229,10 @@ static void _tabview_refresh_values(void)
  * row goes back to tab level. Lists are built at screen creation and cleared in
  * ui_tabview_screen_destroy; any touch, tab change or screen load returns to tab level. */
 #define TV_TABS      5
-#define TV_ROWS_MAX  3
+#define TV_ROWS_MAX  5
 #define TV_SLIDER_STEP 5
 
-typedef enum { ROW_SLIDER, ROW_SWITCH, ROW_CLICK } tv_row_kind_t;
+typedef enum { ROW_SLIDER, ROW_SWITCH, ROW_CLICK, ROW_STEPPER } tv_row_kind_t;
 typedef struct {
     lv_obj_t    * obj;     /* receives the value change / click */
     lv_obj_t    * frame;   /* gets the outline and is scrolled into view */
@@ -1141,6 +1270,8 @@ static void _rows_build(void)
     _rows_add(2, s_ssid_row,  NULL,        ROW_CLICK);
     _rows_add(3, s_btn_date,  NULL,        ROW_CLICK);
     _rows_add(3, s_btn_time,  NULL,        ROW_CLICK);
+    _rows_add(3, s_sw_auto_time, NULL,     ROW_SWITCH);
+    _rows_add(3, s_tz_row,    NULL,        ROW_STEPPER);
     _rows_add(4, s_btn_reboot, NULL,       ROW_CLICK);
     _rows_add(4, s_btn_reset,  NULL,       ROW_CLICK);
 }
@@ -1269,6 +1400,8 @@ bool ui_tabview_nav(int dx, int dy)
             lv_slider_set_value(r->obj, nv, LV_ANIM_OFF);
             lv_event_send(r->obj, LV_EVENT_VALUE_CHANGED, NULL);   /* label + apply + save, as a touch */
         }
+    } else if(r->kind == ROW_STEPPER) {
+        _tz_step(dx < 0 ? -1 : 1);   /* Left does not leave the row, like a slider */
     } else if(dx < 0) {
         _focus_reset();
     }
@@ -1479,6 +1612,7 @@ void ui_tabview_screen_destroy(void)
     if(s_wifi_card_timer) { lv_timer_del(s_wifi_card_timer); s_wifi_card_timer = NULL; }
     s_lbl_date        = NULL;
     s_lbl_time_str    = NULL;
+    s_lbl_sync = s_sw_auto_time = s_tz_row = s_tz_minus = s_tz_plus = s_lbl_tz = NULL;
     s_sys_bat_pct_lbl = NULL;
     s_sys_bat_status  = NULL;
     s_sys_bat_fill    = NULL;

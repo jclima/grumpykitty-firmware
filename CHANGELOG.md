@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Optional internet time sync: Settings -> Time has an Auto time switch (off by default) and a UTC offset stepper (30-minute steps, -12:00 to +14:00; Left/Right on the joystick). When on and Wi-Fi connects, SNTP sets the clock and the RTC is written with the offset applied (first sync after each connect, then at most every 6 h); the Date line shows "Synced HH:MM" or "Not synced". Changing the offset rewrites the RTC at once after a sync. No DST handling; setting date or time by hand still works and the next sync overrides it. The Time tab now scrolls.
 - Settings Info dialog also shows the Wi-Fi IP address, or "Wi-Fi: not connected" / "Wi-Fi: off".
 - Wi-Fi picker: the options menu of the connected network starts with Details, a live view of its IP, gateway, signal strength, channel, MAC and BSSID (A or B closes it).
 - Status LED shows Wi-Fi connect progress while the LED is otherwise idle: blue breathing while connecting (up to 20 s), then a 600 ms green flash on success or red on failure; skipped when the LED brightness is 0 or a battery/charging effect is active.

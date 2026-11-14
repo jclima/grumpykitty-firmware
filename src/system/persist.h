@@ -18,7 +18,10 @@ extern "C" {
 #endif
 
 /* ── NVS Schema version ──────────────────────────────────────────
- * Bump this whenever any PKEY_* constant is added, renamed, or removed.
+ * Do NOT bump this to add a key: a version mismatch (other than the 2 → 3
+ * migration) erases every stored setting.  Additive keys are simply read with
+ * a default when absent.  Bump only for a rename/removal/format change that
+ * needs a migration.
  * v2 → v3: wifi_pass now stored as XOR-obfuscated blob (chip-unique key).
  *           Targeted migration: only wifi_pass is re-encoded; all other
  *           settings are kept.  Major-gap (>1) still does a full erase.  */
@@ -54,6 +57,10 @@ extern "C" {
 
 /* Boat Dash (app_14): added without a schema bump (absent key reads as the default) */
 #define PKEY_SK_LAST_IP     "sk_last_ip" /* str  ≤39 B    last working Signal K server "ip:port" */
+
+/* Time sync: added without a schema bump (absent key reads as the default) */
+#define PKEY_TIME_AUTO      "auto_time"  /* int  0|1        internet time sync (default 0=off) */
+#define PKEY_TZ_OFF         "tz_off_min" /* int  -720..840  UTC offset minutes, 30-min steps (default 0) */
 
 /* Internal — do not read/write from application code */
 #define PKEY_NVS_VER        "nvs_ver"   /* int  schema version sentinel             */

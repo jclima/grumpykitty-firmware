@@ -58,6 +58,7 @@
 #include "../../system/settings_bridge.h"  /* includes persist internally */
 #include "../../system/power_mgmt.h"
 #include "../../system/ota_updater.h"
+#include "../../system/time_sync.h"
 #include "../../system/mk_events.h"
 #include "../../system/system_sound.h"
 #include <Arduino.h>
@@ -369,6 +370,7 @@ void Launcher::onCreate()
     initSD();
 /* Expose RTC to generated C UI screens (clock / pickers) */
     ui_rtc_bridge_register(&_device->rtc);
+    time_sync_init();
 
     
     Serial.println("[Launcher] [2/5] installApps...");
@@ -475,6 +477,7 @@ void Launcher::onLoop()
         if (millis() - lastSt > 1000) {
             lastSt = millis();
             power_tick();
+            time_sync_tick();
             updateStatusBar();
             /* LED state: only active after boot grace; setEffect called on change only */
             _updateLed(_device, power_battery_pct(), power_is_charging());
@@ -547,6 +550,7 @@ void Launcher::onLoop()
         if (millis() - lastAppSt > 1000) {
             lastAppSt = millis();
             power_tick();
+            time_sync_tick();
             _updateLed(_device, power_battery_pct(), power_is_charging());
         }
 
