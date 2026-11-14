@@ -24,4 +24,16 @@ void lv_port_disp_init(LGFX_Class* lcd);
 void disp_enable_update(void);
 void disp_disable_update(void);
 
+/** Buffer holding the last complete 320x240 frame sent to the panel (RGB565,
+ *  LV_COLOR_16_SWAP 0), or NULL under MK_LVGL_PARTIAL_REFRESH or before the
+ *  first full frame. Valid only until LVGL renders again: read it from the
+ *  main loop without calling lv_timer_handler in between. */
+#ifdef __cplusplus
+extern "C" {
+#endif
+const lv_color_t * lv_port_disp_last_frame(void);
+#ifdef __cplusplus
+}
+#endif
+
 #endif /*LV_PORT_DISP_H*/

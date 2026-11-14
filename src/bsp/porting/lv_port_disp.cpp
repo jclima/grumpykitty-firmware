@@ -36,6 +36,11 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
 
 static LGFX_Class* _lcd;
 
+/* Last buffer flushed as a complete 320x240 frame (full-refresh mode only).
+ * With full refresh LVGL swaps its two buffers after each flush, so this
+ * buffer keeps the whole visible frame until the refresh after next. */
+static const lv_color_t * s_last_frame = NULL;
+
 /**********************
  *      MACROS
  **********************/
@@ -173,6 +178,15 @@ void lv_port_disp_init(LGFX_Class* lcd)
     lv_disp_drv_register(&disp_drv);
 }
 
+const lv_color_t * lv_port_disp_last_frame(void)
+{
+#ifdef MK_LVGL_PARTIAL_REFRESH
+    return NULL;
+#else
+    return s_last_frame;
+#endif
+}
+
 /**********************
  *   STATIC FUNCTIONS
  **********************/
@@ -220,6 +234,8 @@ static void disp_flush(lv_disp_drv_t * disp_drv, const lv_area_t * area, lv_colo
     _disp_drv_p = disp_drv;
     uint32_t w = ( area->x2 - area->x1 + 1 );
     uint32_t h = ( area->y2 - area->y1 + 1 );
+
+    if (w == MY_DISP_HOR_RES && h == MY_DISP_VER_RES) s_last_frame = color_p;
 
     _lcd->startWrite();
     _lcd->setAddrWindow( area->x1, area->y1, w, h );
