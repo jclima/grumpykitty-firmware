@@ -234,7 +234,7 @@ static void _wifi_notify_blocked(void)
     lv_disp_t *disp = lv_disp_get_default();
     if(!ui_wifi || lv_scr_act() != ui_wifi || (disp && disp->scr_to_load != NULL) || s_menu) return;
     if(ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTING)
-        _wifi_show_toast_ex("Connecting...", lv_color_hex(0xFFFFFF), true);
+        _wifi_show_toast_ex("Connecting...", lv_color_hex(0xFFFFFF), s_conn_timer != NULL);
     else if(s_scan_active)
         _wifi_show_toast("Scanning...", lv_color_hex(0xFFFFFF));
 }
