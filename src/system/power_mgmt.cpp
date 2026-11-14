@@ -21,22 +21,77 @@ static uint32_t s_init_ms = 0;
 static uint8_t s_crit_count = 0;
 #define POWER_CRIT_CONSEC_SAMPLES 5
 
-/* Last valid battery percentage (returned when a new sample is invalid) */
-static int s_last_pct = 100;
+/* ── Battery percentage smoothing ─────────────────────────────────────────
+ * Only power_tick() (1 Hz, main loop) touches the PMU. It feeds an EMA of the
+ * battery voltage; the displayed percentage follows curve(EMA) with hysteresis
+ * (down only on battery, up only on USB) at one point per PCT_STEP_MS.
+ * power_battery_pct() just returns the cached value. */
+#define PCT_STEP_MS        10000u   /* at most 1 displayed point per 10 s   */
+#define PCT_MIN_DELTA      2        /* target must differ by >= 2 to step   */
+#define VBUS_SETTLE_MS     5000u    /* ignore samples after plug/unplug     */
+#define PCT_FULL_TARGET    97       /* charge-complete: allow reaching 100  */
+#define V_EMA_ALPHA        (1.0f / 16.0f)
 
-/* Read one battery sample. Returns false (and leaves *pct untouched) when the
- * I2C read failed. */
-static bool power_sample_pct(int* pct)
+static volatile int s_disp_pct   = 100;
+static float        s_v_ema      = 0.0f;
+static bool         s_seeded     = false;
+static bool         s_last_vbus  = false;
+static uint32_t     s_settle_until  = 0;
+static uint32_t     s_last_step_ms  = 0;
+static bool         s_settling      = false;   /* VBUS-change settle window active */
+static bool         s_post_grace_seeded = false;
+
+/* true once `now` has reached `until` (wrap-safe). */
+static inline bool time_reached(uint32_t now, uint32_t until)
+{
+    return (uint32_t)(now - until) < 0x80000000u;
+}
+
+static bool read_voltage(float* v)
 {
     if (!s_pmu) return false;
-    float lvl = s_pmu->getBatLevel();
-    if (std::isnan(lvl)) return false;
+    const float x = s_pmu->getBatVoltage();
+    if (std::isnan(x) || x < 1.0f) return false;
+    *v = x;
+    return true;
+}
+
+static int curve_pct(float v)
+{
+    float lvl = AXP173_Class::batLevelFromVoltage(v);
     if (lvl < 0)   lvl = 0;
     if (lvl > 100) lvl = 100;
-    int p = (int)(lvl + 0.5f);
-    s_last_pct = p;
-    *pct = p;
+    return (int)(lvl + 0.5f);
+}
+
+/* Median of up to 3 spaced reads (the PMU ADC refreshes every ~25 ms).
+ * Returns false when every read failed. */
+static bool read_voltage_median(float* out)
+{
+    float r[3];
+    int n = 0;
+    for (int i = 0; i < 3; i++) {
+        float v;
+        if (read_voltage(&v)) r[n++] = v;
+        if (i < 2) delay(30);
+    }
+    if (n == 0) return false;
+    if (n == 1) { *out = r[0]; return true; }
+    if (n == 2) { *out = 0.5f * (r[0] + r[1]); return true; }
+    if (r[0] > r[1]) { float t = r[0]; r[0] = r[1]; r[1] = t; }
+    if (r[1] > r[2]) { float t = r[1]; r[1] = r[2]; r[2] = t; }
+    if (r[0] > r[1]) { float t = r[0]; r[0] = r[1]; r[1] = t; }
+    *out = r[1];
     return true;
+}
+
+/* Seed filter and displayed value from `v`. */
+static void seed_all(float v, uint32_t now)
+{
+    s_v_ema        = v;
+    s_seeded       = true;
+    s_disp_pct     = curve_pct(v);
+    s_last_step_ms = now;
 }
 
 /* Idle timer — reset by power_reset_sleep_timer() on any user activity */
@@ -61,6 +116,11 @@ extern "C" void power_init(AXP173_Class* pmu)
 
     s_init_ms          = millis();
     s_last_activity_ms = millis();
+
+    s_last_vbus = s_pmu->isVBUSExist();
+    s_settling  = false;
+    float v0;
+    if (read_voltage_median(&v0)) seed_all(v0, millis());
 
     Serial.printf("[Power] init  bat=%d%%  vbus=%s  charging=%s\n",
                   power_battery_pct(),
@@ -96,16 +156,76 @@ extern "C" void power_tick(void)
 {
     if (!s_pmu) return;
 
+    uint32_t       now  = millis();
+    const bool     usb  = s_pmu->isVBUSExist();
+    float          v    = 0.0f;
+    const bool     valid = read_voltage(&v);
+
+    /* USB plug/unplug shifts the terminal voltage: ignore samples for a
+     * while, then re-seed the filter (the displayed value is kept). */
+    if (usb != s_last_vbus) {
+        s_last_vbus    = usb;
+        s_settling     = true;
+        s_settle_until = now + VBUS_SETTLE_MS;
+    }
+    if (valid) {
+        if (s_settling) {
+            if (time_reached(now, s_settle_until)) {
+                float vm = v;
+                read_voltage_median(&vm);
+                s_v_ema    = vm;
+                s_seeded   = true;
+                s_settling = false;
+            }
+        } else if (!s_seeded) {
+            seed_all(v, now);
+        } else {
+            s_v_ema += (v - s_v_ema) * V_EMA_ALPHA;
+        }
+    }
+
     /* Skip all battery protection during boot grace — AXP173 ADC hasn't settled. */
     if (!power_is_ready()) return;
 
-    /* Invalid (I2C failure) samples are ignored: they neither trigger nor
-     * clear the critical counter. */
-    int pct = 0;
-    if (!power_sample_pct(&pct)) return;
+    /* First tick after the grace window: re-seed from a fresh median. */
+    if (!s_post_grace_seeded) {
+        s_post_grace_seeded = true;
+        float vm;
+        if (read_voltage_median(&vm)) {
+            now = millis();   /* the median read took ~60 ms */
+            seed_all(vm, now);
+            s_settling = false;
+        }
+    }
 
     const bool charging = power_is_charging();
-    const bool usb      = s_pmu->isVBUSExist();
+
+    /* Displayed percentage: hysteresis + rate limit. */
+    if (s_seeded && !s_settling) {
+        const int  target_raw = curve_pct(s_v_ema);
+        const bool full       = usb && !charging && target_raw >= PCT_FULL_TARGET;
+        const int  target     = full ? 100 : target_raw;
+        const int  cur        = s_disp_pct;
+        if ((uint32_t)(now - s_last_step_ms) >= PCT_STEP_MS) {
+            if (!usb && target <= cur - PCT_MIN_DELTA) {
+                s_disp_pct = cur - 1;
+                s_last_step_ms = now;
+            } else if (usb && cur < target &&
+                       (target - cur >= PCT_MIN_DELTA || full)) {
+                s_disp_pct = cur + 1;
+                s_last_step_ms = now;
+            }
+        }
+    }
+
+    /* Invalid (I2C failure) samples are ignored: they neither trigger nor
+     * clear the critical counter. */
+    if (!valid) return;
+
+    /* Critical shutdown keeps its original input: the unfiltered reading of
+     * this tick, and the same N-consecutive-sample rule. */
+    const int raw_pct = curve_pct(v);
+    const int pct     = s_disp_pct;   /* warning uses the displayed value */
 
     /* Reset warn state when charging restores battery above warn threshold */
     if (charging && s_warn_shown && pct > POWER_WARN_BAT_PCT) {
@@ -120,10 +240,10 @@ extern "C" void power_tick(void)
 
     /* ① Critical: require N consecutive critical samples (1 Hz tick) so a
      * single glitch/transient sag cannot power the device off. */
-    if (pct <= POWER_CRIT_BAT_PCT) {
+    if (raw_pct <= POWER_CRIT_BAT_PCT) {
         if (++s_crit_count >= POWER_CRIT_CONSEC_SAMPLES) {
             Serial.printf("[Power] CRITICAL %d%% (%u samples) — shutting down\n",
-                          pct, (unsigned)s_crit_count);
+                          raw_pct, (unsigned)s_crit_count);
             power_shutdown();
             /* power_shutdown calls powerOFF() — never returns */
         }
@@ -205,8 +325,7 @@ extern "C" void power_deep_sleep(uint32_t wake_after_sec)
 extern "C" int power_battery_pct(void)
 {
     if (!s_pmu) return 0;
-    int pct = 0;
-    if (!power_sample_pct(&pct)) pct = s_last_pct;   /* I2C failure: last good value */
+    const int pct = s_disp_pct;   /* cached; sampled only by power_tick()/init */
     /* During boot grace, a 0% reading is likely an unsettled coulometer.
      * Return 100 as a benign placeholder so the UI and warn_cb stay quiet. */
     if (pct == 0 && !power_is_ready()) return 100;

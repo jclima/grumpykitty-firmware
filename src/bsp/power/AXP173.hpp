@@ -165,6 +165,7 @@ class AXP173_Class : public I2C_Device
         float getBatVoltage() const; //返回高八位 + 低四位电池电压   地址：高0x78 低0x79
         float getBatCurrent() const; //返回高八位 + 低五位电池电流   地址：充电电流（高0x7A 低0x7B） & 放电电流（高0x7C 低0x7D）
         float getBatLevel() const;   //返回电池电量等级（%）
+        static float batLevelFromVoltage(float volts); //电压(V)→电量(%)曲线，getBatLevel使用
         float getBatPower() const;   //返回高八位 + 中八位 + 低八位电池瞬时功率  地址：高0x70 中0x71 低0x72
         // uint32_t getChargeTimeMS();
 

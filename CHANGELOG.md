@@ -21,6 +21,7 @@
 - Settings -> Connect: the SSID row is now a tappable card that opens the Wi-Fi network picker, and B (or swipe right) returns to the Connect tab.
 - Wi-Fi setup shows a short message when A is pressed with nothing to select.
 - The Settings Wi-Fi switch now turns the radio off and on: off cancels scans and connections and powers the radio down (the scan worker finishes first), on re-enables it and reconnects to the saved network; with Wi-Fi off at boot nothing auto-connects, the network picker shows "Wi-Fi is off" instead of scanning, and the Connect tab reads "Wi-Fi off".
+- Battery percentage is sampled once per second in the power tick, smoothed (voltage filter, down-only on battery, up-only on USB, at most one point per 10 s, settles 5 s after USB plug/unplug) and shared by all screens, so it no longer jumps under load; the critical-battery shutdown still uses the unfiltered reading and the same 5-sample rule.
 
 ## [0.1.8-grumpy] - 2026-11-11
 

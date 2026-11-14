@@ -249,7 +249,10 @@ float AXP173_Class::getBatCurrent() const {
 }
 
 float AXP173_Class::getBatLevel() const {
-    const float batVoltage = getBatVoltage();
+    return batLevelFromVoltage(getBatVoltage());   // NaN in -> NaN out
+}
+
+float AXP173_Class::batLevelFromVoltage(float batVoltage) {
     if (std::isnan(batVoltage)) return NAN;   // invalid sample: caller must ignore
     // 改进的电池电量计算算法 (基于典型锂电池放电曲线)
     if (batVoltage < 3.2) return 0.0;
