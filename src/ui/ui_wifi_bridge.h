@@ -18,10 +18,11 @@ extern "C" {
  *  Safe to call multiple times; subsequent calls are no-ops. */
 void ui_wifi_bridge_init(void);
 
-/** Switch the radio on/off (Settings Wi-Fi switch; call after
- *  settings_set_wifi_en). Off stops scans/connection and powers the radio
+/** Switch the radio on/off (Settings Wi-Fi switch; call BEFORE
+ *  settings_set_wifi_en and only save the setting when this returns true;
+ *  false = refused, e.g. a radio monitor owns it). Off stops scans/connection and powers the radio
  *  down; on re-enables STA and reconnects to the saved network. */
-void ui_wifi_bridge_set_enabled(bool on);
+bool ui_wifi_bridge_set_enabled(bool on);
 
 /** Erase WiFi credentials persisted by the IDF itself (esp_wifi_restore +
  *  'nvs.net80211' namespace). Used by 'forget network' and factory reset. */

@@ -564,13 +564,13 @@ void ui_wifi_bridge_disconnect(void)
 }
 
 /* ── Radio on/off (Settings Wi-Fi switch) ────────────────────── */
-void ui_wifi_bridge_set_enabled(bool on)
+bool ui_wifi_bridge_set_enabled(bool on)
 {
-    if (!s_inited) return;   /* init seeds the state from settings */
+    if (!s_inited) return true;   /* init seeds the state from settings */
 
     if (!on) {
         _lock();
-        if (s_monitor_active) { _unlock(); return; }
+        if (s_monitor_active) { _unlock(); return false; }
         s_radio_on = false;
         s_try_valid = false;
         s_need_reconnect = false;
@@ -587,17 +587,17 @@ void ui_wifi_bridge_set_enabled(bool on)
         _unlock();
         if (worker) {
             Serial.println("[wifi] radio off queued until scan worker finishes");
-            return;
+            return true;
         }
         s_status = WIFI_BRIDGE_IDLE;   /* before disconnecting: no FAILED */
         WiFi.disconnect(true);
         WiFi.mode(WIFI_OFF);
         Serial.println("[wifi] radio off");
-        return;
+        return true;
     }
 
     _lock();
-    if (s_monitor_active) { _unlock(); return; }
+    if (s_monitor_active) { _unlock(); return false; }
     s_radio_on = true;
     const bool worker = s_scan_task_active;
     _unlock();
@@ -618,6 +618,7 @@ void ui_wifi_bridge_set_enabled(bool on)
         _unlock();
     }
     Serial.println("[wifi] radio on");
+    return true;
 }
 
 /* ── State ───────────────────────────────────────────────────── */
