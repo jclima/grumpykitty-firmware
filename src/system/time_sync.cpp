@@ -16,8 +16,8 @@ static volatile bool s_sync_flag = false;   /* set by the SNTP callback only */
 
 static wifi_bridge_status_t s_prev_status = WIFI_BRIDGE_IDLE;
 static bool     s_prev_auto  = false;
-static bool     s_waiting    = false;   /* a request is in flight */
-static bool     s_ignore     = false;   /* gave up: ignore late results until the next request */
+static bool     s_waiting    = false;   /* inside the 60 s window after a request */
+static bool     s_first_pending = false; /* no write yet since this connect: next result writes */
 static uint32_t s_wait_start = 0;
 static bool     s_have_write = false;   /* RTC written at least once since boot */
 static uint32_t s_write_ms   = 0;
@@ -60,7 +60,7 @@ static void _start_request(void)
     if (!sntp_enabled()) configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     else                 sntp_restart();
     s_waiting    = true;
-    s_ignore     = false;
+    s_first_pending = true;
     s_wait_start = millis();
 }
 
@@ -74,8 +74,9 @@ extern "C" void time_sync_tick(void)
     s_prev_auto   = auto_on;
 
     if (!auto_on) {
-        s_sync_flag = false;
-        s_waiting   = false;
+        s_sync_flag     = false;
+        s_waiting       = false;
+        s_first_pending = false;
         return;
     }
 
@@ -83,16 +84,14 @@ extern "C" void time_sync_tick(void)
 
     if (s_waiting && (uint32_t)(millis() - s_wait_start) >= kWaitMs) {
         s_waiting = false;
-        s_ignore  = true;
     }
 
     if (!s_sync_flag) return;
     s_sync_flag = false;
-    if (s_ignore) return;
-    /* The first result after a request always writes; later periodic SNTP
-     * updates rewrite the RTC at most every 6 h. */
-    if (!s_waiting && s_have_write && (uint32_t)(millis() - s_write_ms) < kMinRewriteMs) return;
-    if (_write_rtc()) s_waiting = false;
+    /* The first result after a connect always writes, even if it arrives after
+     * the 60 s window; later periodic SNTP updates rewrite the RTC at most every 6 h. */
+    if (!s_first_pending && s_have_write && (uint32_t)(millis() - s_write_ms) < kMinRewriteMs) return;
+    if (_write_rtc()) s_first_pending = false;
 }
 
 extern "C" bool time_sync_status(char *buf, int len)
