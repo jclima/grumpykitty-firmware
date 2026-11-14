@@ -3,9 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- Wi-Fi picker: the previous results stay visible (dimmed) under a Scanning row while rescanning; rows have a pressed state, a Locked tag for secured networks and a Connected tag; joystick Right opens the Forget menu (also operable with Up/Down, A, B); a Hold/Right hint is shown.
+- `MK_LVGL_PARTIAL_REFRESH` build flag (commented out in platformio.ini) redraws only invalidated areas; default remains full refresh.
 - Wi-Fi password keyboard can be typed with the joystick: it moves a highlight over the keys and A presses the highlighted key (Send is now a key).
 
 ### Fixed
+- Wi-Fi: a connect from the picker times out after 15 s, the password keyboard disconnects on its own timeout so the next Send works, taps ignored during a scan or connect show a toast, toasts are width-limited and dismiss after 2.5 s, and the Settings Connect tab SSID card shows the live SSID and status.
+- Audio: a suspend landing as an MP3 starts no longer loses its stop request, and Voice Recorder shows Audio busy and leaves I2S alone when system audio cannot be suspended.
 - Reject malformed JPEG input in the Retro TV decoder: check DQT/DHT lengths, DC category and AC zero-run bounds, initialise the block flag, validate SOF0/DRI/SOS segment lengths, reset the decoder object before each frame and report a failed listen socket.
 - Skip SD probe/remount while mass storage is active or draining, ignore the Settings storage button during a screen animation, add usb_msc_is_quiescent() and show a sticky 'Eject on computer first' notice instead of releasing mid-write.
 - Honour the stop flag inside the mic read loop, clamp samples to the destination length, use a 4096-byte task stack, end() the speaker before re-init, free the codec handle on init failure and handle calloc failure in es8311_create.
