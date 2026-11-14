@@ -137,7 +137,7 @@ static const char* _navigation_target_name(const lv_obj_t* screen, mk_event_t ev
         if (event == MK_EVT_JOY_DOWN)  return "sd-files";
     }
     if ((screen == ui_apps_menu && event == MK_EVT_JOY_RIGHT) ||
-        (screen == ui_settings && event == MK_EVT_JOY_LEFT) ||
+        (screen == ui_settings && (event == MK_EVT_JOY_LEFT || event == MK_EVT_BTN_B)) ||
         (screen == ui_sd_card_files && event == MK_EVT_JOY_UP) ||
         (screen == ui_clock && event == MK_EVT_JOY_DOWN) ||
         (screen == ui_tabview && event == MK_EVT_BTN_A)) {
@@ -1078,7 +1078,21 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
         if (right) { ui_apps_manager_action_step(1); return; }
         if (a) { ui_apps_manager_activate_focused(); return; }
     } else if (cur == ui_settings) {
-        if (left)  { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_home_screen_init); return; }
+        if (ui_settings_info_dialog_open()) {
+            /* Info dialog is up: A or B closes it; nothing acts on the screen behind. */
+            if (a || b) ui_settings_info_dialog_close();
+            return;
+        }
+        if (b)     { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_home_screen_init); return; }
+        if (a)     { ui_settings_activate_focused(); return; }
+        if (left)  {
+            if (!ui_settings_focus_step(-1, 0))
+                _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_RIGHT,  500, 0, &ui_home_screen_init);
+            return;
+        }
+        if (right) { ui_settings_focus_step(1, 0);  return; }
+        if (up)    { ui_settings_focus_step(0, -1); return; }
+        if (down)  { ui_settings_focus_step(0, 1);  return; }
     } else if (cur == ui_sd_card_files) {
         if (up)    { _ui_screen_change(&ui_home, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, 500, 0, &ui_home_screen_init); return; }
         if (b)     { ui_sd_card_files_action_back(); return; }

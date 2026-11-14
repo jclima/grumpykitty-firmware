@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Main Settings screen works with the joystick and buttons: the joystick moves an accent outline over the Wi-Fi card, detailed settings, USB storage, Bluetooth and Info icons, A activates the focused one (the outline appears on first joystick use and hides on touch), B closes the Info dialog or returns Home, and Left on the leftmost icon still goes Home.
 - Wi-Fi picker: the previous results stay visible (dimmed) under a Scanning row while rescanning; rows have a pressed state, a Locked tag for secured networks and a Connected tag; joystick Right opens the Forget menu (also operable with Up/Down, A, B); a Hold/Right hint is shown.
 - `MK_LVGL_PARTIAL_REFRESH` build flag (commented out in platformio.ini) redraws only invalidated areas; default remains full refresh.
 - Wi-Fi password keyboard can be typed with the joystick: it moves a highlight over the keys and A presses the highlighted key (Send is now a key).

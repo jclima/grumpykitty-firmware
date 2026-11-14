@@ -143,6 +143,129 @@ static void ble_btn_cb(lv_event_t * e)
     settings_set_ble_en(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED) ? 1 : 0);
 }
 
+
+/* ── Joystick focus (touch-free navigation) ────────────────────────────────
+ * Interactive elements in visual order. The outline is only drawn once the
+ * joystick has been used and is hidden again as soon as the screen is touched,
+ * so touch users never see it. Reset on every screen load. */
+#define SETTINGS_FOCUS_COUNT 5
+static int  s_focus_idx   = 0;
+static bool s_focus_shown = false;
+
+static lv_obj_t * _focus_obj(int i)
+{
+    switch(i) {
+    case 0: return ui_wifi_status;
+    case 1: return ui_settings_button;
+    case 2: return ui_msc_button;
+    case 3: return ui_ble_button;
+    case 4: return ui_info_button;
+    }
+    return NULL;
+}
+
+static void _focus_paint(int i, bool on)
+{
+    lv_obj_t * o = _focus_obj(i);
+    if(!o) return;
+    if(on) {
+        lv_obj_set_style_outline_color(o, THEME_LV(THEME_ACCENT), LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_opa(o, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_width(o, 3, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_pad(o, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
+    } else {
+        lv_obj_set_style_outline_width(o, 0, LV_PART_MAIN | LV_STATE_DEFAULT);
+        lv_obj_set_style_outline_opa(o, LV_OPA_TRANSP, LV_PART_MAIN | LV_STATE_DEFAULT);
+    }
+}
+
+static void _focus_hide(void)
+{
+    if(!s_focus_shown) return;
+    s_focus_shown = false;
+    _focus_paint(s_focus_idx, false);
+}
+
+static void _touch_hide_focus_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_PRESSED) return;
+    _focus_hide();
+}
+
+bool ui_settings_info_dialog_open(void)
+{
+    return s_info_dialog != NULL;
+}
+
+void ui_settings_info_dialog_close(void)
+{
+    if(!s_info_dialog) return;
+    lv_obj_t * dialog = s_info_dialog;
+    s_info_dialog = NULL;
+    lv_msgbox_close(dialog);
+}
+
+/* Moves the joystick focus. The first joystick use only shows the outline
+ * (Left on a hidden outline is not consumed, so it still leaves to Home).
+ * Returns true when the input was consumed, false when there is nothing to
+ * move to in that direction (the caller may then treat Left as "leave"). */
+bool ui_settings_focus_step(int dx, int dy)
+{
+    if(!ui_settings || s_info_dialog) return false;
+    if(!s_focus_shown) {
+        if(dx < 0) return false;
+        s_focus_shown = true;
+        _focus_paint(s_focus_idx, true);
+        return true;
+    }
+
+    lv_obj_t * cur = _focus_obj(s_focus_idx);
+    if(!cur) return false;
+    lv_area_t ca;
+    lv_obj_get_coords(cur, &ca);
+    int cx = (ca.x1 + ca.x2) / 2, cy = (ca.y1 + ca.y2) / 2;
+
+    int best = -1, best_score = 0;
+    for(int i = 0; i < SETTINGS_FOCUS_COUNT; i++) {
+        lv_obj_t * o = _focus_obj(i);
+        if(!o || i == s_focus_idx) continue;
+        lv_area_t a;
+        lv_obj_get_coords(o, &a);
+        int ox = (a.x1 + a.x2) / 2 - cx, oy = (a.y1 + a.y2) / 2 - cy;
+        int primary = dx ? ox * (dx > 0 ? 1 : -1) : oy * (dy > 0 ? 1 : -1);
+        int perp    = dx ? oy : ox;
+        if(perp < 0) perp = -perp;
+        if(primary <= 0 || perp > primary) continue;   /* must lie within a 45 degree cone */
+        int score = primary + 2 * perp;
+        if(best < 0 || score < best_score) { best = i; best_score = score; }
+    }
+    if(best < 0) return false;
+    _focus_paint(s_focus_idx, false);
+    s_focus_idx = best;
+    _focus_paint(s_focus_idx, true);
+    return true;
+}
+
+void ui_settings_activate_focused(void)
+{
+    if(!ui_settings || s_info_dialog) return;
+    if(!s_focus_shown) {            /* first A press only reveals the focus */
+        s_focus_shown = true;
+        _focus_paint(s_focus_idx, true);
+        return;
+    }
+    lv_obj_t * o = _focus_obj(s_focus_idx);
+    if(!o) return;
+    if(o == ui_ble_button) {
+        /* The Bluetooth switch toggles on RELEASED, not CLICKED: do it here. */
+        if(lv_obj_has_state(o, LV_STATE_CHECKED)) lv_obj_clear_state(o, LV_STATE_CHECKED);
+        else lv_obj_add_state(o, LV_STATE_CHECKED);
+        lv_event_send(o, LV_EVENT_VALUE_CHANGED, NULL);
+        return;
+    }
+    lv_event_send(o, LV_EVENT_CLICKED, NULL);
+}
+
 // event funtions
 void ui_event_settings(lv_event_t * e)
 {
@@ -175,6 +298,8 @@ static void _wifi_lbl_refresh(lv_timer_t * t)
 
 void ui_settings_screen_init(void)
 {
+    s_focus_idx = 0;
+    s_focus_shown = false;
     ui_settings = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_settings, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
     lv_obj_set_style_bg_color(ui_settings, THEME_LV(THEME_SURFACE), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -398,6 +523,17 @@ void ui_settings_screen_init(void)
     lv_obj_clear_flag(ui_navigation_right, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
 
     lv_obj_add_event_cb(ui_settings, ui_event_settings, LV_EVENT_ALL, NULL);
+
+    /* Any touch hides the joystick focus outline. */
+    lv_obj_set_style_radius(ui_ble_button, 43, LV_PART_MAIN | LV_STATE_DEFAULT);   /* round outline */
+    lv_obj_add_event_cb(ui_settings,          _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_wifi_status,       _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_settings_button,   _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_msc_button,        _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_ble_button,        _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_info_button,       _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_brightness_slider, _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(ui_volume_slider,     _touch_hide_focus_cb, LV_EVENT_PRESSED, NULL);
     lv_obj_add_event_cb(ui_settings_button, ui_event_settings_button_click, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(ui_msc_button, ui_event_msc_button_click, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(ui_info_button, ui_event_info_button_click, LV_EVENT_CLICKED, NULL);
@@ -417,6 +553,8 @@ void ui_settings_screen_init(void)
 void ui_settings_screen_destroy(void)
 {
     s_info_dialog = NULL;
+    s_focus_idx = 0;
+    s_focus_shown = false;
     if(s_wifi_lbl_timer) { lv_timer_del(s_wifi_lbl_timer); s_wifi_lbl_timer = NULL; }
     s_wifi_lbl = NULL;
     s_wifi_dot = NULL;

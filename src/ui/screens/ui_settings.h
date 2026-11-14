@@ -30,6 +30,11 @@ extern lv_obj_t * ui_brightness_slider;
 extern lv_obj_t * ui_volume_slider;
 extern lv_obj_t * ui_navigation_right;
 // CUSTOM VARIABLES
+// Joystick/button navigation (outline appears on first use, hides on touch).
+extern bool ui_settings_focus_step(int dx, int dy);   // false: nothing in that direction
+extern void ui_settings_activate_focused(void);
+extern bool ui_settings_info_dialog_open(void);
+extern void ui_settings_info_dialog_close(void);
 
 #ifdef __cplusplus
 } /*extern "C"*/
