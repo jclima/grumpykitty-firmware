@@ -352,6 +352,7 @@ static void _show_menu(const wifi_row_t * row)
     // Forget button
     lv_obj_t * fbtn = lv_btn_create(panel);
     lv_obj_set_size(fbtn, 180, 30);
+    lv_obj_set_ext_click_area(fbtn, 3);   /* buttons are 8 px apart: stay below 4 so they never overlap */
     lv_obj_align(fbtn, LV_ALIGN_TOP_MID, 0, 24);
     lv_obj_set_style_bg_color(fbtn, lv_color_hex(0xFF3B30), 0);
     lv_obj_set_style_radius(fbtn, 6, 0);
@@ -369,6 +370,7 @@ static void _show_menu(const wifi_row_t * row)
     // Cancel button
     lv_obj_t * cbtn = lv_btn_create(panel);
     lv_obj_set_size(cbtn, 180, 30);
+    lv_obj_set_ext_click_area(cbtn, 3);
     lv_obj_align(cbtn, LV_ALIGN_TOP_MID, 0, 62);
     lv_obj_set_style_bg_color(cbtn, lv_color_hex(0x3A3A3C), 0);
     lv_obj_set_style_radius(cbtn, 6, 0);
@@ -1105,6 +1107,7 @@ void ui_wifi_screen_init(void)
     // Wi-Fi on/off switch (child of header_bg)
     ui_wifi_scan_switch = lv_switch_create(ui_wifi_header_bg);
     lv_obj_set_size(ui_wifi_scan_switch, 42, 22);
+    lv_obj_set_ext_click_area(ui_wifi_scan_switch, 6);   /* nearest clickable (the list) is 18 px below */
     lv_obj_set_x(ui_wifi_scan_switch, 252);
     lv_obj_set_y(ui_wifi_scan_switch, 12);
     lv_obj_set_style_bg_color(ui_wifi_scan_switch, lv_color_hex(0x3D414A),

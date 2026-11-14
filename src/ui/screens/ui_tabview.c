@@ -446,6 +446,7 @@ static lv_obj_t * mk_switch(lv_obj_t * p, lv_coord_t y, bool checked)
     lv_obj_t * sw = lv_switch_create(p);
     lv_obj_set_size(sw, 42, 22);
     lv_obj_set_pos(sw, TAB_SW_X, y);
+    lv_obj_set_ext_click_area(sw, 8);   /* bigger touch target; Bluetooth/Wi-Fi/SSID card gaps are >= 9 px */
 
     // Track (OFF state)
     lv_obj_set_style_bg_color(sw, THEME_LV(THEME_BORDER), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -485,6 +486,7 @@ static lv_obj_t * mk_card_switch(lv_obj_t * card, lv_coord_t x, lv_coord_t y, bo
     lv_obj_t * sw = lv_switch_create(card);
     lv_obj_set_size(sw, 42, 22);
     lv_obj_set_pos(sw, x, y);
+    lv_obj_set_ext_click_area(sw, 8);
 
     lv_obj_set_style_bg_color(sw, THEME_LV(THEME_BORDER), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(sw,   LV_OPA_COVER,           LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -842,8 +844,11 @@ static void build_tab_time(lv_obj_t * page)
     mk_lbl(page, "Time", TAB_MARG, 110, TV_MUTED, &ui_font_name_14);
     s_lbl_time_str = mk_lbl(page, "--- --:--", TAB_MARG, 130, TV_TEXT, &ui_font_name_24);
 
-    mk_outline_btn(page, TAB_MARG,           170, 108, 30, "Set Date", TV_LIME,  _tab_set_date_cb);
-    mk_outline_btn(page, TAB_MARG + 114,     170, 108, 30, "Set Time", TV_MUTED, _tab_set_time_cb);
+    /* Only 6 px between the two buttons: 2 px extra each so the touch areas never overlap */
+    lv_obj_set_ext_click_area(
+        mk_outline_btn(page, TAB_MARG,           170, 108, 30, "Set Date", TV_LIME,  _tab_set_date_cb), 2);
+    lv_obj_set_ext_click_area(
+        mk_outline_btn(page, TAB_MARG + 114,     170, 108, 30, "Set Time", TV_MUTED, _tab_set_time_cb), 2);
 
     tab_time_refresh(NULL);
 

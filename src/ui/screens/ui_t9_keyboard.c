@@ -737,6 +737,7 @@ void ui_t9_keyboard_screen_init(void)
 
     s_reveal_button = lv_btn_create(ui_t9_keyboard);
     lv_obj_set_size(s_reveal_button, 42, 28);
+    lv_obj_set_ext_click_area(s_reveal_button, 4);   /* the password field ends 3 px inside; the button is on top */
     lv_obj_set_pos(s_reveal_button, 207, 10);
     lv_obj_set_style_bg_opa(s_reveal_button, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(s_reveal_button, 0, 0);
