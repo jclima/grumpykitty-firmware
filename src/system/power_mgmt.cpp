@@ -47,11 +47,24 @@ static inline bool time_reached(uint32_t now, uint32_t until)
     return (uint32_t)(now - until) < 0x80000000u;
 }
 
-static bool read_voltage(float* v)
+/* Raw reading: only an I2C failure (NaN) is invalid. A 0 V reading is valid
+ * here so the critical-shutdown path counts it as 0%, as it always did. */
+static bool read_voltage_raw(float* v)
 {
     if (!s_pmu) return false;
     const float x = s_pmu->getBatVoltage();
-    if (std::isnan(x) || x < 1.0f) return false;
+    if (std::isnan(x)) return false;
+    *v = x;
+    return true;
+}
+
+/* Smoothing/display input: also skips implausible (< 1 V) readings. */
+static bool voltage_plausible(float x) { return x >= 1.0f; }
+
+static bool read_voltage(float* v)
+{
+    float x;
+    if (!read_voltage_raw(&x) || !voltage_plausible(x)) return false;
     *v = x;
     return true;
 }
@@ -159,7 +172,8 @@ extern "C" void power_tick(void)
     uint32_t       now  = millis();
     const bool     usb  = s_pmu->isVBUSExist();
     float          v    = 0.0f;
-    const bool     valid = read_voltage(&v);
+    const bool     raw_valid = read_voltage_raw(&v);        /* critical path: NaN only */
+    const bool     valid     = raw_valid && voltage_plausible(v);   /* display path */
 
     /* USB plug/unplug shifts the terminal voltage: ignore samples for a
      * while, then re-seed the filter (the displayed value is kept). */
@@ -220,10 +234,10 @@ extern "C" void power_tick(void)
 
     /* Invalid (I2C failure) samples are ignored: they neither trigger nor
      * clear the critical counter. */
-    if (!valid) return;
+    if (!raw_valid) return;
 
     /* Critical shutdown keeps its original input: the unfiltered reading of
-     * this tick, and the same N-consecutive-sample rule. */
+     * this tick (0 V counts as 0%), and the same N-consecutive-sample rule. */
     const int raw_pct = curve_pct(v);
     const int pct     = s_disp_pct;   /* warning uses the displayed value */
 
