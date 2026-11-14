@@ -61,6 +61,10 @@ static int s_focus_count = 0;
 static int s_focus_capacity = 0;
 static char s_attempt_ssid[64] = "";
 
+/* Last completed scan, kept so the list stays visible (dimmed) while rescanning. */
+static wifi_row_t *s_cache = NULL;
+static int s_cache_n = 0;
+
 // ── qsort key for AP list: connected > saved > signal ──
 static const char * s_sort_cur_ssid = "";
 
@@ -454,6 +458,113 @@ static void _wifi_add_rescan_row(void)
     lv_obj_add_event_cb(row, _rescan_cb, LV_EVENT_CLICKED, NULL);
 }
 
+static void _wifi_cache_clear(void)
+{
+    free(s_cache);
+    s_cache = NULL;
+    s_cache_n = 0;
+}
+
+/* Replace the cache with the valid rows of aps[0..n). */
+static void _wifi_cache_store(const wifi_row_t * aps, int n)
+{
+    wifi_row_t * fresh = n > 0 ? (wifi_row_t*)malloc((size_t)n * sizeof(wifi_row_t)) : NULL;
+    int cnt = 0;
+    if(fresh) {
+        for(int i = 0; i < n; i++)
+            if(aps[i].ssid[0]) fresh[cnt++] = aps[i];
+    }
+    _wifi_cache_clear();
+    if(fresh && cnt) { s_cache = fresh; s_cache_n = cnt; }
+    else free(fresh);
+}
+
+// ── One AP row (interactive = live result; otherwise a dimmed stale row) ──
+static void _wifi_add_ap_row(const wifi_row_t * ap, bool interactive)
+{
+    bool is_connected = (s_sort_cur_ssid[0] != '\0' &&
+                         strcmp(ap->ssid, s_sort_cur_ssid) == 0);
+
+    lv_obj_t * row = lv_obj_create(ui_wifi_list);
+    lv_obj_set_size(row, lv_pct(100), 38);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_radius(row, 4, 0);
+    lv_obj_set_style_pad_all(row, 2, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    // Lock icon (default font has LVGL symbols)
+    lv_obj_t * lock = lv_label_create(row);
+    lv_label_set_text(lock, ap->encrypted ? LV_SYMBOL_EYE_CLOSE : " ");
+    lv_obj_set_style_text_color(lock, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(lock, LV_FONT_DEFAULT, 0);
+    lv_obj_align(lock, LV_ALIGN_LEFT_MID, 2, 0);
+
+    // Connected tick
+    int ssid_x = 18;
+    if(is_connected) {
+        lv_obj_t * tick = lv_label_create(row);
+        lv_label_set_text(tick, LV_SYMBOL_OK);
+        lv_obj_set_style_text_color(tick, THEME_LV(THEME_OK), 0);
+        lv_obj_set_style_text_font(tick, LV_FONT_DEFAULT, 0);
+        lv_obj_align(tick, LV_ALIGN_LEFT_MID, 18, 0);
+        ssid_x = 32;
+    }
+
+    // SSID label
+    lv_obj_t * ssid_lbl = lv_label_create(row);
+    lv_label_set_long_mode(ssid_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(ssid_lbl, 150);
+     /* LV_LABEL_LONG_DOT only ellipsises when the height is bounded too.
+     * Left at LV_SIZE_CONTENT the label grows instead, wrapping a long
+     * SSID onto a second line that the 38 px row then clips. Pin it to a
+     * single line so the text is truncated horizontally as intended. */
+    lv_obj_set_height(ssid_lbl, lv_font_get_line_height(&lv_font_montserrat_14));
+    lv_label_set_text(ssid_lbl, ap->ssid);
+    lv_obj_set_style_text_color(ssid_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(ssid_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_align(ssid_lbl, LV_ALIGN_LEFT_MID, ssid_x, 0);
+
+    // Signal color: ≥70% green, 40–69% white, <40% gray
+    lv_color_t sig_color;
+    if(ap->pct >= 70)      sig_color = THEME_LV(THEME_OK);
+    else if(ap->pct >= 40) sig_color = lv_color_hex(0xFFFFFF);
+    else                   sig_color = lv_color_hex(0x888888);
+
+    // Right label: pct + status tag
+    char right_buf[20];
+    if(is_connected) {
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%%", ap->pct);
+    } else if(ap->saved) {
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%% Saved", ap->pct);
+        sig_color = THEME_LV(THEME_ACCENT);
+    } else if(!ap->encrypted) {
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%% Open", ap->pct);
+    } else {
+        lv_snprintf(right_buf, sizeof(right_buf), "%d%%", ap->pct);
+    }
+
+    lv_obj_t * right_lbl = lv_label_create(row);
+    lv_label_set_text(right_lbl, right_buf);
+    lv_obj_set_style_text_color(right_lbl, sig_color, 0);
+    lv_obj_set_style_text_font(right_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_align(right_lbl, LV_ALIGN_RIGHT_MID, -4, 0);
+
+    if(!interactive) {
+        /* Stale results shown while a rescan runs: dim, not clickable, no focus slot. */
+        lv_obj_set_style_opa(row, LV_OPA_50, 0);
+        lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        return;
+    }
+    wifi_row_t * data = (wifi_row_t*)malloc(sizeof(wifi_row_t));
+    if(!data) { lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE); return; }
+    *data = *ap;
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, _row_click_cb,     LV_EVENT_CLICKED,      data);
+    lv_obj_add_event_cb(row, _row_longpress_cb, LV_EVENT_LONG_PRESSED, data);
+    lv_obj_add_event_cb(row, _row_delete_cb,    LV_EVENT_DELETE,       data);
+    _wifi_register_focus_slot(row, data);
+}
+
 // ── Build AP list ──
 static void _wifi_build_list(void)
 {
@@ -491,11 +602,22 @@ static void _wifi_build_list(void)
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 28, 0);
 
+        /* Keep the previous results visible below the spinner, dimmed and inert:
+         * no focus slots are registered, so focus never points at a stale row. */
+        if(s_cache_n > 0 && settings_get_wifi_en()) {
+            wifi_bridge_status_t st = ui_wifi_bridge_get_status();
+            s_sort_cur_ssid = (st == WIFI_BRIDGE_CONNECTED) ? ui_wifi_bridge_get_current_ssid() : "";
+            qsort(s_cache, (size_t)s_cache_n, sizeof(wifi_row_t), _ap_cmp);
+            for(int i = 0; i < s_cache_n; i++)
+                _wifi_add_ap_row(&s_cache[i], false);
+            lv_obj_scroll_to_y(ui_wifi_list, 0, LV_ANIM_OFF);
+        }
         return;  // Never expose stale scan rows for activation.
     }
 
     if(!settings_get_wifi_en()) {
         /* Radio off: empty state, no rows to focus. */
+        _wifi_cache_clear();
         s_focus_index = -1;
         s_focus_rescan = false;
         s_focused.ssid[0] = '\0';
@@ -524,6 +646,7 @@ static void _wifi_build_list(void)
 
     // "No networks found" only after scan actually completed with zero results
     if(n == 0 && s_scan_done) {
+        _wifi_cache_clear();
         lv_obj_t * row = lv_obj_create(ui_wifi_list);
         lv_obj_set_size(row, lv_pct(100), 38);
         lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
@@ -593,87 +716,13 @@ static void _wifi_build_list(void)
     }
 
     qsort(aps, (size_t)n, sizeof(wifi_row_t), _ap_cmp);
+    _wifi_cache_store(aps, n);
 
     // Build LVGL rows
     for(int i = 0; i < n; i++) {
         if(aps[i].ssid[0] == '\0') continue;
 
-        wifi_row_t * data = (wifi_row_t*)malloc(sizeof(wifi_row_t));
-        if(!data) continue;
-        *data = aps[i];
-
-        bool is_connected = (s_sort_cur_ssid[0] != '\0' &&
-                             strcmp(aps[i].ssid, s_sort_cur_ssid) == 0);
-
-        lv_obj_t * row = lv_obj_create(ui_wifi_list);
-        lv_obj_set_size(row, lv_pct(100), 38);
-        lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(row, 0, 0);
-        lv_obj_set_style_radius(row, 4, 0);
-        lv_obj_set_style_pad_all(row, 2, 0);
-        lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        // Lock icon (default font has LVGL symbols)
-        lv_obj_t * lock = lv_label_create(row);
-        lv_label_set_text(lock, aps[i].encrypted ? LV_SYMBOL_EYE_CLOSE : " ");
-        lv_obj_set_style_text_color(lock, lv_color_hex(0x666666), 0);
-        lv_obj_set_style_text_font(lock, LV_FONT_DEFAULT, 0);
-        lv_obj_align(lock, LV_ALIGN_LEFT_MID, 2, 0);
-
-        // Connected tick
-        int ssid_x = 18;
-        if(is_connected) {
-            lv_obj_t * tick = lv_label_create(row);
-            lv_label_set_text(tick, LV_SYMBOL_OK);
-            lv_obj_set_style_text_color(tick, THEME_LV(THEME_OK), 0);
-            lv_obj_set_style_text_font(tick, LV_FONT_DEFAULT, 0);
-            lv_obj_align(tick, LV_ALIGN_LEFT_MID, 18, 0);
-            ssid_x = 32;
-        }
-
-        // SSID label
-        lv_obj_t * ssid_lbl = lv_label_create(row);
-        lv_label_set_long_mode(ssid_lbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(ssid_lbl, 150);
-         /* LV_LABEL_LONG_DOT only ellipsises when the height is bounded too.
-         * Left at LV_SIZE_CONTENT the label grows instead, wrapping a long
-         * SSID onto a second line that the 38 px row then clips. Pin it to a
-         * single line so the text is truncated horizontally as intended. */
-        lv_obj_set_height(ssid_lbl, lv_font_get_line_height(&lv_font_montserrat_14));
-        lv_label_set_text(ssid_lbl, aps[i].ssid);
-        lv_obj_set_style_text_color(ssid_lbl, lv_color_hex(0xFFFFFF), 0);
-        lv_obj_set_style_text_font(ssid_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_align(ssid_lbl, LV_ALIGN_LEFT_MID, ssid_x, 0);
-
-        // Signal color: ≥70% green, 40–69% white, <40% gray
-        lv_color_t sig_color;
-        if(aps[i].pct >= 70)      sig_color = THEME_LV(THEME_OK);
-        else if(aps[i].pct >= 40) sig_color = lv_color_hex(0xFFFFFF);
-        else                      sig_color = lv_color_hex(0x888888);
-
-        // Right label: pct + status tag
-        char right_buf[20];
-        if(is_connected) {
-            lv_snprintf(right_buf, sizeof(right_buf), "%d%%", aps[i].pct);
-        } else if(aps[i].saved) {
-            lv_snprintf(right_buf, sizeof(right_buf), "%d%% Saved", aps[i].pct);
-            sig_color = THEME_LV(THEME_ACCENT);
-        } else if(!aps[i].encrypted) {
-            lv_snprintf(right_buf, sizeof(right_buf), "%d%% Open", aps[i].pct);
-        } else {
-            lv_snprintf(right_buf, sizeof(right_buf), "%d%%", aps[i].pct);
-        }
-
-        lv_obj_t * right_lbl = lv_label_create(row);
-        lv_label_set_text(right_lbl, right_buf);
-        lv_obj_set_style_text_color(right_lbl, sig_color, 0);
-        lv_obj_set_style_text_font(right_lbl, &lv_font_montserrat_14, 0);
-        lv_obj_align(right_lbl, LV_ALIGN_RIGHT_MID, -4, 0);
-
-        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(row, _row_click_cb,     LV_EVENT_CLICKED,      data);
-        lv_obj_add_event_cb(row, _row_longpress_cb, LV_EVENT_LONG_PRESSED, data);
-        lv_obj_add_event_cb(row, _row_delete_cb,    LV_EVENT_DELETE,       data);
-        _wifi_register_focus_slot(row, data);
+        _wifi_add_ap_row(&aps[i], true);
     }
 
     free(aps);
@@ -784,6 +833,7 @@ static void _switch_cb(lv_event_t * e)
     } else {
         ui_wifi_bridge_stop_scan();
         if(s_scan_timer) { lv_timer_del(s_scan_timer); s_scan_timer = NULL; }
+        _wifi_cache_clear();
         s_scan_done   = false;
         s_scan_active = false;
         s_last_count  = 0;
