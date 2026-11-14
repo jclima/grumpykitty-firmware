@@ -1124,37 +1124,8 @@ void Launcher::handleNavigationEvent(mk_event_t evt)
 
     /* ── USB MSC screen ── */
     if (cur == ui_usb_msc) {
-        if (a || b) {
-            ui_usb_msc_set_notice(NULL);   /* new press: drop any sticky message */
-            if (!usb_msc_is_quiescent()) {
-                /* Host is still writing: releasing now could corrupt the card. */
-                ui_usb_msc_set_notice("Eject on computer first");
-                return;
-            }
-        }
-        if (a) {
-            if (usb_msc_is_active()) {
-                int ok = usb_manager_release(USB_MODE_MSC);
-                if (ok) {
-                    if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "USB storage detached - eject host first");
-                    Serial.println("[Launcher] MSC ejected via A");
-                } else if (ui_usb_msc_label) {
-                    lv_label_set_text(ui_usb_msc_label, "disconnecting - press A/B to retry");
-                }
-            } else {
-                if (ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label, "Already ejected");
-            }
-            return;
-        }
-        if (b) {
-            int ok = usb_manager_release(USB_MODE_MSC);
-            if (ok) {
-                _ui_screen_change(&ui_settings, LV_SCR_LOAD_ANIM_FADE_ON, 300, 0, &ui_settings_screen_init);
-            } else if (ui_usb_msc_label) {
-                lv_label_set_text(ui_usb_msc_label, "disconnecting - press A/B to retry");
-            }
-            return;
-        }
+        if (a) { ui_usb_msc_action_eject(); return; }
+        if (b) { ui_usb_msc_action_back();  return; }
     }
     if (cur == ui_wifi) {
         if (a) { ui_wifi_connect_focused(); return; }

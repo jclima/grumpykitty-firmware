@@ -60,9 +60,8 @@ static void ui_event_msc_button_click(lv_event_t * e)
     if (!ui_sd_present()) {
         usb_msc_set_error(ui_sd_state() == UI_SD_UNSUPPORTED ? USB_MSC_UNSUPPORTED : USB_MSC_MISSING);
         _ui_screen_change(&ui_usb_msc, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_usb_msc_screen_init);
-        if(ui_usb_msc_label) lv_label_set_text(ui_usb_msc_label,
-            ui_sd_state() == UI_SD_UNSUPPORTED ? "unsupported card - use FAT32"
-                                               : "no SD card — insert and retry");
+        ui_usb_msc_set_notice(ui_sd_state() == UI_SD_UNSUPPORTED ? "Unsupported card. Use FAT32 and retry"
+                                                                 : "No SD card. Insert one and retry");
         return;
     }
 
@@ -71,9 +70,7 @@ static void ui_event_msc_button_click(lv_event_t * e)
     int ok = usb_manager_request(USB_MODE_MSC);
     if (!ok) usb_msc_set_error(USB_MSC_INIT_FAILED);
     _ui_screen_change(&ui_usb_msc, LV_SCR_LOAD_ANIM_FADE_ON, 350, 0, &ui_usb_msc_screen_init);
-    if(ui_usb_msc_label) {
-        lv_label_set_text(ui_usb_msc_label, ok ? "connected - copy files" : "MSC init failed");
-    }
+    ui_usb_msc_set_notice(ok ? "Connected. Copy files" : "USB start failed. Go back and retry");
 }
 
 static void _settings_button_press_style(lv_obj_t * button)

@@ -22,9 +22,11 @@ extern lv_obj_t * ui_usb_msc_key_a_bg;
 extern lv_obj_t * ui_usb_msc_key_b_bg;
 extern lv_obj_t * ui_usb_msc_key_a_eject;
 extern lv_obj_t * ui_usb_msc_key_b_back;
-// Show a sticky message instead of the live status until the next key press
-// (pass NULL to resume the status display).
+// Show a message instead of the live status for ~3 s (pass NULL to drop it).
 extern void ui_usb_msc_set_notice(const char * text);
+// A = Eject / B = Back, shared by the physical buttons and the on-screen keys.
+extern void ui_usb_msc_action_eject(void);
+extern void ui_usb_msc_action_back(void);
 // CUSTOM VARIABLES
 
 #ifdef __cplusplus
