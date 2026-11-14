@@ -613,9 +613,16 @@ bool ui_wifi_bridge_set_enabled(bool on)
         /* Queues behind the worker (replacing a pending RADIO_OFF) if busy. */
         ui_wifi_bridge_connect_saved(sv_ssid);
     } else if (worker) {
+        /* The worker may have exited during the NVS read above: re-check. */
         _lock();
-        if (s_scan_task_active) s_pending_action = WIFI_ACTION_RADIO_ON;
+        const bool still_busy = s_scan_task_active;
+        if (still_busy) s_pending_action = WIFI_ACTION_RADIO_ON;
         _unlock();
+        if (!still_busy) {
+            WiFi.mode(WIFI_STA);
+            WiFi.setAutoReconnect(false);
+            s_status = WIFI_BRIDGE_IDLE;
+        }
     }
     Serial.println("[wifi] radio on");
     return true;
