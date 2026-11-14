@@ -112,6 +112,21 @@ void ui_wifi_bridge_get_ip(char* buf, int len);
 /** Return pointer to current connected SSID (static buffer). */
 const char *ui_wifi_bridge_get_current_ssid(void);
 
+/** Details of the connected network (strings are "--" when unavailable). */
+typedef struct {
+    char ip[16];
+    char gw[16];
+    char mac[18];
+    char bssid[18];
+    int  rssi;
+    int  channel;
+} wifi_bridge_details_t;
+
+/** Fill out with the connected network's details.  Main loop only.
+ *  Returns false unless CONNECTED, the radio is on and the packet monitor
+ *  does not hold the radio. */
+bool ui_wifi_bridge_get_details(wifi_bridge_details_t * out);
+
 /** Remove saved credentials for ssid (no-op if ssid is not the saved network). */
 void ui_wifi_bridge_forget(const char * ssid);
 

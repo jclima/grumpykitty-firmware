@@ -3,6 +3,7 @@
 // LVGL 8.3.11 / ESP32-S3
 
 #include <stdlib.h>
+#include <stdio.h>
 #include "../ui.h"
 #include "../ui_wifi_bridge.h"
 #include "../../system/settings_bridge.h"
@@ -44,8 +45,14 @@ static struct {
 // ── Long-press menu ──
 static lv_obj_t * s_menu      = NULL;
 static char       s_menu_ssid[64] = "";
-static lv_obj_t * s_menu_btn[2] = {NULL, NULL};   /* [0] Forget, [1] Cancel */
+static lv_obj_t * s_menu_btn[3] = {NULL, NULL, NULL};   /* [Details,] Forget, Cancel (or Close in the details view) */
+static int        s_menu_cnt    = 0;              /* buttons in s_menu_btn */
 static int        s_menu_sel    = 1;              /* joystick highlight; defaults to the safe button */
+static lv_obj_t * s_btn_details = NULL;
+static lv_obj_t * s_btn_forget  = NULL;
+static lv_obj_t * s_btn_close   = NULL;           /* Close button of the details view */
+static lv_obj_t * s_details_lbl = NULL;
+static lv_timer_t * s_details_timer = NULL;
 
 // ── Per-row heap data ──
 typedef struct {
@@ -279,20 +286,25 @@ static void _forget_cb(lv_event_t * e)
 /* Joystick highlight on the menu buttons (same FOCUSED border as the list rows). */
 static void _menu_select(int idx)
 {
+    if(s_menu_cnt <= 0) return;
     if(idx < 0) idx = 0;
-    if(idx > 1) idx = 1;
+    if(idx > s_menu_cnt - 1) idx = s_menu_cnt - 1;
     s_menu_sel = idx;
-    for(int i = 0; i < 2; i++) {
+    for(int i = 0; i < s_menu_cnt; i++) {
         if(!s_menu_btn[i]) continue;
         if(i == idx) lv_obj_add_state(s_menu_btn[i], LV_STATE_FOCUSED);
         else lv_obj_clear_state(s_menu_btn[i], LV_STATE_FOCUSED);
     }
 }
 
+static void _menu_show_details(void);
+
 static void _menu_activate(void)
 {
-    if(s_menu_sel == 0) _menu_forget();
-    else _hide_menu();
+    lv_obj_t * sel = (s_menu_sel >= 0 && s_menu_sel < s_menu_cnt) ? s_menu_btn[s_menu_sel] : NULL;
+    if(sel && sel == s_btn_forget) _menu_forget();
+    else if(sel && sel == s_btn_details) _menu_show_details();
+    else _hide_menu();   /* Cancel / Close */
 }
 
 static void _menu_cancel_cb(lv_event_t * e)
@@ -301,10 +313,122 @@ static void _menu_cancel_cb(lv_event_t * e)
     _hide_menu();
 }
 
+static void _details_btn_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _menu_show_details();
+}
+
 static void _hide_menu(void)
 {
     if(s_menu) { lv_obj_del(s_menu); s_menu = NULL; }
-    s_menu_btn[0] = s_menu_btn[1] = NULL;
+    s_menu_btn[0] = s_menu_btn[1] = s_menu_btn[2] = NULL;
+    s_menu_cnt = 0;
+    s_btn_details = s_btn_forget = s_btn_close = NULL;
+    s_details_lbl = NULL;
+}
+
+/* Menu button with the shared geometry / focus styles. */
+static lv_obj_t * _menu_make_btn(lv_obj_t * panel, const char * text, uint32_t bg,
+                                 int w, lv_align_t al, int y, lv_event_cb_t cb)
+{
+    lv_obj_t * b = lv_btn_create(panel);
+    lv_obj_set_size(b, w, 30);
+    lv_obj_set_ext_click_area(b, 3);   /* buttons are 8 px apart: stay below 4 so they never overlap */
+    lv_obj_align(b, al, 0, y);
+    lv_obj_set_style_bg_color(b, lv_color_hex(bg), 0);
+    lv_obj_set_style_radius(b, 6, 0);
+    lv_obj_set_style_pad_all(b, 0, 0);
+    lv_obj_set_style_border_color(b, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(b, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_set_style_outline_width(b, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t * l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(l, &lv_font_montserrat_14, 0);
+    lv_obj_align(l, LV_ALIGN_CENTER, 0, 0);
+    return b;
+}
+
+static lv_obj_t * _menu_make_panel(int w, int h, const char * ssid)
+{
+    lv_obj_t * panel = lv_obj_create(s_menu);
+    lv_obj_set_size(panel, w, h);
+    lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1C1C1E), 0);
+    lv_obj_set_style_bg_opa(panel, 255, 0);
+    lv_obj_set_style_radius(panel, 10, 0);
+    lv_obj_set_style_border_color(panel, lv_color_hex(0x444444), 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_pad_all(panel, 8, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    // SSID title
+    lv_obj_t * title = lv_label_create(panel);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(title, w - 20);
+    lv_label_set_text(title, ssid);
+    lv_obj_set_style_text_color(title, lv_color_hex(0x888888), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    return panel;
+}
+
+static void _details_fill(void)
+{
+    if(!s_details_lbl) return;
+    wifi_bridge_details_t d;
+    if(!ui_wifi_bridge_get_details(&d)) {
+        lv_label_set_text(s_details_lbl, "Not connected");
+        return;
+    }
+    char rssi[16] = "--", chan[8] = "--";
+    if(d.rssi != 0) snprintf(rssi, sizeof(rssi), "%d dBm", d.rssi);
+    if(d.channel > 0) snprintf(chan, sizeof(chan), "%d", d.channel);
+    lv_label_set_text_fmt(s_details_lbl,
+        "IP: %s\nGateway: %s\nSignal: %s\nChannel: %s\nMAC: %s\nBSSID: %s",
+        d.ip, d.gw, rssi, chan, d.mac, d.bssid);
+}
+
+static void _details_timer_cb(lv_timer_t * t)
+{
+    (void)t;
+    _details_fill();
+}
+
+static void _menu_delete_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_DELETE) return;
+    if(s_details_timer) { lv_timer_del(s_details_timer); s_details_timer = NULL; }
+}
+
+/* Replace the options panel with the live network-details panel (same overlay). */
+static void _menu_show_details(void)
+{
+    if(!s_menu) return;
+    // Drop the options panel (the overlay's only child) and its button pointers.
+    lv_obj_clean(s_menu);
+    s_menu_btn[0] = s_menu_btn[1] = s_menu_btn[2] = NULL;
+    s_btn_details = s_btn_forget = NULL;
+
+    lv_obj_t * panel = _menu_make_panel(260, 180, s_menu_ssid);
+
+    s_details_lbl = lv_label_create(panel);
+    lv_obj_set_width(s_details_lbl, 240);
+    lv_label_set_long_mode(s_details_lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_color(s_details_lbl, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(s_details_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_align(s_details_lbl, LV_ALIGN_TOP_LEFT, 0, 22);
+
+    s_btn_close = _menu_make_btn(panel, "Close", 0x3A3A3C, 180, LV_ALIGN_BOTTOM_MID, 0, _menu_cancel_cb);
+    s_menu_btn[0] = s_btn_close;
+    s_menu_cnt = 1;
+    _menu_select(0);
+
+    _details_fill();
+    if(s_details_timer) lv_timer_del(s_details_timer);
+    s_details_timer = lv_timer_create(_details_timer_cb, 1000, NULL);
 }
 
 static void _show_menu(const wifi_row_t * row)
@@ -326,68 +450,27 @@ static void _show_menu(const wifi_row_t * row)
     lv_obj_add_flag(s_menu, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(s_menu, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_menu, _menu_cancel_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_menu, _menu_delete_cb, LV_EVENT_DELETE, NULL);
     lv_obj_move_foreground(s_menu);
 
-    // Menu panel
-    lv_obj_t * panel = lv_obj_create(s_menu);
-    lv_obj_set_size(panel, 200, 106);
-    lv_obj_align(panel, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(0x1C1C1E), 0);
-    lv_obj_set_style_bg_opa(panel, 255, 0);
-    lv_obj_set_style_radius(panel, 10, 0);
-    lv_obj_set_style_border_color(panel, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_pad_all(panel, 8, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    // Details are offered only for the network we are connected to right now.
+    const bool show_details = ui_wifi_bridge_get_status() == WIFI_BRIDGE_CONNECTED &&
+                              strcmp(row->ssid, ui_wifi_bridge_get_current_ssid()) == 0;
 
-    // SSID title
-    lv_obj_t * title = lv_label_create(panel);
-    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(title, 180);
-    lv_label_set_text(title, row->ssid);
-    lv_obj_set_style_text_color(title, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_14, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_t * panel = _menu_make_panel(200, show_details ? 144 : 106, row->ssid);
 
-    // Forget button
-    lv_obj_t * fbtn = lv_btn_create(panel);
-    lv_obj_set_size(fbtn, 180, 30);
-    lv_obj_set_ext_click_area(fbtn, 3);   /* buttons are 8 px apart: stay below 4 so they never overlap */
-    lv_obj_align(fbtn, LV_ALIGN_TOP_MID, 0, 24);
-    lv_obj_set_style_bg_color(fbtn, lv_color_hex(0xFF3B30), 0);
-    lv_obj_set_style_radius(fbtn, 6, 0);
-    lv_obj_set_style_pad_all(fbtn, 0, 0);
-    lv_obj_set_style_border_color(fbtn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(fbtn, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_set_style_outline_width(fbtn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_add_event_cb(fbtn, _forget_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t * flbl = lv_label_create(fbtn);
-    lv_label_set_text(flbl, "Forget Network");
-    lv_obj_set_style_text_color(flbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(flbl, &lv_font_montserrat_14, 0);
-    lv_obj_align(flbl, LV_ALIGN_CENTER, 0, 0);
-
-    // Cancel button
-    lv_obj_t * cbtn = lv_btn_create(panel);
-    lv_obj_set_size(cbtn, 180, 30);
-    lv_obj_set_ext_click_area(cbtn, 3);
-    lv_obj_align(cbtn, LV_ALIGN_TOP_MID, 0, 62);
-    lv_obj_set_style_bg_color(cbtn, lv_color_hex(0x3A3A3C), 0);
-    lv_obj_set_style_radius(cbtn, 6, 0);
-    lv_obj_set_style_pad_all(cbtn, 0, 0);
-    lv_obj_set_style_border_color(cbtn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(cbtn, 2, LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_set_style_outline_width(cbtn, 0, LV_PART_MAIN | LV_STATE_FOCUSED);
-    lv_obj_add_event_cb(cbtn, _menu_cancel_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t * clbl = lv_label_create(cbtn);
-    lv_label_set_text(clbl, "Cancel");
-    lv_obj_set_style_text_color(clbl, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(clbl, &lv_font_montserrat_14, 0);
-    lv_obj_align(clbl, LV_ALIGN_CENTER, 0, 0);
-
-    s_menu_btn[0] = fbtn;
-    s_menu_btn[1] = cbtn;
-    _menu_select(1);
+    int n = 0, y = 24;
+    if(show_details) {
+        s_btn_details = _menu_make_btn(panel, "Details", 0x0A84FF, 180, LV_ALIGN_TOP_MID, y, _details_btn_cb);
+        s_menu_btn[n++] = s_btn_details;
+        y += 38;
+    }
+    s_btn_forget = _menu_make_btn(panel, "Forget Network", 0xFF3B30, 180, LV_ALIGN_TOP_MID, y, _forget_cb);
+    s_menu_btn[n++] = s_btn_forget;
+    y += 38;
+    s_menu_btn[n++] = _menu_make_btn(panel, "Cancel", 0x3A3A3C, 180, LV_ALIGN_TOP_MID, y, _menu_cancel_cb);
+    s_menu_cnt = n;
+    _menu_select(n - 1);   /* default: Cancel */
 }
 
 // ── Row click / long-press ──
@@ -991,7 +1074,7 @@ void ui_wifi_connect_focused(void)
 void ui_wifi_focus_step(int direction)
 {
     if(s_menu) {   /* options menu open: Up/Down move between its buttons */
-        if(direction) _menu_select(direction < 0 ? 0 : 1);
+        if(direction) _menu_select(s_menu_sel + (direction < 0 ? -1 : 1));
         return;
     }
     if(!direction || _wifi_input_blocked() || !s_focus_count) return;
@@ -1036,6 +1119,8 @@ void ui_wifi_screen_init(void)
     s_focus_index = -1;
     s_focus_rescan = false;
     s_menu          = NULL;
+    s_menu_cnt = 0; s_menu_btn[0] = s_menu_btn[1] = s_menu_btn[2] = NULL;
+    s_btn_details = s_btn_forget = s_btn_close = NULL; s_details_lbl = NULL;
 
     ui_wifi = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_wifi, LV_OBJ_FLAG_SCROLLABLE);
@@ -1238,4 +1323,6 @@ void ui_wifi_screen_destroy(void)
     ui_wifi_list           = NULL;
     s_toast                = NULL;
     s_menu                 = NULL;
+    s_menu_cnt = 0; s_menu_btn[0] = s_menu_btn[1] = s_menu_btn[2] = NULL;
+    s_btn_details = s_btn_forget = s_btn_close = NULL; s_details_lbl = NULL;
 }

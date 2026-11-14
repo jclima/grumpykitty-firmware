@@ -673,6 +673,40 @@ void ui_wifi_bridge_get_ip(char *buf, int len)
     buf[len - 1] = '\0';
 }
 
+bool ui_wifi_bridge_get_details(wifi_bridge_details_t *out)
+{
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    strcpy(out->ip, "--"); strcpy(out->gw, "--");
+    strcpy(out->mac, "--"); strcpy(out->bssid, "--");
+    out->rssi = 0; out->channel = 0;
+
+    _lock();
+    const bool ok = s_status == WIFI_BRIDGE_CONNECTED && s_radio_on && !s_monitor_active;
+    char ip[16];
+    strncpy(ip, s_current_ip, sizeof(ip) - 1);
+    ip[sizeof(ip) - 1] = '\0';
+    _unlock();
+    if (!ok) return false;
+
+    if (ip[0]) strcpy(out->ip, ip);
+
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+        out->rssi    = ap.rssi;
+        out->channel = ap.primary;
+        snprintf(out->bssid, sizeof(out->bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3], ap.bssid[4], ap.bssid[5]);
+    }
+    const IPAddress gw = WiFi.gatewayIP();
+    if (gw != IPAddress((uint32_t)0)) {
+        snprintf(out->gw, sizeof(out->gw), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
+    }
+    const String mac = WiFi.macAddress();
+    if (mac.length() == 17) strcpy(out->mac, mac.c_str());
+    return true;
+}
+
 const char *ui_wifi_bridge_get_current_ssid(void)
 {
     /* If connected, return event-cached SSID; fall back to driver query. */
