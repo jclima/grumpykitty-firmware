@@ -68,10 +68,8 @@ void installTlsAllocator() {
 // the Response that produced it; only one OTA job runs at a time.
 char failureText[48];
 
-// Large per-job buffers live on the heap, PSRAM first. esp_flash_write copies
-// non-internal sources through a 32-byte internal bounce buffer, and the SHA
-// engine writes the cache back for external RAM, so PSRAM is a valid source for
-// the download chunk. 32-byte alignment matches the cache line.
+// The manifest buffer lives on the heap, PSRAM first: it is only parsed, never a
+// flash source. (The download chunk is a static internal buffer, see below.)
 class Buffer {
 public:
     explicit Buffer(size_t bytes) {
@@ -86,6 +84,15 @@ public:
 private:
     void* _data = nullptr;
 };
+
+// Download chunk: the flash-write source. esp_flash_write copies a source that is
+// not directly writable (external RAM) through a 32-byte bounce buffer, which
+// would turn ~1,500 writes into ~190,000 for a 6 MB image. A static array in
+// internal .bss is always flash-writable and cannot fail under heap
+// fragmentation. Only the single OTA worker uses it: start() sets `busy` under
+// the lock and runJob() clears it last, so at most one job runs at a time.
+constexpr size_t ChunkBytes = 4096;
+alignas(32) uint8_t chunkBuffer[ChunkBytes];
 
 constexpr size_t WorkerStackBytes = 12288;
 alignas(16) StackType_t workerStack[WorkerStackBytes];
@@ -346,10 +353,7 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
     }
     if (cancelRequested) return {State::Idle, "Cancelled"};
 
-    constexpr size_t ChunkBytes = 4096;
-    Buffer chunkBuffer(ChunkBytes);
-    if (!chunkBuffer) return {State::Failed, "OTA buffer: no memory"};
-    uint8_t* const chunk = reinterpret_cast<uint8_t*>(chunkBuffer.data());
+    uint8_t* const chunk = chunkBuffer;
 
     Digest digest;
     Image image;
