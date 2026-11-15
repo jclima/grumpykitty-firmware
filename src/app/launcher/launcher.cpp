@@ -61,6 +61,7 @@
 #include "../../system/time_sync.h"
 #include "../../system/mk_events.h"
 #include "../../system/system_sound.h"
+#include "../../system/screenshot.h"
 #include <Arduino.h>
 #include <SD_MMC.h>
 #include <lvgl.h>
@@ -97,6 +98,14 @@ static void _update_system_key_sound(DEVICES* dev)
 /* True when the backlight has been turned off due to idle timeout. */
 static bool s_screen_off = false;
 
+/* Timed screenshot armed from the quick settings panel (see launcher_screenshot_arm).
+ * Serviced from onLoop outside lv_timer_handler; cancelled by screen-off or an app. */
+#define SHOT_DELAY_MS      5000
+#define SHOT_CLEAR_LEAD_MS 300     /* clear toasts this long before the capture */
+static bool     s_shot_armed   = false;
+static bool     s_shot_cleared = false;
+static uint32_t s_shot_deadline = 0;
+
 /* Single place that changes the screen-off flag, so the touch indev always
  * knows about it: while off the pointer reports RELEASED and, after waking,
  * keeps doing so until the finger lifts (the wake touch must not also click). */
@@ -104,7 +113,10 @@ static void _set_screen_off(bool off)
 {
     s_screen_off = off;
     lv_port_indev_set_screen_off(off);
-    if (off) ui_quick_panel_close();   /* never leave the overlay up behind a dark screen */
+    if (off) {
+        ui_quick_panel_close();   /* never leave the overlay up behind a dark screen */
+        s_shot_armed = false;     /* no screenshot of (or after) a dark screen */
+    }
 }
 
 static bool _screen_transition_active()
@@ -287,10 +299,18 @@ static void _shutdown_led_anim(void)
     }
 }
 
-/* Auto-dismiss timer: deletes the toast overlay after 4 s. */
+/* Live toasts and their dismiss timers (a slot is NULL once dismissed), so the
+ * screenshot can remove every toast before capturing. */
+#define TOAST_SLOTS 4
+static lv_obj_t   * s_toast_obj[TOAST_SLOTS]   = {NULL};
+static lv_timer_t * s_toast_timer[TOAST_SLOTS] = {NULL};
+
+/* Auto-dismiss timer: deletes the toast overlay after its duration (default 4 s). */
 static void _bat_toast_dismiss(lv_timer_t * t)
 {
     lv_obj_t * toast = (lv_obj_t *)t->user_data;
+    for (int i = 0; i < TOAST_SLOTS; i++)
+        if (s_toast_obj[i] == toast) { s_toast_obj[i] = NULL; s_toast_timer[i] = NULL; }
     if (toast && lv_obj_is_valid(toast)) lv_obj_del_async(toast);
     /* timer is one-shot (repeat_count=1) — auto-deleted by LVGL after this call */
 }
@@ -299,7 +319,7 @@ static void _bat_toast_dismiss(lv_timer_t * t)
 static bool s_toast_pending = false;
 static int  s_toast_pct     = 0;
 
-static void _show_toast(const char * msg, uint32_t bg)
+static void _show_toast(const char * msg, uint32_t bg, uint32_t ms = 4000)
 {
     /* While the Home quick settings panel is open, toasts go on the top layer so
      * they are not hidden behind it. */
@@ -323,9 +343,66 @@ static void _show_toast(const char * msg, uint32_t bg)
     lv_obj_set_style_text_font(lbl,  &ui_font_name_14,       0);
     lv_obj_center(lbl);
 
-    lv_timer_t * t = lv_timer_create(_bat_toast_dismiss, 4000, toast);
+    lv_timer_t * t = lv_timer_create(_bat_toast_dismiss, ms, toast);
     if (!t) { lv_obj_del(toast); return; }
     lv_timer_set_repeat_count(t, 1);
+    for (int i = 0; i < TOAST_SLOTS; i++) {
+        if (!s_toast_obj[i]) { s_toast_obj[i] = toast; s_toast_timer[i] = t; break; }
+    }
+}
+
+/* Remove every toast that is still showing. */
+static void _clear_toasts()
+{
+    for (int i = 0; i < TOAST_SLOTS; i++) {
+        if (!s_toast_obj[i]) continue;
+        if (s_toast_timer[i]) lv_timer_del(s_toast_timer[i]);   /* not fired yet, else the slot would be NULL */
+        if (lv_obj_is_valid(s_toast_obj[i])) lv_obj_del(s_toast_obj[i]);
+        s_toast_obj[i] = NULL;
+        s_toast_timer[i] = NULL;
+    }
+}
+
+/* C entry point for the quick settings panel: capture the screen SHOT_DELAY_MS
+ * from now. Re-arming restarts the delay. The panel has already closed itself. */
+extern "C" void launcher_screenshot_arm(void)
+{
+    s_shot_deadline = millis() + SHOT_DELAY_MS;
+    s_shot_armed    = true;
+    s_shot_cleared  = false;
+    _show_toast("Screenshot in 5 s", 0x555555, 2000);
+}
+
+/* Main loop only, after lv_timer_handler (never inside it): the captured frame
+ * buffer is reused two refreshes later. */
+static void _shot_service()
+{
+    if (!s_shot_armed) return;
+    const int32_t left = (int32_t)(s_shot_deadline - (uint32_t)millis());
+    if (left > (int32_t)SHOT_CLEAR_LEAD_MS) return;
+    if (!s_shot_cleared) {
+        /* Take any toast off the screen and give LVGL a refresh to redraw without it. */
+        s_shot_cleared = true;
+        _clear_toasts();
+        if (left < 100) s_shot_deadline = (uint32_t)millis() + 100;
+        return;
+    }
+    if (left > 0) return;
+
+    s_shot_armed = false;
+    char name[24] = {0};
+    char msg[48];
+    const char * text = msg;
+    uint32_t color = 0xCC3300;
+    switch (screenshot_save(name, sizeof(name))) {
+        case SHOT_OK:          lv_snprintf(msg, sizeof(msg), "Saved %s", name); color = 0x2E7D32; break;
+        case SHOT_NO_SD:       text = "No SD card"; break;
+        case SHOT_MSC:         text = "SD in use by computer"; break;
+        case SHOT_FULL:        text = "Screenshot folder full"; break;
+        case SHOT_UNSUPPORTED: text = "Screenshots need full refresh"; break;
+        default:               text = "Screenshot failed"; break;
+    }
+    _show_toast(text, color, 2500);
 }
 
 static void _show_low_bat_toast(int pct)
@@ -462,6 +539,7 @@ void Launcher::onLoop()
 
         uint32_t next_ms = lv_timer_handler();
         handleAppSelection();
+        _shot_service();
         if (ui_apps_manager && lv_scr_act() == ui_apps_manager) handleAppManager();
 
         /* Detect touchscreen activity → reset sleep timer + restore screen.
@@ -523,6 +601,7 @@ void Launcher::onLoop()
         delay(next_ms);
     } else {
         /* ── APP state: LVGL disabled, only mooncake + buttons ── */
+        s_shot_armed = false;   /* a pending timed screenshot never fires over an app */
         /* Drive LED animation while an app is running. */
         _device->led.update();
         /* Keep sleep timer alive while an app is open — user is actively using device. */

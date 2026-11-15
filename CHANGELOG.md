@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Added
+- Screenshot to SD: the Home quick settings panel has a "Screenshot in 5 s" button (fifth row, joystick Down from Bluetooth, A or tap). The panel closes, a short toast confirms, and five seconds later the screen is saved as `/screenshots/shot_NNNN.bmp` (320x240, 16-bit BMP; the write time is logged on Serial), followed by a toast with the result. The shot is cancelled if an app opens or the screen turns off; it needs the default full-refresh build and is refused while USB storage owns the card.
 - Quick settings on Home: tap the small gear tab at the top centre to open a panel with Brightness and Volume sliders and Wi-Fi and Bluetooth switches (same settings as the Settings tabs; Wi-Fi shows its live status). Tap outside the panel or the X to close.
 - Optional internet time sync: Settings -> Time has an Auto time switch (off by default) and a UTC offset stepper (30-minute steps, -12:00 to +14:00; Left/Right on the joystick). When on and Wi-Fi connects, SNTP sets the clock and the RTC is written with the offset applied (first sync after each connect, then at most every 6 h); the Date line shows "Synced HH:MM" or "Not synced". Changing the offset rewrites the RTC at once after a sync. No DST handling; setting date or time by hand still works and the next sync overrides it. The Time tab now scrolls.
 - Settings Info dialog also shows the Wi-Fi IP address, or "Wi-Fi: not connected" / "Wi-Fi: off".

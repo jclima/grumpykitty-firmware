@@ -22,8 +22,13 @@ extern bool ui_quick_panel_is_open(void);
 /* Joystick: dy moves the focused row by one (clamped, no wrap), dx changes a
  * slider by 5. The first call after a touch open only focuses row 0. */
 extern void ui_quick_panel_nav(int dx, int dy);
-/* A: toggles the switch on the focused row; nothing on slider rows. */
+/* A: toggles the switch on the focused row, or closes the panel and arms the
+ * timed screenshot on the Screenshot row; nothing on slider rows. */
 extern void ui_quick_panel_press_a(void);
+
+/* Implemented by the launcher: take a screenshot 5 s from now (re-arming
+ * restarts the 5 s). Called after the panel has closed itself. */
+extern void launcher_screenshot_arm(void);
 
 #ifdef __cplusplus
 }

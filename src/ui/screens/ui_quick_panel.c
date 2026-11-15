@@ -2,27 +2,34 @@
 // Copyright (c) 2026 JC Lima
 //
 // Quick settings panel (Home). Overlay on lv_layer_top(): a full-screen dim
-// backdrop (tap closes) holding a 300x204 card with four rows: Brightness,
-// Volume, Wi-Fi, Bluetooth. Everything is created on open and deleted on close.
+// backdrop (tap closes) holding a 300x212 card with five rows: Brightness,
+// Volume, Wi-Fi, Bluetooth and a "Screenshot in 5 s" button (hidden under
+// MK_LVGL_PARTIAL_REFRESH, where a screenshot is not possible: four rows then).
+// Everything is created on open and deleted on close.
 // Values go through the same setters as the Settings tabs.
 
 #include "../ui.h"
 #include "../ui_wifi_bridge.h"
 #include "../../system/settings_bridge.h"
 
+#ifdef MK_LVGL_PARTIAL_REFRESH
+  #define QP_ROWS   4
+#else
+  #define QP_ROWS   5
+#endif
 #define QP_X        10
-#define QP_Y        18
 #define QP_W        300
-#define QP_H        204
 #define QP_TITLE_H  28
 #define QP_ROW_Y0   32
-#define QP_ROW_H    36
+#define QP_ROW_H    32
+#define QP_FOOT_H   20                     /* footer strip below the last row */
+#define QP_H        (QP_ROW_Y0 + QP_ROWS * QP_ROW_H + QP_FOOT_H)   /* 212 (5 rows) / 180 (4 rows) */
+#define QP_Y        ((240 - QP_H) / 2)     /* 14 / 30 */
 #define QP_ROW_X    4                      /* rows inset so the 2 px outline stays inside the card */
 #define QP_ROW_W    (QP_W - 2 - 2 * QP_ROW_X)   /* card inner width is QP_W - 2 (1 px border) */
 #define QP_STEP     5                      /* joystick slider step, same as the Settings tabs */
-#define QP_ROWS     4
 
-enum { ROW_BRIGHT = 0, ROW_VOL = 1, ROW_WIFI = 2, ROW_BLE = 3 };
+enum { ROW_BRIGHT = 0, ROW_VOL = 1, ROW_WIFI = 2, ROW_BLE = 3, ROW_SHOT = 4 };
 
 static lv_obj_t   * s_root       = NULL;   /* backdrop */
 static lv_obj_t   * s_panel      = NULL;
@@ -149,6 +156,21 @@ static void _ble_sw_cb(lv_event_t * e)
     _ble_apply_from_switch(lv_event_get_target(e));
 }
 
+/* Close the panel, then ask the launcher to take a screenshot in 5 s. */
+static void _shot_activate(void)
+{
+    ui_quick_panel_close();
+    launcher_screenshot_arm();
+}
+
+#ifndef MK_LVGL_PARTIAL_REFRESH
+static void _shot_cb(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    _shot_activate();
+}
+#endif
+
 /* Any press inside the card (children bubble to it) hides the joystick outline. */
 static void _panel_press_cb(lv_event_t * e)
 {
@@ -183,8 +205,10 @@ static lv_obj_t * _mk_row(lv_obj_t * panel, int idx, const char * name)
     lv_obj_add_flag(r, LV_OBJ_FLAG_EVENT_BUBBLE);
     lv_obj_set_style_radius(r, 6, 0);
 
-    lv_obj_t * l = _mk_label(r, name, THEME_TEXT, &ui_font_name_14);
-    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+    if(name) {
+        lv_obj_t * l = _mk_label(r, name, THEME_TEXT, &ui_font_name_14);
+        lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+    }
     return r;
 }
 
@@ -195,7 +219,7 @@ static lv_obj_t * _mk_slider(lv_obj_t * row, int value, lv_event_cb_t cb)
     lv_obj_align(sl, LV_ALIGN_LEFT_MID, 100, 0);
     lv_slider_set_range(sl, 0, 100);          /* same range as the Settings Display / Sound sliders */
     lv_slider_set_value(sl, value, LV_ANIM_OFF);
-    lv_obj_set_ext_click_area(sl, 10);
+    lv_obj_set_ext_click_area(sl, 12);       /* 8 + 24 = 32 = row height */
     lv_obj_add_flag(sl, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_set_style_bg_color(sl, lv_color_hex(THEME_SURFACE_ALT), LV_PART_MAIN);
@@ -234,7 +258,7 @@ static lv_obj_t * _mk_switch(lv_obj_t * row, bool checked, lv_event_cb_t cb)
     lv_obj_t * sw = lv_switch_create(row);
     lv_obj_set_size(sw, 42, 22);
     lv_obj_align(sw, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_obj_set_ext_click_area(sw, 8);
+    lv_obj_set_ext_click_area(sw, 5);        /* 22 + 10 = 32 = row height: no overlap with the next row */
     lv_obj_add_flag(sw, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_set_style_bg_color(sw, lv_color_hex(THEME_BORDER), LV_PART_MAIN);
@@ -257,6 +281,24 @@ static lv_obj_t * _mk_switch(lv_obj_t * row, bool checked, lv_event_cb_t cb)
     lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, NULL);
     return sw;
 }
+
+#ifndef MK_LVGL_PARTIAL_REFRESH
+/* Full-width button filling its row; the row carries the joystick outline. */
+static void _mk_shot_button(lv_obj_t * row)
+{
+    lv_obj_t * b = lv_btn_create(row);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, QP_ROW_W, QP_ROW_H);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_style_radius(b, 6, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(THEME_SURFACE_ALT), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(THEME_ACCENT), LV_STATE_PRESSED);
+    lv_obj_t * l = _mk_label(b, "Screenshot in 5 s", THEME_TEXT, &ui_font_name_14);
+    lv_obj_center(l);
+    lv_obj_add_event_cb(b, _shot_cb, LV_EVENT_CLICKED, NULL);
+}
+#endif
 
 /* ── Public API ────────────────────────────────────────────────────────── */
 
@@ -338,6 +380,11 @@ void ui_quick_panel_open(bool focus_first)
     s_row_obj[ROW_WIFI]   = _mk_row(s_panel, ROW_WIFI,   "Wi-Fi");
     s_row_obj[ROW_BLE]    = _mk_row(s_panel, ROW_BLE,    "Bluetooth");
 
+#ifndef MK_LVGL_PARTIAL_REFRESH
+    s_row_obj[ROW_SHOT] = _mk_row(s_panel, ROW_SHOT, NULL);
+    _mk_shot_button(s_row_obj[ROW_SHOT]);
+#endif
+
     int br = sys_get_brightness();
     s_slider[ROW_BRIGHT]  = _mk_slider(s_row_obj[ROW_BRIGHT], br, _slider_cb);
     s_val_lbl[ROW_BRIGHT] = _mk_value_label(s_row_obj[ROW_BRIGHT], br);
@@ -354,7 +401,7 @@ void ui_quick_panel_open(bool focus_first)
     lv_obj_t * foot = _mk_label(s_panel, "A toggle  B close  L/R adjust", THEME_TEXT_DIM, &lv_font_montserrat_10);
     lv_obj_set_width(foot, QP_W - 2);
     lv_obj_set_style_text_align(foot, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_pos(foot, 0, 184);
+    lv_obj_set_pos(foot, 0, QP_ROW_Y0 + QP_ROWS * QP_ROW_H + 4);
 
     s_busy_ticks = 0;
     s_row = -1;
@@ -392,6 +439,7 @@ void ui_quick_panel_nav(int dx, int dy)
 void ui_quick_panel_press_a(void)
 {
     if(!s_root) return;
+    if(s_row == ROW_SHOT && QP_ROWS > ROW_SHOT) { _shot_activate(); return; }
     lv_obj_t * sw = (s_row == ROW_WIFI) ? s_sw_wifi : (s_row == ROW_BLE) ? s_sw_ble : NULL;
     if(!sw) return;                 /* slider rows or no focus: nothing */
     _sync_switch(sw, !lv_obj_has_state(sw, LV_STATE_CHECKED));
