@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.10-grumpy] - 2026-11-15
+
 ### Added
 - `MK_LVGL_PSRAM` build flag (commented out in platformio.ini) routes LVGL's allocator to PSRAM with internal RAM as the fallback, to test whether it relieves internal RAM fragmentation. Default builds are unchanged.
 
