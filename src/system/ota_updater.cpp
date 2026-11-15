@@ -68,6 +68,31 @@ void installTlsAllocator() {
 // the Response that produced it; only one OTA job runs at a time.
 char failureText[48];
 
+// Large per-job buffers live on the heap, PSRAM first. esp_flash_write copies
+// non-internal sources through a 32-byte internal bounce buffer, and the SHA
+// engine writes the cache back for external RAM, so PSRAM is a valid source for
+// the download chunk. 32-byte alignment matches the cache line.
+class Buffer {
+public:
+    explicit Buffer(size_t bytes) {
+        _data = heap_caps_aligned_alloc(32, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!_data) _data = heap_caps_aligned_alloc(32, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    }
+    ~Buffer() { heap_caps_free(_data); }
+    Buffer(const Buffer&) = delete;
+    Buffer& operator=(const Buffer&) = delete;
+    char* data() const { return static_cast<char*>(_data); }
+    explicit operator bool() const { return _data != nullptr; }
+private:
+    void* _data = nullptr;
+};
+
+constexpr size_t WorkerStackBytes = 12288;
+alignas(16) StackType_t workerStack[WorkerStackBytes];
+StaticTask_t workerTcb;
+TaskHandle_t workerHandle = nullptr; // main task only
+Job pendingJob = Job::Check;         // written under lock before the notify
+
 bool powerOkay() {
     return power_is_ready() && (power_vbus_present() || power_battery_pct() >= 30);
 }
@@ -285,7 +310,9 @@ Result runCheck() {
     if (length < 0) return {State::Failed, response.error()};
     if (length > int64_t(ota_manifest::MaxBytes)) return {State::Failed, "OTA feed is too large"};
 
-    char json[ota_manifest::MaxBytes];
+    Buffer buffer(ota_manifest::MaxBytes);
+    if (!buffer) return {State::Failed, "Not enough memory for OTA"};
+    char* const json = buffer.data();
     int received = 0;
     const uint32_t started = millis();
     while (received < length && !cancelRequested && millis() - started < 15000) {
@@ -319,18 +346,22 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
     }
     if (cancelRequested) return {State::Idle, "Cancelled"};
 
+    constexpr size_t ChunkBytes = 4096;
+    Buffer chunkBuffer(ChunkBytes);
+    if (!chunkBuffer) return {State::Failed, "Not enough memory for OTA"};
+    uint8_t* const chunk = reinterpret_cast<uint8_t*>(chunkBuffer.data());
+
     Digest digest;
     Image image;
     if (!digest.start() || !image.begin(slot, manifest.size))
         return {State::Failed, "Could not prepare inactive slot"};
 
-    uint8_t chunk[4096];
     uint32_t received = 0;
     const uint32_t started = millis();
     while (received < manifest.size) {
         if (cancelRequested) return {State::Idle, "Cancelled"};
         if (millis() - started >= TransferLimitMs) return {State::Failed, "Download timed out"};
-        const auto need = std::min<uint32_t>(sizeof(chunk), manifest.size - received);
+        const auto need = std::min<uint32_t>(ChunkBytes, manifest.size - received);
         const int n = response.read(reinterpret_cast<char*>(chunk), int(need));
         if (n <= 0 || unsigned(n) > need) return {State::Failed, "Download interrupted"};
         if (cancelRequested) return {State::Idle, "Cancelled"};
@@ -347,8 +378,7 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
     return {State::Staged, "Verified. Ready to restart", manifest, slot};
 }
 
-void worker(void* arg) {
-    const Job job = arg ? Job::Download : Job::Check;
+void runJob(Job job) {
     installTlsAllocator();
     Serial.printf("[OTA] heap internal free=%u largest=%u psram free=%u tls_psram=%d\n",
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
@@ -374,7 +404,33 @@ void worker(void* arg) {
     }
     busy = false;
     portEXIT_CRITICAL(&lock);
-    vTaskDelete(nullptr);
+}
+
+// One persistent worker on a statically allocated stack. A task stack needs a
+// contiguous internal block that LVGL fragments away; reserving it in .bss
+// removes that allocation. The task is created once and never deleted, so the
+// stack and TCB cannot be reused while a previous task still references them.
+// start() only notifies it after busy went false -> true, and runJob() clears
+// busy last, so a notification never arrives while a job is running; a
+// notification that arrives before the worker re-blocks is counted, not lost.
+void worker(void*) {
+    for (;;) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+        runJob(pendingJob);
+        // Stack depth is in bytes on this port (StackType_t is uint8_t).
+        Serial.printf("[OTA] stack high water=%u of %u bytes free\n",
+                      (unsigned)uxTaskGetStackHighWaterMark(nullptr), (unsigned)WorkerStackBytes);
+    }
+}
+
+bool startWorker() {
+    if (!workerHandle) {
+        workerHandle = xTaskCreateStatic(worker, "gk_ota", WorkerStackBytes, nullptr, 1,
+                                         workerStack, &workerTcb);
+        if (!workerHandle) return false;
+    }
+    xTaskNotifyGive(workerHandle);
+    return true;
 }
 
 bool start(Job job) {
@@ -395,6 +451,7 @@ bool start(Job job) {
     }
     cancelRequested = false;
     busy = true;
+    pendingJob = job;
     staged = nullptr;
     if (job == Job::Check) {
         offer = {};
@@ -405,8 +462,7 @@ bool start(Job job) {
     }
     portEXIT_CRITICAL(&lock);
 
-    if (xTaskCreate(worker, "gk_ota", 12288, job == Job::Download ? reinterpret_cast<void*>(1) : nullptr,
-                    1, nullptr) == pdPASS) return true;
+    if (startWorker()) return true;
     portENTER_CRITICAL(&lock);
     busy = false;
     snapshot.state = State::Failed;
