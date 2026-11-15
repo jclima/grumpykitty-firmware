@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- LVGL objects now live in external RAM (PSRAM, with internal RAM as the fallback), freeing roughly 30 KB+ of internal memory when Settings is open (measured before: about 37 KB free at idle, about 4 KB with the Settings tabs open). Serial prints `[MEM] lvgl allocator=psram` at start. Build with `-DMK_LVGL_INTERNAL` to opt out (`lvgl allocator=internal`). The experimental `MK_LVGL_PSRAM` flag is gone; this is now the default.
+
 ## [0.1.10-grumpy] - 2026-11-15
 
 ### Added

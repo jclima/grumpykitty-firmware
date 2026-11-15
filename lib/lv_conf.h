@@ -60,8 +60,9 @@
         #undef LV_MEM_POOL_ALLOC
     #endif
 
-#elif defined(MK_LVGL_PSRAM) && defined(ESP_PLATFORM)
-    /*Test build (-DMK_LVGL_PSRAM): LVGL objects in PSRAM, internal RAM as fallback.*/
+#elif defined(ESP_PLATFORM) && !defined(MK_LVGL_INTERNAL)
+    /*Device default: LVGL objects in PSRAM, internal RAM as fallback. Opt out with -DMK_LVGL_INTERNAL.
+     *Host tests (no ESP_PLATFORM) keep the stdlib branch below.*/
     #define LV_MEM_CUSTOM_INCLUDE "gk_lv_mem.h"
     #define LV_MEM_CUSTOM_ALLOC   gk_lv_malloc
     #define LV_MEM_CUSTOM_FREE    gk_lv_free

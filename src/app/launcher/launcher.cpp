@@ -47,6 +47,7 @@
 #include "app_preferences.h"
 #include "../app_03/vu_meter.h"
 #include "../../bsp/porting/lv_port_disp.h"
+#include "../../ui/gk_lv_mem.h"
 #include "../../bsp/porting/lv_port_indev.h"
 #include "../../bsp/porting/lv_port_fs.h"
 #include "../../ui/ui_rtc_bridge.h"
@@ -761,6 +762,7 @@ void Launcher::initLVGL()
 
     Serial.println("[Launcher] LVGL init (one-time)...");
     lv_init();
+    Serial.printf("[MEM] lvgl allocator=%s\n", gk_lv_allocator_name());
     lv_port_disp_init(&_device->Lcd);
     lv_port_indev_init(&_device->ctp);
 
