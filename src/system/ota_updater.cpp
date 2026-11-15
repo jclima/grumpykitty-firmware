@@ -15,6 +15,7 @@
 #include <esp_partition.h>
 #include <esp_tls.h>
 #include <lwip/apps/sntp.h>
+#include <mbedtls/platform.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/ssl.h>
 #include <algorithm>
@@ -33,6 +34,7 @@ constexpr char BaseUrl[] = "https://jclima.github.io/grumpykitty-firmware/flash/
 // to be tried, plus a small scheduling margin, without restarting an active client.
 constexpr uint32_t ClockWaitMs = 35000;
 constexpr uint32_t TransferLimitMs = 300000;
+constexpr size_t LowInternalBlock = 20 * 1024; // 16 KB TLS record buffer plus headroom
 constexpr time_t EarliestClock = 1704067200; // 2024-01-01
 enum class Job { Check, Download };
 
@@ -42,6 +44,29 @@ ota_manifest::Manifest offer;
 const esp_partition_t* staged = nullptr;
 bool busy = false;
 std::atomic<bool> cancelRequested{false};
+
+// The SDK is built with CONFIG_MBEDTLS_INTERNAL_MEM_ALLOC: every TLS buffer
+// (two 16 KB record buffers plus handshake state) is carved from internal RAM,
+// which LVGL and Bluetooth have already fragmented. This SDK compiles mbedTLS
+// with MBEDTLS_PLATFORM_MEMORY (function-pointer variant), so route TLS
+// allocations to PSRAM and fall back to internal RAM when PSRAM is exhausted.
+// The same heap_caps_free releases blocks from either heap, so the hook is
+// left installed for the lifetime of the firmware.
+void* tlsCalloc(size_t n, size_t size) {
+    void* p = heap_caps_calloc(n, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p ? p : heap_caps_calloc(n, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
+bool tlsInPsram = false;
+
+void installTlsAllocator() {
+    if (tlsInPsram) return;
+    tlsInPsram = mbedtls_platform_set_calloc_free(tlsCalloc, heap_caps_free) == 0;
+}
+
+// Failure text shown by the app. Status keeps only a pointer, so it must outlive
+// the Response that produced it; only one OTA job runs at a time.
+char failureText[48];
 
 bool powerOkay() {
     return power_is_ready() && (power_vbus_present() || power_battery_pct() >= 30);
@@ -126,16 +151,25 @@ public:
         constexpr uint32_t internalRam = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
         const size_t free = heap_caps_get_free_size(internalRam);
         const size_t largest = heap_caps_get_largest_free_block(internalRam);
+        const size_t psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         const esp_err_t open_rc = esp_http_client_open(_http, 0);
         if (open_rc != ESP_OK) {
+            const bool allocFailed = _tlsError == ESP_ERR_MBEDTLS_SSL_SETUP_FAILED ||
+                                     _tlsCode == -MBEDTLS_ERR_SSL_ALLOC_FAILED;
             if (_tlsError == ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME) _error = "OTA server DNS lookup failed";
             else if (_tlsError == ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT) _error = "OTA server connection timed out";
             else if (_tlsCode == -MBEDTLS_ERR_X509_CERT_VERIFY_FAILED || _tlsFlags) _error = "OTA certificate check failed";
+            else if (allocFailed) _error = "Not enough memory for OTA";
             else if (_tlsError == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED) _error = "OTA TLS handshake failed";
-            else _error = "Could not connect to OTA server";
-            Serial.printf("[OTA] open=%s errno=%d tls=0x%x code=%d flags=0x%x RAM=%u largest=%u\n",
+            else if (!tlsInPsram && largest < LowInternalBlock) _error = "Not enough memory for OTA";
+            else {
+                snprintf(failureText, sizeof(failureText), "Could not connect to OTA server (%04x)",
+                         (unsigned)(_tlsError & 0xffff));
+                _error = failureText;
+            }
+            Serial.printf("[OTA] open=%s errno=%d tls=0x%x code=%d flags=0x%x RAM=%u largest=%u psram free=%u\n",
                           esp_err_to_name(open_rc), esp_http_client_get_errno(_http), (unsigned)_tlsError,
-                          _tlsCode, (unsigned)_tlsFlags, (unsigned)free, (unsigned)largest);
+                          _tlsCode, (unsigned)_tlsFlags, (unsigned)free, (unsigned)largest, (unsigned)psram);
             return -1;
         }
         const int64_t length = esp_http_client_fetch_headers(_http);
@@ -315,6 +349,11 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
 
 void worker(void* arg) {
     const Job job = arg ? Job::Download : Job::Check;
+    installTlsAllocator();
+    Serial.printf("[OTA] heap internal free=%u largest=%u psram free=%u tls_psram=%d\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT), (int)tlsInPsram);
     ota_manifest::Manifest selected;
     portENTER_CRITICAL(&lock);
     selected = offer;

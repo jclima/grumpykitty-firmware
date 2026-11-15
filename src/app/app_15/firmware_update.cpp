@@ -6,6 +6,7 @@
 #include "../../system/power_mgmt.h"
 #include "../../system/settings_bridge.h"
 #include "../../bsp/config.h"
+#include "../../ui/ui.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -42,6 +43,22 @@ uint16_t stateColor(ota_updater::State state) {
     if (state == State::Downloading || state == State::Checking) return hp::COL_WARN;
     return hp::COL_FG;
 }
+
+// Free internal RAM for TLS before the worker starts. LVGL allocates its small
+// objects from internal RAM, so the large Settings and Wi-Fi screens are dropped
+// while this app owns the display; they are rebuilt lazily by _ui_screen_change
+// the next time they are opened. Main thread only, never the active screen or
+// one involved in a running screen-load animation.
+void releaseIdleScreens() {
+    lv_disp_t* disp = lv_disp_get_default();
+    if (!disp || disp->scr_to_load || lv_disp_get_scr_prev(disp)) return;
+    const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    lv_obj_t* active = lv_scr_act();
+    if (ui_tabview && ui_tabview != active) ui_tabview_screen_destroy();
+    if (ui_wifi && ui_wifi != active) ui_wifi_screen_destroy();
+    const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    Serial.printf("[OTA] released idle LVGL screens: internal free %u -> %u\n", (unsigned)before, (unsigned)after);
+}
 }  // namespace
 
 namespace MOONCAKE::APPS {
@@ -53,6 +70,7 @@ AppFirmwareUpdate::AppFirmwareUpdate(DEVICES* device)
 
 void AppFirmwareUpdate::onOpen() {
     ota_updater::cancel();
+    releaseIdleScreens();
     _hint = nullptr;
     _lastDraw = 0;
     _frameReady = false;
