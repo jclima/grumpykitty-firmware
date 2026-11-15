@@ -311,7 +311,7 @@ Result runCheck() {
     if (length > int64_t(ota_manifest::MaxBytes)) return {State::Failed, "OTA feed is too large"};
 
     Buffer buffer(ota_manifest::MaxBytes);
-    if (!buffer) return {State::Failed, "Not enough memory for OTA"};
+    if (!buffer) return {State::Failed, "OTA buffer: no memory"};
     char* const json = buffer.data();
     int received = 0;
     const uint32_t started = millis();
@@ -348,7 +348,7 @@ Result runDownload(const ota_manifest::Manifest& manifest) {
 
     constexpr size_t ChunkBytes = 4096;
     Buffer chunkBuffer(ChunkBytes);
-    if (!chunkBuffer) return {State::Failed, "Not enough memory for OTA"};
+    if (!chunkBuffer) return {State::Failed, "OTA buffer: no memory"};
     uint8_t* const chunk = reinterpret_cast<uint8_t*>(chunkBuffer.data());
 
     Digest digest;
@@ -462,11 +462,16 @@ bool start(Job job) {
     }
     portEXIT_CRITICAL(&lock);
 
+    Serial.printf("[OTA] start internal free=%u largest=%u psram free=%u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (startWorker()) return true;
+    Serial.println("[OTA] worker task creation failed");
     portENTER_CRITICAL(&lock);
     busy = false;
     snapshot.state = State::Failed;
-    snapshot.message = "Not enough memory for OTA";
+    snapshot.message = "OTA task: no memory";
     portEXIT_CRITICAL(&lock);
     return false;
 }

@@ -52,12 +52,16 @@ uint16_t stateColor(ota_updater::State state) {
 void releaseIdleScreens() {
     lv_disp_t* disp = lv_disp_get_default();
     if (!disp || disp->scr_to_load || lv_disp_get_scr_prev(disp)) return;
-    const size_t before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    constexpr uint32_t internalRam = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const size_t before = heap_caps_get_free_size(internalRam);
+    const size_t beforeLargest = heap_caps_get_largest_free_block(internalRam);
     lv_obj_t* active = lv_scr_act();
     if (ui_tabview && ui_tabview != active) ui_tabview_screen_destroy();
     if (ui_wifi && ui_wifi != active) ui_wifi_screen_destroy();
-    const size_t after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    Serial.printf("[OTA] released idle LVGL screens: internal free %u -> %u\n", (unsigned)before, (unsigned)after);
+    const size_t after = heap_caps_get_free_size(internalRam);
+    const size_t afterLargest = heap_caps_get_largest_free_block(internalRam);
+    Serial.printf("[OTA] released idle LVGL screens: internal free %u -> %u, largest %u -> %u\n",
+                  (unsigned)before, (unsigned)after, (unsigned)beforeLargest, (unsigned)afterLargest);
 }
 }  // namespace
 
