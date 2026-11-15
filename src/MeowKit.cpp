@@ -3,6 +3,8 @@
  * @brief MeowKit application entry — manages device lifecycle
  */
 #include "MeowKit.h"
+#include <esp_heap_caps.h>
+#include <Arduino.h>
 #include "splash/splash_screen.h"
 #include "system/settings_bridge.h"
 #include "system/system_sound.h"
@@ -10,6 +12,15 @@
 
 bool MeowKit::Setup()
 {
+    {
+        const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        Serial.printf("[MEM] early t=%lus int_free=%u int_largest=%u int_min=%u psram_free=%u\n",
+                      (unsigned long)(millis() / 1000),
+                      (unsigned)heap_caps_get_free_size(caps),
+                      (unsigned)heap_caps_get_largest_free_block(caps),
+                      (unsigned)heap_caps_get_minimum_free_size(caps),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    }
     _device = std::make_unique<DEVICES>();
     if (!_device) {
         printf("[GrumpyKitty] BSP create failed\n");

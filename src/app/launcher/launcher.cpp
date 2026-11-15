@@ -66,6 +66,7 @@
 #include <SD_MMC.h>
 #include <lvgl.h>
 #include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <Preferences.h>
@@ -172,6 +173,43 @@ static const char* _navigation_target_name(const lv_obj_t* screen, mk_event_t ev
         return "wifi";
     }
     return nullptr;
+}
+
+/* ── Diagnostic heap telemetry (always on for now; reduce/gate later) ─────────
+ * One printf per event, no allocation.  Main-loop / setup context only (reads
+ * lv_scr_act()).  scr: _screen_name(); app: id of the running app or "-";
+ * wifi: wifi_bridge_status_t.  No Bluetooth owner: bluetooth_manager exposes no getter. */
+static char s_mem_app[32] = "-";               /* running app id, "-" when none */
+static const lv_obj_t* s_mem_last_scr = nullptr;
+static uint32_t s_mem_last_tick = 0;
+
+static void _memLog(const char* tag)
+{
+    const uint32_t caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    lv_disp_t* d = lv_disp_get_default();
+    const lv_obj_t* scr = d ? lv_scr_act() : nullptr;
+    Serial.printf("[MEM] %s t=%lus int_free=%u int_largest=%u int_min=%u psram_free=%u scr=%s app=%s wifi=%d\n",
+                  tag, (unsigned long)(millis() / 1000),
+                  (unsigned)heap_caps_get_free_size(caps),
+                  (unsigned)heap_caps_get_largest_free_block(caps),
+                  (unsigned)heap_caps_get_minimum_free_size(caps),
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                  scr ? _screen_name(scr) : "none", s_mem_app,
+                  (int)ui_wifi_bridge_get_status());
+}
+
+/* Rate-limited tick plus screen-change check; called every loop. */
+static void _memLogPoll(bool check_screen)
+{
+    if (millis() - s_mem_last_tick >= 5000u) {
+        s_mem_last_tick = millis();
+        _memLog("tick");
+    }
+    if (check_screen) {
+        lv_disp_t* d = lv_disp_get_default();
+        const lv_obj_t* scr = d ? lv_scr_act() : nullptr;
+        if (scr != s_mem_last_scr) { s_mem_last_scr = scr; _memLog("screen"); }
+    }
 }
 
 /* ── LED state machine ──────────────────────────────────────────────
@@ -490,6 +528,9 @@ void Launcher::onCreate()
     Serial.printf("[Launcher] Ready — %d apps, heap=%lu\n\n",
                   (int)_mooncake.getAppNum(),
                   (unsigned long)esp_get_free_heap_size());
+    s_mem_last_scr = lv_scr_act();
+    s_mem_last_tick = millis();
+    _memLog("boot");
 }
 
 /* ── onLoop ────────────────────────────────────────── */
@@ -538,6 +579,7 @@ void Launcher::onLoop()
         handlePhysicalNav();
 
         uint32_t next_ms = lv_timer_handler();
+        _memLogPoll(true);
         handleAppSelection();
         _shot_service();
         if (ui_apps_manager && lv_scr_act() == ui_apps_manager) handleAppManager();
@@ -602,6 +644,7 @@ void Launcher::onLoop()
     } else {
         /* ── APP state: LVGL disabled, only mooncake + buttons ── */
         s_shot_armed = false;   /* a pending timed screenshot never fires over an app */
+        _memLogPoll(false);
         /* Drive LED animation while an app is running. */
         _device->led.update();
         /* Keep sleep timer alive while an app is open — user is actively using device. */
@@ -735,6 +778,7 @@ void Launcher::initLVGL()
     }
 
     _lvgl_inited = true;
+    _memLog("lvgl_init");
 }
 
 /* ── Build UI (create screens + menu + icons) ──────── */
@@ -751,6 +795,7 @@ void Launcher::buildUI()
     /* WiFi bridge: STA mode + auto-reconnect of last credentials.
      * Safe to call once here; ui_wifi screen uses it for scan/connect. */
     ui_wifi_bridge_init();
+    _memLog("wifi_bridge_init");
 
     /* Populate menu grid */
     loadAppsMenu();
@@ -953,6 +998,8 @@ void Launcher::returnToUI()
     }
 
     Serial.println("[Launcher] Back to apps_menu (no rebuild)");
+    _memLog("app_close");   /* s_mem_app still names the app that just closed */
+    snprintf(s_mem_app, sizeof(s_mem_app), "-");
 }
 
 /* ── Apps menu ─────────────────────────────────────── */
@@ -1059,8 +1106,11 @@ void Launcher::handleAppSelection()
         if (strcmp(APP_REGISTRY[i].id, selId) == 0 && i < (int)_native_handles.size()) {
             /* Enter app — LVGL screens stay in memory, just pause rendering */
             _wifiLedCancel(_device);
+            snprintf(s_mem_app, sizeof(s_mem_app), "%s", APP_REGISTRY[i].id);
+            _memLog("app_open");
             _running_app_id = _native_handles[i];
             if (!_mooncake.openApp(_running_app_id)) {
+                snprintf(s_mem_app, sizeof(s_mem_app), "-");
                 _running_app_id = -1;
                 ui_apps_menu_clear_selected();
                 _show_toast("Could not open app", 0x555555);
@@ -1079,9 +1129,11 @@ void Launcher::handleAppSelection()
         if (!package.compatible || _personal_drain) { ui_apps_menu_clear_selected(); return; }
         auto app = personal_apps::makeApp(_device, package);
         if (!app) { ui_apps_menu_clear_selected(); _show_toast("App unavailable. Refresh in Manage", 0x555555); return; }
+        snprintf(s_mem_app, sizeof(s_mem_app), "%s", package.id.c_str());
+        _memLog("app_open");
         _personal_handle = _mooncake.installApp(std::move(app)); _personal_id = package.id;
         _wifiLedCancel(_device);
-        if (_personal_handle < 0 || !_mooncake.openApp(_personal_handle)) { if (_personal_handle >= 0) { _mooncake.uninstallApp(_personal_handle); _mooncake.update(); } _personal_handle=-1; _personal_id.clear(); ui_apps_menu_clear_selected(); return; }
+        if (_personal_handle < 0 || !_mooncake.openApp(_personal_handle)) { if (_personal_handle >= 0) { _mooncake.uninstallApp(_personal_handle); _mooncake.update(); } _personal_handle=-1; _personal_id.clear(); snprintf(s_mem_app, sizeof(s_mem_app), "-"); ui_apps_menu_clear_selected(); return; }
         _running_app_id=_personal_handle; _app_running=true; s_in_app=true; _b_released_since_open=false; ui_apps_menu_clear_selected(); return;
     }
 
