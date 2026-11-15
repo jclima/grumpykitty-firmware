@@ -175,13 +175,12 @@ static const char* _navigation_target_name(const lv_obj_t* screen, mk_event_t ev
     return nullptr;
 }
 
-/* ── Diagnostic heap telemetry (always on for now; reduce/gate later) ─────────
+/* ── Diagnostic heap telemetry (boot, screen and app open/close events only) ─────────
  * One printf per event, no allocation.  Main-loop / setup context only (reads
  * lv_scr_act()).  scr: _screen_name(); app: id of the running app or "-";
  * wifi: wifi_bridge_status_t.  No Bluetooth owner: bluetooth_manager exposes no getter. */
 static char s_mem_app[32] = "-";               /* running app id, "-" when none */
 static const lv_obj_t* s_mem_last_scr = nullptr;
-static uint32_t s_mem_last_tick = 0;
 
 static void _memLog(const char* tag)
 {
@@ -198,18 +197,12 @@ static void _memLog(const char* tag)
                   (int)ui_wifi_bridge_get_status());
 }
 
-/* Rate-limited tick plus screen-change check; called every loop. */
-static void _memLogPoll(bool check_screen)
+/* Screen-change check; called every GUI loop. */
+static void _memLogScreenPoll()
 {
-    if (millis() - s_mem_last_tick >= 5000u) {
-        s_mem_last_tick = millis();
-        _memLog("tick");
-    }
-    if (check_screen) {
-        lv_disp_t* d = lv_disp_get_default();
-        const lv_obj_t* scr = d ? lv_scr_act() : nullptr;
-        if (scr != s_mem_last_scr) { s_mem_last_scr = scr; _memLog("screen"); }
-    }
+    lv_disp_t* d = lv_disp_get_default();
+    const lv_obj_t* scr = d ? lv_scr_act() : nullptr;
+    if (scr != s_mem_last_scr) { s_mem_last_scr = scr; _memLog("screen"); }
 }
 
 /* ── LED state machine ──────────────────────────────────────────────
@@ -529,7 +522,6 @@ void Launcher::onCreate()
                   (int)_mooncake.getAppNum(),
                   (unsigned long)esp_get_free_heap_size());
     s_mem_last_scr = lv_scr_act();
-    s_mem_last_tick = millis();
     _memLog("boot");
 }
 
@@ -579,7 +571,7 @@ void Launcher::onLoop()
         handlePhysicalNav();
 
         uint32_t next_ms = lv_timer_handler();
-        _memLogPoll(true);
+        _memLogScreenPoll();
         handleAppSelection();
         _shot_service();
         if (ui_apps_manager && lv_scr_act() == ui_apps_manager) handleAppManager();
@@ -644,7 +636,6 @@ void Launcher::onLoop()
     } else {
         /* ── APP state: LVGL disabled, only mooncake + buttons ── */
         s_shot_armed = false;   /* a pending timed screenshot never fires over an app */
-        _memLogPoll(false);
         /* Drive LED animation while an app is running. */
         _device->led.update();
         /* Keep sleep timer alive while an app is open — user is actively using device. */

@@ -7,6 +7,7 @@
 
 ### Fixed
 - FW Update: the OTA worker now runs on one persistent task with a statically allocated 12 KB stack instead of allocating a contiguous internal-RAM block per job, which fragmentation could make fail with "Not enough memory for OTA". The manifest buffer is heap-allocated (PSRAM first); the 4 KB download chunk is a static internal-RAM buffer so flash writes stay full-size and cannot fail on fragmentation. Failures now say which allocation failed: "OTA task: no memory", "OTA buffer: no memory" or "Not enough memory for OTA" (TLS). Serial logs the heap at start, the largest block before and after the idle screens are released, and the worker's stack high-water mark.
+- FW Update could not start or connect after Settings had been opened: measured on the device, the Settings tabs screen uses about 33 KB of the internal memory pool and leaves about 4 KB, so the updater had no room for its worker or TLS. FW Update now releases the Settings tabs and Wi-Fi list screens when it opens, runs its worker on reserved memory and keeps its TLS buffers in external RAM. Serial logs `[MEM]` heap lines at boot, on screen changes and on app open/close.
 - FW Update: "Could not connect to OTA server" on v0.1.9. TLS buffers are now allocated from PSRAM (internal RAM as fallback) during OTA, the Settings and Wi-Fi screens are released while FW Update is open, and a memory shortage is reported as "Not enough memory for OTA". Other connection failures show a short hex code, e.g. "(8004)", and Serial logs the heap at job start.
 
 ## [0.1.9-grumpy] - 2026-11-14
