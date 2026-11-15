@@ -60,6 +60,12 @@
         #undef LV_MEM_POOL_ALLOC
     #endif
 
+#elif defined(MK_LVGL_PSRAM) && defined(ESP_PLATFORM)
+    /*Test build (-DMK_LVGL_PSRAM): LVGL objects in PSRAM, internal RAM as fallback.*/
+    #define LV_MEM_CUSTOM_INCLUDE "gk_lv_mem.h"
+    #define LV_MEM_CUSTOM_ALLOC   gk_lv_malloc
+    #define LV_MEM_CUSTOM_FREE    gk_lv_free
+    #define LV_MEM_CUSTOM_REALLOC gk_lv_realloc
 #else       /*LV_MEM_CUSTOM*/
     #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>   /*Header for the dynamic memory function*/
     #define LV_MEM_CUSTOM_ALLOC   malloc

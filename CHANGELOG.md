@@ -2,7 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- `MK_LVGL_PSRAM` build flag (commented out in platformio.ini) routes LVGL's allocator to PSRAM with internal RAM as the fallback, to test whether it relieves internal RAM fragmentation. Default builds are unchanged.
+
 ### Fixed
+- FW Update: the OTA worker now runs on one persistent task with a statically allocated 12 KB stack instead of allocating a contiguous internal-RAM block per job, which fragmentation could make fail with "Not enough memory for OTA". The manifest and download buffers are heap-allocated (PSRAM first). Failures now say which allocation failed: "OTA task: no memory", "OTA buffer: no memory" or "Not enough memory for OTA" (TLS). Serial logs the heap at start, the largest block before and after the idle screens are released, and the worker's stack high-water mark.
 - FW Update: "Could not connect to OTA server" on v0.1.9. TLS buffers are now allocated from PSRAM (internal RAM as fallback) during OTA, the Settings and Wi-Fi screens are released while FW Update is open, and a memory shortage is reported as "Not enough memory for OTA". Other connection failures show a short hex code, e.g. "(8004)", and Serial logs the heap at job start.
 
 ## [0.1.9-grumpy] - 2026-11-14
