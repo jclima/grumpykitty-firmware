@@ -7,13 +7,19 @@
 #include "../../../src/ui/ui_sd_bridge.h"
 lv_obj_t *ui_settings;
 void ui_settings_screen_init(void) { if(!ui_settings) ui_settings=lv_obj_create(NULL); }
+lv_obj_t *ui_tabview;
+void ui_tabview_screen_init(void) { if(!ui_tabview) ui_tabview=lv_obj_create(NULL); }
+static bool wifi_en = true;
+void host_settings_set_wifi_en(bool on) { wifi_en=on; }
+bool settings_get_wifi_en(void) { return wifi_en; }
 lv_obj_t *ui_home;
 void ui_home_screen_init(void) { if(!ui_home) ui_home=lv_obj_create(NULL); }
 typedef struct { char ssid[64]; int pct; bool encrypted; bool saved; } ap_t;
 static ap_t aps[256]; static int ap_count; static bool scanning; static bool complete;
 static wifi_bridge_status_t status; static char pending[64]; static char current[64];
 static char last_ssid[64]; static char last_pass[65]; static int connect_calls;
-void host_wifi_reset(void) { ap_count=0; scanning=false; complete=false; status=WIFI_BRIDGE_IDLE; pending[0]=0; current[0]=0; last_ssid[0]=0; last_pass[0]=0; connect_calls=0; }
+static int forget_calls; static char last_forget[64];
+void host_wifi_reset(void) { wifi_en=true; ap_count=0; scanning=false; complete=false; status=WIFI_BRIDGE_IDLE; pending[0]=0; current[0]=0; last_ssid[0]=0; last_pass[0]=0; connect_calls=0; forget_calls=0; last_forget[0]=0; }
 void host_wifi_add(const char *s,int p,bool e,bool sv) { if(ap_count<256) { snprintf(aps[ap_count].ssid,sizeof(aps[ap_count].ssid),"%s",s?s:""); aps[ap_count].pct=p; aps[ap_count].encrypted=e; aps[ap_count].saved=sv; ap_count++; } }
 void host_wifi_clear_aps(void) { ap_count=0; }
 void host_wifi_set_current_ssid(const char *s) { snprintf(current,sizeof(current),"%s",s?s:""); }
@@ -48,7 +54,10 @@ void ui_wifi_bridge_get_status_text(char*b,int n) { snprintf(b,n,"%d",status); }
 bool ui_wifi_bridge_is_connected(void) { return status==WIFI_BRIDGE_CONNECTED; }
 void ui_wifi_bridge_get_ip(char*b,int n) { if(n) snprintf(b,n,"192.0.2.10"); }
 const char *ui_wifi_bridge_get_current_ssid(void) { return current; }
-void ui_wifi_bridge_forget(const char*s) { (void)s; }
+bool ui_wifi_bridge_get_details(wifi_bridge_details_t *out) { if(status!=WIFI_BRIDGE_CONNECTED||!out)return false; memset(out,0,sizeof(*out)); snprintf(out->ip,sizeof(out->ip),"192.0.2.10"); snprintf(out->gw,sizeof(out->gw),"192.0.2.1"); snprintf(out->mac,sizeof(out->mac),"02:00:00:00:00:01"); snprintf(out->bssid,sizeof(out->bssid),"02:00:00:00:00:02"); out->rssi=-55; out->channel=6; return true; }
+int host_wifi_forget_calls(void) { return forget_calls; }
+const char *host_wifi_last_forget(void) { return last_forget; }
+void ui_wifi_bridge_forget(const char*s) { forget_calls++; snprintf(last_forget,sizeof(last_forget),"%s",s?s:""); }
 void ui_wifi_bridge_get_saved_pass(char*b,int n) { if(n) b[0]=0; }
 
 struct ui_sd_dir_cursor { int i; };

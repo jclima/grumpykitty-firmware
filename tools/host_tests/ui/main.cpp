@@ -22,6 +22,9 @@ extern "C" int host_wifi_connect_calls(void);
 extern "C" const char *host_wifi_last_ssid(void);
 extern "C" const char *host_wifi_last_pass(void);
 extern "C" const char *host_wifi_pending_ssid(void);
+extern "C" void host_settings_set_wifi_en(bool);
+extern "C" int host_wifi_forget_calls(void);
+extern "C" const char *host_wifi_last_forget(void);
 extern "C" void host_sd_mode(int);
 extern "C" int host_sd_open_count(void);
 extern "C" int host_sd_close_count(void);
@@ -147,14 +150,45 @@ static void test_wifi_button_selection() {
     ui_wifi_connect_focused(); assert(host_wifi_connect_calls() == calls && ui_wifi_bridge_is_scanning());
     park_screen(); ui_wifi_screen_destroy();
 
-    /* A saved row long-press opens a modal; A and focus steps are blocked. */
+    /* A saved (not connected) row long-press opens the options menu: Forget + Cancel
+     * only (Details is for the connected network), Cancel is the default, and A
+     * activates the highlighted button instead of connecting. */
     host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
     host_wifi_add("ModalSaved",80,false,true); lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
     lv_obj_t *modal_row = lv_obj_get_parent(find_text(ui_wifi,"ModalSaved")); assert(modal_row);
     lv_event_send(modal_row,LV_EVENT_LONG_PRESSED,nullptr); calls = host_wifi_connect_calls();
-    ui_wifi_connect_focused(); ui_wifi_focus_step(1);
-    assert(host_wifi_connect_calls() == calls); assert(ui_wifi_handle_back());
+    assert(find_text(ui_wifi,"Forget Network") && find_text(ui_wifi,"Cancel") && !find_text(ui_wifi,"Details"));
+    ui_wifi_connect_focused(); /* default button is Cancel: closes the menu, no connect, no forget */
+    assert(host_wifi_connect_calls() == calls && host_wifi_forget_calls() == 0);
+    assert(!find_text(ui_wifi,"Cancel") && !ui_wifi_handle_back());
+    /* Reopen: focus steps only move the highlight and A is not a connect. */
+    lv_event_send(modal_row,LV_EVENT_LONG_PRESSED,nullptr); ui_wifi_focus_step(-1);
+    assert(host_wifi_connect_calls() == calls && host_wifi_forget_calls() == 0);
+    assert(ui_wifi_handle_back()); /* B closes the menu */
+    assert(host_wifi_forget_calls() == 0 && !ui_wifi_handle_back());
+    /* Joystick Right opens the same menu; Forget fires only once selected and activated. */
+    ui_wifi_open_options(); assert(find_text(ui_wifi,"Forget Network"));
+    ui_wifi_focus_step(-1); ui_wifi_connect_focused();
+    assert(host_wifi_forget_calls() == 1 && !strcmp(host_wifi_last_forget(),"ModalSaved") && host_wifi_connect_calls() == calls);
+    assert(!find_text(ui_wifi,"Cancel"));
     park_screen(); ui_wifi_screen_destroy();
+
+    /* The options menu offers Details for the connected network only. */
+    host_wifi_reset(); host_wifi_set_current_ssid("Home"); host_wifi_set_status(WIFI_BRIDGE_CONNECTED);
+    host_wifi_add("Home",90,false,true); host_wifi_add("Other",60,false,true);
+    ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
+    lv_event_send(ui_wifi_scan_switch,LV_EVENT_VALUE_CHANGED,nullptr); host_wifi_finish_scan(); tick(1000);
+    ui_wifi_open_options(); assert(find_text(ui_wifi,"Details") && find_text(ui_wifi,"Forget Network") && find_text(ui_wifi,"Cancel"));
+    assert(ui_wifi_handle_back());
+    ui_wifi_focus_step(1); ui_wifi_open_options(); assert(!find_text(ui_wifi,"Details"));
+    assert(ui_wifi_handle_back());
+    park_screen(); ui_wifi_screen_destroy();
+
+    /* Wi-Fi setting off: no scan is started and the list says so. */
+    host_wifi_reset(); host_settings_set_wifi_en(false);
+    ui_wifi_screen_init(); lv_scr_load(ui_wifi); tick(1000);
+    assert(!ui_wifi_bridge_is_scanning()); assert(find_text(ui_wifi,"Wi-Fi is off"));
+    park_screen(); ui_wifi_screen_destroy(); host_settings_set_wifi_en(true);
 
     /* Preserve selected B across a switch-triggered refresh while encryption changes. */
     host_wifi_reset(); ui_wifi_screen_init(); lv_scr_load(ui_wifi); lv_obj_add_state(ui_wifi_scan_switch,LV_STATE_CHECKED);
